@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check project exists
+        id: project
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "package.json not found yet. Skipping build until the app is initialized."
+          fi
+
+      - name: Setup Node
+        if: steps.project.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.project.outputs.exists == 'true'
+        run: npm ci
+
+      - name: Build
+        if: steps.project.outputs.exists == 'true'
+        run: npm run build
