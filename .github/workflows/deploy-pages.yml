@@ -1,0 +1,69 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check project exists
+        id: project
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "package.json not found yet. Skipping deploy until the app is initialized."
+          fi
+
+      - name: Setup Node
+        if: steps.project.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.project.outputs.exists == 'true'
+        run: npm ci
+
+      - name: Build
+        if: steps.project.outputs.exists == 'true'
+        run: npm run build
+
+      - name: Setup Pages
+        if: steps.project.outputs.exists == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        if: steps.project.outputs.exists == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+      - name: Deploy to GitHub Pages
+        if: steps.project.outputs.exists == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4
