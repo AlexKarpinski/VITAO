@@ -126,6 +126,27 @@ Add useful tests for:
 
 Avoid low-value snapshot tests and tests that only duplicate static copy.
 
+## Review guidelines
+
+When reviewing pull requests, focus on serious issues and high-impact improvements.
+
+Treat the following as high-priority review findings:
+
+- build or test failures
+- broken navigation or routing
+- TypeScript errors or unsafe `any` usage without a clear reason
+- product data duplicated inside UI components instead of using typed data
+- added backend, database, auth, cart, checkout, payment, CMS, or admin functionality without explicit request
+- unnecessary heavy dependencies
+- accessibility issues that block basic usage, such as unlabeled form fields or unclear buttons/links
+- layout that is unusable on mobile
+- implementation that violates the warm-minimal premium VITAO design direction
+- generic SaaS/storefront styling that makes the brand feel cheap or unrelated to VITAO
+
+Do not flag minor personal style preferences unless they create maintainability, accessibility, or product-quality risk.
+
+For this MVP, prefer practical, scoped fixes over large rewrites.
+
 ## Completion Checklist
 
 Before finishing a task, verify:
