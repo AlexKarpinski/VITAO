@@ -7,8 +7,8 @@ on:
       - main
 
 jobs:
-  build:
-    name: Build
+  build-and-test:
+    name: Build and test
     runs-on: ubuntu-latest
 
     steps:
@@ -23,7 +23,7 @@ jobs:
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "package.json not found yet. Skipping build until the app is initialized."
+            echo "package.json not found yet. Skipping build/test until the app is initialized."
           fi
 
       - name: Setup Node
@@ -40,3 +40,19 @@ jobs:
       - name: Build
         if: steps.project.outputs.exists == 'true'
         run: npm run build
+
+      - name: Check test script
+        if: steps.project.outputs.exists == 'true'
+        id: test-script
+        shell: bash
+        run: |
+          if npm run | grep -q " test"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No test script found yet. Skipping tests until test tooling is initialized."
+          fi
+
+      - name: Test
+        if: steps.project.outputs.exists == 'true' && steps.test-script.outputs.exists == 'true'
+        run: npm run test -- --run
