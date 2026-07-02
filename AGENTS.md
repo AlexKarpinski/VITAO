@@ -30,8 +30,19 @@ Preferred stack:
 - TypeScript
 - Static product data
 - GitHub Pages deployment
+- Vitest + React Testing Library for tests
 
 Do not add a backend, database, payment provider, user auth, cart, admin panel, or CMS unless explicitly requested.
+
+## Required Context
+
+Before making implementation changes, read:
+
+- `docs/product-brief.md`
+- `docs/design-direction.md`
+- `docs/engineering-standards.md`
+- `docs/roadmap.md`
+- `docs/codex-tasks.md`
 
 ## Design Direction
 
@@ -58,13 +69,16 @@ Avoid:
 
 ## Coding Rules
 
+- Follow `docs/engineering-standards.md`.
 - Keep the code simple and easy to extend.
 - Prefer small, readable components.
 - Keep static product data in a single typed data file.
 - Use TypeScript types for product data and page models.
+- Avoid `any` unless there is a documented reason.
 - Do not introduce heavy dependencies without explaining why.
 - Keep styling consistent with the design system.
 - Ensure the site builds successfully before completing a task.
+- Add or update tests for logic and important reusable components.
 - Update docs when behavior or structure changes.
 
 ## Suggested Structure
@@ -81,6 +95,7 @@ src/
     products.ts
   pages/
   styles/
+  test/
   types/
 ```
 
@@ -93,13 +108,33 @@ src/
 - About
 - Contact + FAQ
 
+## Testing Expectations
+
+For the initial Vite + React setup, configure a lightweight test stack:
+
+- Vitest
+- React Testing Library
+- `@testing-library/jest-dom`
+
+Add useful tests for:
+
+- typed product data helpers
+- product lookup by slug
+- product cards when they include logic
+- category/filter behavior when implemented
+- form validation when implemented
+
+Avoid low-value snapshot tests and tests that only duplicate static copy.
+
 ## Completion Checklist
 
 Before finishing a task, verify:
 
 - `npm run build` passes
+- `npm run test` passes if tests are configured
 - TypeScript errors are fixed
 - layout works at desktop and mobile widths
-- no backend/payment/cart was added accidentally
+- no backend/payment/cart/auth was added accidentally
 - visual direction still feels premium and boutique
+- tests were added or updated for meaningful logic
 - README or docs were updated if needed
