@@ -1,0 +1,86 @@
+name: Codex Task
+description: Create a focused implementation task for Codex
+title: "[Codex] "
+labels: ["codex", "task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for tasks that should be handed to Codex.
+        Keep the task small enough for one PR.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What should Codex read or know before coding?
+      value: |
+        Read before implementation:
+        - AGENTS.md
+        - docs/product-brief.md
+        - docs/design-direction.md
+        - docs/roadmap.md
+        - docs/codex-tasks.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be achieved?
+      placeholder: Example: Implement Task 1 from docs/codex-tasks.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requirements
+      description: Clear implementation requirements.
+      value: |
+        - Keep the implementation simple and extendable.
+        - Follow the VITAO warm-minimal premium design direction.
+        - Do not add backend, database, cart, payments, auth, admin panel, or CMS unless explicitly requested.
+        - Use reusable components where reasonable.
+        - Update docs if behavior or structure changes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How do we know the task is done?
+      value: |
+        - npm run build passes.
+        - Main affected pages work through navigation.
+        - Desktop and mobile layout were checked.
+        - No unnecessary dependencies were added.
+        - PR summary explains what changed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: codex-prompt
+    attributes:
+      label: Prompt to paste into Codex
+      description: Copy this section into Codex.
+      value: |
+        Use the existing repository context.
+
+        Before coding, read:
+        - AGENTS.md
+        - docs/product-brief.md
+        - docs/design-direction.md
+        - docs/roadmap.md
+        - docs/codex-tasks.md
+
+        Implement the task described in this GitHub issue.
+
+        Keep the work scoped to one focused PR.
+        Run build and fix all errors.
+        Update README/docs if needed.
+        Create a pull request when finished.
+    validations:
+      required: true
