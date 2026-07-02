@@ -1,0 +1,6 @@
+import { Button } from '../components/ui/Button';
+import { SectionLabel } from '../components/ui/SectionLabel';
+
+export function CustomOrder() {
+  return <section className="page two-column"><div><SectionLabel>Custom order</SectionLabel><h1>Made around your space, measurements, and routine.</h1><p className="lede">Tell us what the object should hold, where it will live, and the finish you prefer. We will reply with a simple proposal and quote.</p><div className="steps"><article><span>01</span><h3>Share the need</h3><p>Send photos, rough dimensions, and the problem to solve.</p></article><article><span>02</span><h3>Refine the form</h3><p>We suggest size, color, and details before production.</p></article><article><span>03</span><h3>Made to order</h3><p>Your piece is printed, finished, and prepared with small-studio care.</p></article></div></div><aside className="inquiry-card"><h2>Start an inquiry</h2><p>Email or message with your idea. Include approximate dimensions if you have them.</p><Button href="mailto:hello@vitao.studio?subject=Custom%20VITAO%20piece">Email VITAO</Button><p className="muted">Typical starting points: organizers from 49 zł, stands from 39 zł, custom quotes for unique pieces.</p></aside></section>;
+}

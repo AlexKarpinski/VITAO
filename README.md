@@ -44,3 +44,26 @@ See:
 - `docs/design-direction.md` — visual direction
 - `docs/roadmap.md` — planned implementation phases
 - `docs/codex-tasks.md` — first tasks for Codex
+
+## Local Development
+
+Install dependencies and run the Vite development server:
+
+```bash
+npm install
+npm run dev
+```
+
+Create a production build:
+
+```bash
+npm run build
+```
+
+Preview the production build locally:
+
+```bash
+npm run preview
+```
+
+The app uses hash-based routes so the static build works cleanly on GitHub Pages without a backend rewrite layer.
