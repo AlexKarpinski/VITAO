@@ -8,7 +8,7 @@ The goal is not to look like a cheap 3D-printer store. VITAO should feel like a 
 
 Build a static website that can be deployed to GitHub Pages and used to validate demand before adding backend, payments, or a full checkout flow.
 
-The MVP should help visitors:
+The MVP helps visitors:
 
 1. Understand what VITAO offers.
 2. Browse a small curated product collection.
@@ -18,29 +18,72 @@ The MVP should help visitors:
 ## Initial Pages
 
 - `/` — Home / landing page
-- `/products` — Product catalog
-- `/products/:slug` — Product detail page
-- `/custom` — Custom order inquiry
-- `/about` — Brand / studio story
-- `/contact` — Contact + FAQ
+- `/#/products` — Product catalog
+- `/#/products/:slug` — Product detail page
+- `/#/custom` — Custom order inquiry
+- `/#/about` — Brand / studio story
+- `/#/contact` — Contact + FAQ
 
-## Suggested Tech Stack
+## Tech Stack
 
 - Vite
 - React
 - TypeScript
-- Static product data for MVP
-- CSS Modules or plain CSS architecture
-- GitHub Pages deployment
+- React Router
+- Static typed product data
+- Plain CSS design system
+- GitHub Pages-ready production base path
 
-No backend, cart, payment, or database should be added until explicitly requested.
+No backend, cart, payment, auth, admin panel, CMS, or database is included in this MVP.
 
-## Development Direction
+## Project Structure
 
-See:
+```text
+src/
+  components/
+    layout/      # Header, footer, page shell
+    product/     # Product card and product-focused UI
+    sections/    # Reusable page sections
+    ui/          # Small reusable UI primitives
+  data/          # Static typed product data
+  pages/         # Route-level page components
+  styles/        # Global styles and design tokens
+  types/         # Shared TypeScript types
+```
 
-- `AGENTS.md` — rules for AI coding agents
-- `docs/product-brief.md` — product and MVP context
-- `docs/design-direction.md` — visual direction
-- `docs/roadmap.md` — planned implementation phases
-- `docs/codex-tasks.md` — first tasks for Codex
+## Local Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Start the local development server:
+
+```bash
+npm run dev
+```
+
+Build the production site:
+
+```bash
+npm run build
+```
+
+Preview the production build locally:
+
+```bash
+npm run preview
+```
+
+Run unit tests:
+
+```bash
+npm run test -- --run
+```
+
+## GitHub Pages Notes
+
+The Vite config uses `/VITAO/` as the production base path so the generated assets work when deployed under a GitHub Pages project site URL such as `https://<user>.github.io/VITAO/`.
+The app uses hash routing (`/#/...`) so direct links and refreshes on nested product or custom-order pages stay GitHub Pages-safe without a backend rewrite.
