@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "homepage": "https://example.github.io/VITAO/",
+  "homepage": "https://alexkarpinski.github.io/VITAO/",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
