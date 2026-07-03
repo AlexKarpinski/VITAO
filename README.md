@@ -56,6 +56,7 @@ src/
 - [Product catalog strategy](docs/product-catalog-strategy.md)
 - [Launch QA pass](docs/launch-qa.md)
 - [Launch measurement plan](docs/launch-measurement.md)
+- [First launch and outreach checklist](docs/first-launch-outreach-checklist.md)
 
 ## Local Development
 
