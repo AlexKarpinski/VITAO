@@ -51,8 +51,9 @@ src/
   types/         # Shared TypeScript types
 ```
 
-## Launch Planning Docs
+## Planning Docs
 
+- [Product catalog strategy](docs/product-catalog-strategy.md)
 - [Launch QA pass](docs/launch-qa.md)
 - [Launch measurement plan](docs/launch-measurement.md)
 
