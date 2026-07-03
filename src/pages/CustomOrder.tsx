@@ -31,7 +31,7 @@ export function CustomOrder() {
   return (
     <>
       <PageHero eyebrow="Custom order" title="A refined object, shaped around your space.">
-        Tell us what you want to organize, display, hold, or improve. Custom pieces begin from 89 zł, with a confirmed quote before production.
+        Tell us what you want to organize, display, hold, or improve. Custom pieces begin from 189 zł, with a confirmed quote before production.
       </PageHero>
       <section className="split">
         <div>

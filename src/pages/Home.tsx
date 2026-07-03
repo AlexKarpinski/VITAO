@@ -3,7 +3,7 @@ import { ProductCard } from '../components/product/ProductCard';
 import { Button } from '../components/ui/Button';
 import { CTASection } from '../components/sections/CTASection';
 
-const heroImage = '/images/products/hero-collection.png';
+const heroImage = `${import.meta.env.BASE_URL}images/products/hero-collection.jpg`;
 
 export function Home() {
   return (
@@ -11,7 +11,7 @@ export function Home() {
       <section className="hero">
         <div>
           <p className="eyebrow">Small studio objects</p>
-          <h1>Custom printed objects for calm, modern spaces.</h1>
+          <h1>Custom objects for calm, modern spaces.</h1>
           <p>
             Functional, warm-minimal pieces for desks, homes, vanity corners, gaming setups, and the small rituals that shape everyday life.
           </p>

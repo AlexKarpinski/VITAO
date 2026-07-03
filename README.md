@@ -1,6 +1,6 @@
 # VITAO
 
-VITAO is a premium static shop MVP for small custom 3D-printed design objects.
+VITAO is a premium static shop MVP for small custom made-to-order design objects.
 
 The goal is not to look like a cheap 3D-printer store. VITAO should feel like a calm boutique product brand: warm minimalism, useful objects, refined presentation, and an easy path to request a custom piece.
 

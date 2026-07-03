@@ -203,8 +203,8 @@ Icons:
 
 Examples:
 
-- Custom printed objects for modern spaces.
-- Thoughtfully designed. Expertly printed. Made to elevate the everyday.
+- Custom objects for modern spaces.
+- Thoughtfully designed. Carefully made. Created to elevate the everyday.
 - Custom orders, crafted around you.
 - Small details. Big impact.
 - Design better spaces.

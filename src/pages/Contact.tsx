@@ -3,7 +3,7 @@ import { CTASection } from '../components/sections/CTASection';
 
 const faqs = [
   ['Do you sell ready-made products?', 'The MVP collection uses starting prices and made-to-order requests rather than checkout. Each inquiry is confirmed by conversation first.'],
-  ['Can I request a custom size?', 'Yes. Share the measurements, the object it needs to hold, and where the piece will live. Custom quotes currently start from 89 zł.'],
+  ['Can I request a custom size?', 'Yes. Share the measurements, the object it needs to hold, and where the piece will live. Custom quotes currently start from 189 zł.'],
   ['How are prices confirmed?', 'Product pages show starting prices. Final pricing depends on size, finish, and customization, and is confirmed before production begins.'],
   ['Are there payments on the site?', 'No. This static MVP is designed to start conversations before checkout or payment tools are added.'],
 ];

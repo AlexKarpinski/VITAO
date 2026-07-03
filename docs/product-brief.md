@@ -2,7 +2,7 @@
 
 ## One-Line Concept
 
-VITAO is a premium small studio brand for custom 3D-printed objects that make everyday spaces more organized, useful, and beautiful.
+VITAO is a premium small studio brand for custom made-to-order objects that make everyday spaces more organized, useful, and beautiful.
 
 ## What VITAO Is
 
@@ -78,15 +78,15 @@ Start with a small curated collection:
 
 For MVP, use simple starting prices or price ranges:
 
-- `From 35 zł` for smaller desk and home accessories
-- `From 49 zł` to `From 79 zł` for trays, stands, and larger organizers
-- `Quotes from 89 zł` for custom-fit pieces
+- `From 135 zł` for smaller desk and home accessories
+- `From 149 zł` to `From 179 zł` for trays, stands, and larger organizers
+- `Quotes from 189 zł` for custom-fit pieces
 
 Avoid building checkout until demand is validated.
 
 ## Core Message
 
-Custom printed objects for modern spaces.
+Custom objects for modern spaces.
 
 Functional. Minimal. Made to fit your home, desk, studio, or routine.
 
@@ -96,7 +96,7 @@ Use calm, premium, clear wording. Avoid overexplaining 3D printing. Focus on out
 
 Preferred terms:
 
-- custom printed objects
+- custom objects
 - made to order
 - refined finish
 - modern spaces
