@@ -5,7 +5,7 @@ export function ProductCard({ product }: { product: Product }) {
   return (
     <article className="product-card">
       <Link className="product-card__visual" to={`/products/${product.slug}`} aria-label={`View ${product.name}`}>
-        <span>{product.category}</span>
+        <img src={product.image} alt={product.imageAlt} loading="lazy" />
       </Link>
       <div className="product-card__body">
         <p className="eyebrow">{product.category}</p>

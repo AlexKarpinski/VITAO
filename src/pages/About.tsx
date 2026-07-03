@@ -1,2 +1,25 @@
 import { PageHero } from '../components/ui/PageHero';
-export function About() { return <><PageHero eyebrow="About VITAO" title="A small studio for functional everyday objects.">VITAO creates calm, useful pieces for modern rooms and routines, with the flexibility of made-to-order production.</PageHero><section className="feature-grid"><article><h3>Thoughtful function</h3><p>Objects begin with a real surface, habit, or storage problem.</p></article><article><h3>Warm minimalism</h3><p>Forms stay quiet so they can live naturally in homes, desks, and studios.</p></article><article><h3>Made with care</h3><p>Small batches keep the process flexible and personal without becoming complicated.</p></article></section></>; }
+
+export function About() {
+  return (
+    <>
+      <PageHero eyebrow="About VITAO" title="A small studio for functional everyday objects.">
+        VITAO creates calm, useful pieces for modern rooms and routines, combining made-to-order flexibility with a refined studio sensibility.
+      </PageHero>
+      <section className="feature-grid">
+        <article>
+          <h3>Thoughtful function</h3>
+          <p>Each object starts with a real surface, habit, or storage problem before the form is refined.</p>
+        </article>
+        <article>
+          <h3>Warm minimalism</h3>
+          <p>Quiet shapes and neutral finishes help pieces live naturally in homes, workspaces, and studios.</p>
+        </article>
+        <article>
+          <h3>Made with care</h3>
+          <p>Small-batch production keeps the process personal, flexible, and focused on the details that matter.</p>
+        </article>
+      </section>
+    </>
+  );
+}
