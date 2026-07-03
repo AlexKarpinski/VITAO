@@ -16,5 +16,8 @@ export type Product = {
   dimensions: string;
   colors: string[];
   materials: string[];
+  image: string;
+  imageAlt: string;
+  gallery?: string[];
   featured?: boolean;
 };

@@ -78,9 +78,9 @@ Start with a small curated collection:
 
 For MVP, use simple starting prices or price ranges:
 
-- `From 29 zł`
-- `From 49 zł`
-- `Custom quote`
+- `From 35 zł` for smaller desk and home accessories
+- `From 49 zł` to `From 79 zł` for trays, stands, and larger organizers
+- `Quotes from 89 zł` for custom-fit pieces
 
 Avoid building checkout until demand is validated.
 

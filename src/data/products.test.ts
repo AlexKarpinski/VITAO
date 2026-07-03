@@ -14,4 +14,13 @@ describe('product helpers', () => {
     expect(findProductBySlug('not-a-product')).toBeUndefined();
     expect(findProductBySlug(undefined)).toBeUndefined();
   });
+
+  it('provides accessible local image metadata for every product', () => {
+    products.forEach((product) => {
+      expect(product.image).toMatch(/\.svg$/);
+      expect(product.imageAlt.trim().length).toBeGreaterThan(20);
+      expect(product.imageAlt.toLowerCase()).toContain(product.name.toLowerCase().split(' ')[0]);
+    });
+  });
+
 });
