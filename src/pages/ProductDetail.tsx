@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router-dom';
 import { findProductBySlug, products } from '../data/products';
 import { ProductCard } from '../components/product/ProductCard';
 import { Button } from '../components/ui/Button';
+import { requestResponseTime } from '../data/customRequest';
 
 export function ProductDetail() {
   const { slug } = useParams();
@@ -13,6 +14,7 @@ export function ProductDetail() {
 
   const related = products.filter((item) => item.category === product.category && item.id !== product.id).slice(0, 3);
   const gallery = product.gallery?.length ? product.gallery : [product.image];
+  const requestPath = `/custom?product=${encodeURIComponent(product.name)}`;
 
   return (
     <>
@@ -35,7 +37,8 @@ export function ProductDetail() {
             <p><strong>Colors</strong>{product.colors.join(', ')}</p>
             <p><strong>Materials</strong>{product.materials.join(', ')}</p>
           </div>
-          <div className="actions"><Button to="/custom">Request this piece</Button><Button to="/custom" variant="secondary">Customise it</Button></div>
+          <div className="actions"><Button to={requestPath}>Ask about this piece</Button><Button to={requestPath} variant="secondary">Customise it</Button></div>
+          <p className="response-note">{requestResponseTime}</p>
         </div>
       </section>
       {related.length > 0 && <section className="section"><p className="eyebrow">Related</p><h2>Similar pieces</h2><div className="product-grid">{related.map((item) => <ProductCard key={item.id} product={item} />)}</div></section>}
