@@ -74,6 +74,8 @@ Start with a small curated collection:
 - Wave Catch-All Dish
 - Stackable Catch-All
 
+For product expansion strategy, assortment guardrails, and the next 10 product concepts to validate, see [Product Catalog Strategy](product-catalog-strategy.md).
+
 ## Pricing Approach
 
 For MVP, use simple starting prices or price ranges:
