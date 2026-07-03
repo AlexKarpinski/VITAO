@@ -1,0 +1,17 @@
+{
+  "name": "VITAO",
+  "short_name": "VITAO",
+  "description": "Custom objects for calm, modern spaces.",
+  "start_url": "/VITAO/",
+  "display": "standalone",
+  "background_color": "#F7F3EC",
+  "theme_color": "#F7F3EC",
+  "icons": [
+    {
+      "src": "/VITAO/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
