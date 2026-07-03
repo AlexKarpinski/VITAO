@@ -51,6 +51,11 @@ src/
   types/         # Shared TypeScript types
 ```
 
+## Launch Planning Docs
+
+- [Launch QA pass](docs/launch-qa.md)
+- [Launch measurement plan](docs/launch-measurement.md)
+
 ## Local Development
 
 Install dependencies:
