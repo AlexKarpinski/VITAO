@@ -18,11 +18,11 @@ The MVP helps visitors:
 ## Initial Pages
 
 - `/` — Home / landing page
-- `/products` — Product catalog
-- `/products/:slug` — Product detail page
-- `/custom` — Custom order inquiry
-- `/about` — Brand / studio story
-- `/contact` — Contact + FAQ
+- `/#/products` — Product catalog
+- `/#/products/:slug` — Product detail page
+- `/#/custom` — Custom order inquiry
+- `/#/about` — Brand / studio story
+- `/#/contact` — Contact + FAQ
 
 ## Tech Stack
 
@@ -77,6 +77,13 @@ Preview the production build locally:
 npm run preview
 ```
 
+Run unit tests:
+
+```bash
+npm run test -- --run
+```
+
 ## GitHub Pages Notes
 
 The Vite config uses `/VITAO/` as the production base path so the generated assets work when deployed under a GitHub Pages project site URL such as `https://<user>.github.io/VITAO/`.
+The app uses hash routing (`/#/...`) so direct links and refreshes on nested product or custom-order pages stay GitHub Pages-safe without a backend rewrite.

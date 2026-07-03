@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { createHashRouter, RouterProvider } from 'react-router-dom';
 import { Layout } from './components/layout/Layout';
 import { Home } from './pages/Home';
 import { Products } from './pages/Products';
@@ -7,7 +7,7 @@ import { CustomOrder } from './pages/CustomOrder';
 import { About } from './pages/About';
 import { Contact } from './pages/Contact';
 
-const router = createBrowserRouter([
+const router = createHashRouter([
   { path: '/', element: <Layout />, children: [
     { index: true, element: <Home /> },
     { path: 'products', element: <Products /> },
@@ -16,6 +16,6 @@ const router = createBrowserRouter([
     { path: 'about', element: <About /> },
     { path: 'contact', element: <Contact /> },
   ]},
-], { basename: import.meta.env.BASE_URL });
+]);
 
 export function App() { return <RouterProvider router={router} />; }
