@@ -35,7 +35,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.project.outputs.exists == 'true'
-        run: npm ci
+        run: npm install
 
       - name: Build
         if: steps.project.outputs.exists == 'true'
