@@ -2,6 +2,8 @@ import { Link } from 'react-router-dom';
 import type { Product } from '../../types/product';
 
 export function ProductCard({ product }: { product: Product }) {
+  const requestPath = `/custom?product=${encodeURIComponent(product.name)}`;
+
   return (
     <article className="product-card">
       <Link className="product-card__visual" to={`/products/${product.slug}`} aria-label={`View ${product.name}`}>
@@ -12,6 +14,7 @@ export function ProductCard({ product }: { product: Product }) {
         <h3>{product.name}</h3>
         <p>{product.summary}</p>
         <div className="product-card__footer"><strong>{product.price}</strong><Link to={`/products/${product.slug}`}>View piece</Link></div>
+        <Link className="product-card__request" to={requestPath}>Ask about this piece</Link>
       </div>
     </article>
   );
