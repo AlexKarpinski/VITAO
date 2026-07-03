@@ -1,12 +1,6 @@
-import ridgeTrayImage from '../assets/products/ridge-tray.svg';
-import flowPenCupImage from '../assets/products/flow-pen-cup.svg';
-import modularDeskOrganizerImage from '../assets/products/modular-desk-organizer.svg';
-import duneCosmeticOrganizerImage from '../assets/products/dune-cosmetic-organizer.svg';
-import arcControllerStandImage from '../assets/products/arc-controller-stand.svg';
-import elevateHeadsetStandImage from '../assets/products/elevate-headset-stand.svg';
-import waveCatchAllDishImage from '../assets/products/wave-catch-all-dish.svg';
-import customFitObjectImage from '../assets/products/custom-fit-object.svg';
 import type { Product } from '../types/product';
+
+const productImagePath = (fileName: string) => `/images/products/${fileName}`;
 
 export const products: Product[] = [
   {
@@ -21,9 +15,9 @@ export const products: Product[] = [
     dimensions: '18 × 10 × 2 cm',
     colors: ['Warm ivory', 'Stone', 'Graphite'],
     materials: ['Matte PLA', 'Refined hand-finished edges'],
-    image: ridgeTrayImage,
+    image: productImagePath('ridge-tray.png'),
     imageAlt: 'Ridge Tray styled with a watch, keys, a pen, and small jewelry on a warm neutral surface.',
-    gallery: [ridgeTrayImage],
+    gallery: [productImagePath('ridge-tray.png')],
     featured: true,
   },
   {
@@ -38,9 +32,9 @@ export const products: Product[] = [
     dimensions: '8 × 8 × 10 cm',
     colors: ['Ivory', 'Olive', 'Taupe'],
     materials: ['Matte PLA'],
-    image: flowPenCupImage,
+    image: productImagePath('flow-pen-cup.png'),
     imageAlt: 'Ribbed Flow Pen Cup holding pens and scissors in a warm minimal desk scene.',
-    gallery: [flowPenCupImage],
+    gallery: [productImagePath('flow-pen-cup.png')],
     featured: true,
   },
   {
@@ -55,9 +49,9 @@ export const products: Product[] = [
     dimensions: '24 × 16 × 5 cm',
     colors: ['Warm ivory', 'Stone', 'Olive'],
     materials: ['Matte PLA', 'Made-to-order compartment layout'],
-    image: modularDeskOrganizerImage,
+    image: productImagePath('modular-desk-organizer.png'),
     imageAlt: 'Multi-compartment Modular Desk Organizer with stationery and small desk tools arranged inside.',
-    gallery: [modularDeskOrganizerImage],
+    gallery: [productImagePath('modular-desk-organizer.png')],
   },
   {
     id: 'dune-cosmetic-organizer',
@@ -71,9 +65,9 @@ export const products: Product[] = [
     dimensions: '22 × 12 × 5 cm',
     colors: ['Sand', 'Warm ivory', 'Clay'],
     materials: ['Matte PLA', 'Made-to-order sizing available'],
-    image: duneCosmeticOrganizerImage,
+    image: productImagePath('dune-cosmetic-organizer.png'),
     imageAlt: 'Dune Cosmetic Organizer styled with skincare bottles and a brush on a neutral vanity surface.',
-    gallery: [duneCosmeticOrganizerImage],
+    gallery: [productImagePath('dune-cosmetic-organizer.png')],
     featured: true,
   },
   {
@@ -88,9 +82,9 @@ export const products: Product[] = [
     dimensions: '12 × 10 × 8 cm',
     colors: ['Graphite', 'Stone', 'Olive'],
     materials: ['Matte PLA', 'Optional felt base'],
-    image: arcControllerStandImage,
+    image: productImagePath('arc-controller-stand.png'),
     imageAlt: 'Arc Controller Stand displaying a game controller in a warm minimal media setup.',
-    gallery: [arcControllerStandImage],
+    gallery: [productImagePath('arc-controller-stand.png')],
   },
   {
     id: 'elevate-headset-stand',
@@ -104,9 +98,9 @@ export const products: Product[] = [
     dimensions: '18 × 14 × 25 cm',
     colors: ['Graphite', 'Stone', 'Warm ivory'],
     materials: ['Matte PLA', 'Optional felt base'],
-    image: elevateHeadsetStandImage,
+    image: productImagePath('elevate-headset-stand.png'),
     imageAlt: 'Elevate Headset Stand holding a headset on a calm neutral desk surface.',
-    gallery: [elevateHeadsetStandImage],
+    gallery: [productImagePath('elevate-headset-stand.png')],
   },
   {
     id: 'wave-catch-all-dish',
@@ -120,9 +114,9 @@ export const products: Product[] = [
     dimensions: '14 × 14 × 3 cm',
     colors: ['Ivory', 'Sand', 'Clay'],
     materials: ['Matte PLA'],
-    image: waveCatchAllDishImage,
+    image: productImagePath('wave-catch-all-dish.png'),
     imageAlt: 'Wave Catch-All Dish holding jewelry and keys on a warm bedside-style surface.',
-    gallery: [waveCatchAllDishImage],
+    gallery: [productImagePath('wave-catch-all-dish.png')],
   },
   {
     id: 'custom-fit-object',
@@ -136,9 +130,9 @@ export const products: Product[] = [
     dimensions: 'Made to fit',
     colors: ['Warm neutrals', 'Graphite', 'Selected custom colors'],
     materials: ['Material selected by use case'],
-    image: customFitObjectImage,
+    image: productImagePath('hero-collection.png'),
     imageAlt: 'Custom Fit Object concept shown as a neutral studio detail for a made-to-order VITAO piece.',
-    gallery: [customFitObjectImage],
+    gallery: [productImagePath('hero-collection.png')],
   },
 ];
 

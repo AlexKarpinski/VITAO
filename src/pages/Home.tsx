@@ -1,8 +1,9 @@
-import heroImage from '../assets/products/hero-collection.svg';
 import { featuredProducts } from '../data/products';
 import { ProductCard } from '../components/product/ProductCard';
 import { Button } from '../components/ui/Button';
 import { CTASection } from '../components/sections/CTASection';
+
+const heroImage = '/images/products/hero-collection.png';
 
 export function Home() {
   return (

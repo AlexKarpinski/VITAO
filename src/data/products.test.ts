@@ -17,9 +17,12 @@ describe('product helpers', () => {
 
   it('provides accessible local image metadata for every product', () => {
     products.forEach((product) => {
-      expect(product.image).toMatch(/\.svg$/);
+      expect(product.image).toMatch(/^\/images\/products\/.+\.(jpe?g|png|webp)$/);
       expect(product.imageAlt.trim().length).toBeGreaterThan(20);
       expect(product.imageAlt.toLowerCase()).toContain(product.name.toLowerCase().split(' ')[0]);
+      product.gallery?.forEach((image) => {
+        expect(image).toMatch(/^\/images\/products\/.+\.(jpe?g|png|webp)$/);
+      });
     });
   });
 
