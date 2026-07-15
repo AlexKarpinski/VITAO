@@ -32,7 +32,7 @@ describe('LanguageProvider', () => {
   it('uses Polish by default and synchronizes the document language', () => {
     renderLanguageProvider();
 
-    expect(screen.getByTestId('language')).toHaveTextContent('pl');
+    expect(screen.getByTestId('language').textContent).toBe('pl');
     expect(window.localStorage.getItem('vitao-language')).toBe('pl');
     expect(document.documentElement.lang).toBe('pl');
   });
@@ -42,14 +42,14 @@ describe('LanguageProvider', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'English' }));
 
-    expect(screen.getByTestId('language')).toHaveTextContent('en');
+    expect(screen.getByTestId('language').textContent).toBe('en');
     expect(window.localStorage.getItem('vitao-language')).toBe('en');
     expect(document.documentElement.lang).toBe('en');
 
     view.unmount();
     renderLanguageProvider();
 
-    expect(screen.getByTestId('language')).toHaveTextContent('en');
+    expect(screen.getByTestId('language').textContent).toBe('en');
     expect(document.documentElement.lang).toBe('en');
   });
 
@@ -58,7 +58,7 @@ describe('LanguageProvider', () => {
 
     renderLanguageProvider();
 
-    expect(screen.getByTestId('language')).toHaveTextContent('pl');
+    expect(screen.getByTestId('language').textContent).toBe('pl');
     expect(document.documentElement.lang).toBe('pl');
   });
 });
