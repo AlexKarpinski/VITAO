@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LanguageProvider, useLanguage } from './LanguageContext';
 
@@ -23,6 +23,12 @@ function renderLanguageProvider() {
   );
 }
 
+async function flushEffects() {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 describe('LanguageProvider', () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -35,43 +41,40 @@ describe('LanguageProvider', () => {
 
   it('uses Polish by default and synchronizes the document language', async () => {
     renderLanguageProvider();
+    await flushEffects();
 
     expect(screen.getByTestId('language').textContent).toBe('pl');
-    await waitFor(() => {
-      expect(window.localStorage.getItem('vitao-language')).toBe('pl');
-      expect(document.documentElement.lang).toBe('pl');
-    });
+    expect(window.localStorage.getItem('vitao-language')).toBe('pl');
+    expect(document.documentElement.lang).toBe('pl');
   });
 
   it('switches to English and persists the selection', async () => {
     const view = renderLanguageProvider();
+    await flushEffects();
 
     fireEvent.click(screen.getByRole('button', { name: 'English' }));
+    await flushEffects();
 
     expect(screen.getByTestId('language').textContent).toBe('en');
-    await waitFor(() => {
-      expect(window.localStorage.getItem('vitao-language')).toBe('en');
-      expect(document.documentElement.lang).toBe('en');
-    });
+    expect(window.localStorage.getItem('vitao-language')).toBe('en');
+    expect(document.documentElement.lang).toBe('en');
 
     view.unmount();
     renderLanguageProvider();
+    await flushEffects();
 
     expect(screen.getByTestId('language').textContent).toBe('en');
-    await waitFor(() => {
-      expect(document.documentElement.lang).toBe('en');
-    });
+    expect(document.documentElement.lang).toBe('en');
   });
 
   it('falls back to Polish for an unsupported stored value', async () => {
     window.localStorage.setItem('vitao-language', 'de');
 
     renderLanguageProvider();
+    await flushEffects();
 
     expect(screen.getByTestId('language').textContent).toBe('pl');
-    await waitFor(() => {
-      expect(window.localStorage.getItem('vitao-language')).toBe('pl');
-      expect(document.documentElement.lang).toBe('pl');
-    });
+    expect(window.localStorage.getItem('vitao-language')).toBe('pl');
+    expect(document.documentElement.lang).toBe('pl');
   });
 });
