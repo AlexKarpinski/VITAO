@@ -2,8 +2,9 @@ import { ProductCard } from '../components/product/ProductCard';
 import { PageHero } from '../components/ui/PageHero';
 import { products } from '../data/products';
 import { useLanguage } from '../i18n/LanguageContext';
+import type { Product } from '../types/product';
 
-const polishProductCopy: Record<string, { category: string; summary: string; imageAlt: string }> = {
+const polishProductCopy: Record<string, Pick<Product, 'category' | 'summary' | 'imageAlt'>> = {
   'ridge-tray': {
     category: 'Biurko i praca',
     summary: 'Niska tacka na drobne przedmioty, które gromadzą się na biurku lub przy wejściu.',
@@ -48,7 +49,7 @@ const polishProductCopy: Record<string, { category: string; summary: string; ima
 
 export function Products() {
   const { language } = useLanguage();
-  const localizedProducts = language === 'pl'
+  const localizedProducts: Product[] = language === 'pl'
     ? products.map((product) => ({ ...product, ...polishProductCopy[product.id] }))
     : products;
   const categories = [...new Set(localizedProducts.map((product) => product.category))];
