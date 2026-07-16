@@ -3,7 +3,12 @@ export type ProductCategory =
   | 'Home Organization'
   | 'Cosmetic & Vanity'
   | 'Gaming & Display'
-  | 'Custom Pieces';
+  | 'Custom Pieces'
+  | 'Biurko i praca'
+  | 'Organizacja domu'
+  | 'Kosmetyki i toaletka'
+  | 'Gaming i ekspozycja'
+  | 'Projekty indywidualne';
 
 export type Product = {
   id: string;
