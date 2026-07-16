@@ -4,7 +4,8 @@ import { Language, useLanguage } from '../../i18n/LanguageContext';
 const footerContent = {
   pl: {
     tagline: 'Przedmioty na zamówienie do spokojnych, nowoczesnych wnętrz.',
-    details: 'Na zamówienie • Ciepły minimalizm • Mała pracownia',
+    details: 'Gdańsk / Trójmiasto, Polska • Dostawa na terenie całej Polski',
+    response: 'Odpowiadamy zwykle w ciągu 1–2 dni roboczych.',
     navigationLabel: 'Informacje prawne i dotyczące zamówień',
     links: [
       ['Informacje o zamówieniu', '/info/order-info'],
@@ -14,7 +15,8 @@ const footerContent = {
   },
   en: {
     tagline: 'Custom objects for calm, modern spaces.',
-    details: 'Made to order • Warm minimal • Small studio',
+    details: 'Gdańsk / Trójmiasto, Poland • Delivery across Poland',
+    response: 'We usually respond within 1–2 business days.',
     navigationLabel: 'Legal and order information',
     links: [
       ['Order information', '/info/order-info'],
@@ -22,7 +24,7 @@ const footerContent = {
       ['Terms', '/info/terms'],
     ],
   },
-} satisfies Record<Language, { tagline: string; details: string; navigationLabel: string; links: string[][] }>;
+} satisfies Record<Language, { tagline: string; details: string; response: string; navigationLabel: string; links: string[][] }>;
 
 export function Footer() {
   const { language } = useLanguage();
@@ -36,6 +38,7 @@ export function Footer() {
       </div>
       <div>
         <p>{content.details}</p>
+        <p>{content.response}</p>
       </div>
       <nav className="footer-links" aria-label={content.navigationLabel}>
         {content.links.map(([label, path]) => <Link key={path} to={path}>{label}</Link>)}
