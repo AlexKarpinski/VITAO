@@ -1,17 +1,40 @@
 import { Link, useParams } from 'react-router-dom';
 import { PageHero } from '../components/ui/PageHero';
-import { getInfoPageBySlug, infoPages } from '../data/infoPages';
+import { getInfoPageBySlug, getInfoPages } from '../data/infoPages';
+import { useLanguage } from '../i18n/LanguageContext';
+
+const labels = {
+  pl: {
+    missingEyebrow: 'Informacje',
+    missingTitle: 'Nie znaleziono tej strony.',
+    missingBody: 'Wróć do informacji o zamówieniu, prywatności lub warunków, korzystając z poniższych linków.',
+    details: 'Szczegóły',
+    navLabel: 'Informacje prawne i dotyczące zamówień',
+    important: 'Ważne informacje',
+  },
+  en: {
+    missingEyebrow: 'Information',
+    missingTitle: 'We could not find that page.',
+    missingBody: 'Return to the order information, privacy, or terms pages using the links below.',
+    details: 'Details',
+    navLabel: 'Legal and order information pages',
+    important: 'Important information',
+  },
+} as const;
 
 export function InfoPage() {
   const { slug = '' } = useParams();
-  const page = getInfoPageBySlug(slug);
+  const { language } = useLanguage();
+  const copy = labels[language];
+  const infoPages = getInfoPages(language);
+  const page = getInfoPageBySlug(slug, language);
 
   if (!page) {
     return (
       <section className="page-hero">
-        <p className="eyebrow">Information</p>
-        <h1>We could not find that page.</h1>
-        <p>Return to the order information, privacy notes, or terms pages from the links below.</p>
+        <p className="eyebrow">{copy.missingEyebrow}</p>
+        <h1>{copy.missingTitle}</h1>
+        <p>{copy.missingBody}</p>
         <div className="actions">
           {infoPages.map((infoPage) => (
             <Link className="button button--secondary" key={infoPage.slug} to={`/info/${infoPage.slug}`}>
@@ -30,9 +53,9 @@ export function InfoPage() {
       </PageHero>
       <section className="info-layout" aria-labelledby="info-page-sections">
         <aside className="info-sidebar">
-          <p className="eyebrow">Details</p>
+          <p className="eyebrow">{copy.details}</p>
           <p>{page.updatedLabel}</p>
-          <nav className="info-nav" aria-label="Legal and order information pages">
+          <nav className="info-nav" aria-label={copy.navLabel}>
             {infoPages.map((infoPage) => (
               <Link key={infoPage.slug} to={`/info/${infoPage.slug}`}>
                 {infoPage.eyebrow}
@@ -41,7 +64,7 @@ export function InfoPage() {
           </nav>
         </aside>
         <div className="info-content">
-          <h2 id="info-page-sections">Important information</h2>
+          <h2 id="info-page-sections">{copy.important}</h2>
           {page.sections.map((section) => (
             <article className="info-card" key={section.title}>
               <h3>{section.title}</h3>
