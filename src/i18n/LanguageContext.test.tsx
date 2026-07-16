@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LanguageProvider, useLanguage } from './LanguageContext';
 
 function LanguageProbe() {
@@ -27,6 +27,10 @@ describe('LanguageProvider', () => {
   beforeEach(() => {
     window.localStorage.clear();
     document.documentElement.lang = '';
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   it('uses Polish by default and synchronizes the document language', () => {
