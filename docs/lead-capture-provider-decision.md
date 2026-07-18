@@ -109,7 +109,7 @@ Reasons:
 
 ## Decision scorecard
 
-Score each viable provider from 0 (unacceptable) to 3 (strong). A provider with a zero in any mandatory category must not be selected without an explicit reviewed exception.
+Score each viable provider from 0 (unacceptable) to 3 (strong). A zero in any mandatory category is an absolute disqualifier when it conflicts with the non-negotiable constraints, including HTTPS compatibility, secret-free browser integration, server-side validation, owner review access, a confirmed visitor-facing fallback destination, or required privacy controls. Reviewed exceptions are allowed only for explicitly non-mandatory categories and must document the tradeoff and compensating control.
 
 | Category | Mandatory | Weight | Evidence to record |
 | --- | --- | ---: | --- |
