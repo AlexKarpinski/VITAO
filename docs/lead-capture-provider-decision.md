@@ -167,7 +167,7 @@ Once the owner confirms the provider and destination, the first implementation P
 4. apply and test the privacy-safe client draft lifecycle defined above;
 5. add Polish and English pending, success, validation-error, rate-limit, and service-error states;
 6. update privacy/order information with verified provider and retention facts;
-7. add tests for preview/copy fallback, success, validation rejection, provider failure, rate limiting, retained form data, expiry, clear-draft behavior, and storage failure;
+7. add tests for preview/copy fallback, success, validation rejection, provider failure, rate limiting, and retained form data; when browser storage is selected, also test expiry, clear-draft behavior, and storage failure/corruption handling;
 8. verify production submission from GitHub Pages and owner-side receipt/dashboard visibility.
 
 Provider-backed submission must not be activated until item 1 is present and tested on the same implementation branch.
