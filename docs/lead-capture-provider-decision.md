@@ -114,7 +114,7 @@ Score each viable provider from 0 (unacceptable) to 3 (strong). A zero in any ma
 | Category | Mandatory | Weight | Evidence to record |
 | --- | --- | ---: | --- |
 | Works from GitHub Pages over HTTPS | Yes | 3 | Documentation or a non-production proof |
-| Server-side validation | Yes | 3 | Configured rules plus non-production rejection proof |
+| Server-side validation | Yes | 3 | Capability documentation or a disposable candidate proof before selection; configured selected-endpoint proof before activation |
 | Spam/rate-limit protection | Yes | 3 | Built-in control or documented implementation |
 | Secret-free browser integration | Yes | 3 | Public endpoint design and secret boundaries |
 | Owner review access | Yes | 3 | Dashboard/inbox/access method |
@@ -141,7 +141,7 @@ Record links and concrete dates for:
 7. success/error response behavior;
 8. secret-management requirements;
 9. confirmed real inquiry destination visible to visitors for manual send;
-10. configured server-side schema, field limits, and a non-production proof that malformed or oversized requests are rejected.
+10. capability documentation or a disposable candidate proof showing support for server-side required fields, field-size limits, and rejection of malformed or oversized requests.
 
 Dashboard access alone is insufficient: the manual-send fallback must have a real visitor-facing destination that still works when the provider endpoint is unavailable.
 
@@ -170,7 +170,7 @@ Complete this section only after the evidence above is collected.
 Once the owner confirms the provider and destination, the first implementation PR should remain narrow:
 
 1. implement and test the generated request preview, copy control, and manual-send fallback if they are not already present on the current branch;
-2. configure and verify the provider's actual server-side schema, required fields, field-size limits, and malformed-request rejection in a non-production environment;
+2. configure and verify the selected provider's actual server-side schema, required fields, field-size limits, and malformed-request rejection in a non-production environment;
 3. add a typed submission client for the selected endpoint;
 4. preserve all current form fields, including delivery city;
 5. apply and test the privacy-safe client draft lifecycle defined above;
@@ -180,7 +180,7 @@ Once the owner confirms the provider and destination, the first implementation P
 9. verify production submission from GitHub Pages and owner-side receipt/dashboard visibility;
 10. verify that the independent visitor-facing manual-send destination is visible and usable when provider submission is unavailable.
 
-Provider-backed submission must not be activated until items 1, 2, and 10 are present and verified on the same implementation branch.
+Provider-backed submission must not be activated until all applicable items 1–10 are complete and verified on the same implementation branch. This includes the selected endpoint's configured server-side validation, privacy-safe draft lifecycle, PL/EN failure handling, verified provider and retention disclosures, required tests, owner-side receipt, and the independent visitor-facing fallback destination.
 
 ## Current blocker
 
