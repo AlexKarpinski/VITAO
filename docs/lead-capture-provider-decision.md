@@ -16,6 +16,7 @@ This document narrows the provider decision for a lightweight production-safe cu
 - Inquiry content must not be sent to analytics.
 - The selected service must provide a practical owner-facing way to review submissions.
 - A generated request preview plus copy/manual-send fallback must exist and be covered by tests before provider submission can be enabled.
+- A confirmed visitor-facing manual-send destination, independent of the provider dashboard, must exist before provider submission can be activated.
 - `hello@vitao.studio` is unverified and must not be configured or presented as a working destination.
 - Do not invent expected order volume, validated demand, production capacity, pickup, dimensions, or response-channel availability.
 
@@ -77,6 +78,7 @@ Examples of the category include hosted form-endpoint services that accept HTTPS
 - Rate limits and spam controls on the intended plan.
 - Whether email notifications expose or depend on an unverified destination.
 - Pricing after any trial or free allowance.
+- Whether the actual endpoint supports enforceable server-side field validation and size limits.
 
 ### B. Serverless function plus managed storage
 
@@ -112,10 +114,11 @@ Score each viable provider from 0 (unacceptable) to 3 (strong). A provider with 
 | Category | Mandatory | Weight | Evidence to record |
 | --- | --- | ---: | --- |
 | Works from GitHub Pages over HTTPS | Yes | 3 | Documentation or a non-production proof |
-| Server-side validation | Yes | 3 | Supported rules and failure behavior |
+| Server-side validation | Yes | 3 | Configured rules plus non-production rejection proof |
 | Spam/rate-limit protection | Yes | 3 | Built-in control or documented implementation |
 | Secret-free browser integration | Yes | 3 | Public endpoint design and secret boundaries |
 | Owner review access | Yes | 3 | Dashboard/inbox/access method |
+| Visitor-facing manual-send destination | Yes | 3 | Confirmed visible destination independent of provider dashboard |
 | Data retention and deletion controls | Yes | 3 | Provider documentation and chosen settings |
 | EU/Polish privacy suitability | Yes | 3 | Processor terms, data region, privacy notes |
 | PL/EN custom success and error UX | Yes | 2 | API behavior and frontend control |
@@ -137,7 +140,10 @@ Record links and concrete dates for:
 6. dashboard or owner-review workflow;
 7. success/error response behavior;
 8. secret-management requirements;
-9. confirmed real inquiry destination or owner dashboard access.
+9. confirmed real inquiry destination visible to visitors for manual send;
+10. configured server-side schema, field limits, and a non-production proof that malformed or oversized requests are rejected.
+
+Dashboard access alone is insufficient: the manual-send fallback must have a real visitor-facing destination that still works when the provider endpoint is unavailable.
 
 Do not copy marketing claims into the final decision without verifying the relevant plan and current documentation.
 
@@ -148,13 +154,15 @@ Complete this section only after the evidence above is collected.
 - **Decision date:** TBD
 - **Selected approach/provider:** TBD
 - **Confirmed destination/dashboard owner:** TBD
+- **Confirmed visitor-facing fallback destination:** TBD
 - **Plan and verified limits:** TBD
 - **Why this is the smallest production-safe option:** TBD
 - **Rejected alternatives and reasons:** TBD
 - **Data retention/deletion configuration:** TBD
+- **Configured server-side validation:** TBD
 - **Client draft lifecycle:** TBD
 - **Spam/rate-limit control:** TBD
-- **Rollback/fallback:** generated preview plus copy/manual send
+- **Rollback/fallback:** generated preview plus copy/manual send to the confirmed visitor-facing destination
 - **Next review date:** TBD
 
 ## Implementation slice after approval
@@ -162,16 +170,18 @@ Complete this section only after the evidence above is collected.
 Once the owner confirms the provider and destination, the first implementation PR should remain narrow:
 
 1. implement and test the generated request preview, copy control, and manual-send fallback if they are not already present on the current branch;
-2. add a typed submission client for the selected endpoint;
-3. preserve all current form fields, including delivery city;
-4. apply and test the privacy-safe client draft lifecycle defined above;
-5. add Polish and English pending, success, validation-error, rate-limit, and service-error states;
-6. update privacy/order information with verified provider and retention facts;
-7. add tests for preview/copy fallback, success, validation rejection, provider failure, rate limiting, and retained form data; when browser storage is selected, also test expiry, clear-draft behavior, and storage failure/corruption handling;
-8. verify production submission from GitHub Pages and owner-side receipt/dashboard visibility.
+2. configure and verify the provider's actual server-side schema, required fields, field-size limits, and malformed-request rejection in a non-production environment;
+3. add a typed submission client for the selected endpoint;
+4. preserve all current form fields, including delivery city;
+5. apply and test the privacy-safe client draft lifecycle defined above;
+6. add Polish and English pending, success, validation-error, rate-limit, and service-error states;
+7. update privacy/order information with verified provider and retention facts;
+8. add tests for preview/copy fallback, success, validation rejection, provider failure, rate limiting, and retained form data; when browser storage is selected, also test expiry, clear-draft behavior, and storage failure/corruption handling;
+9. verify production submission from GitHub Pages and owner-side receipt/dashboard visibility;
+10. verify that the independent visitor-facing manual-send destination is visible and usable when provider submission is unavailable.
 
-Provider-backed submission must not be activated until item 1 is present and tested on the same implementation branch.
+Provider-backed submission must not be activated until items 1, 2, and 10 are present and verified on the same implementation branch.
 
 ## Current blocker
 
-No provider or real inquiry destination is approved. Therefore this document advances the architecture decision but does not authorize code integration, production data collection, or closure of Issue #30.
+No provider or real visitor-facing inquiry destination is approved. Therefore this document advances the architecture decision but does not authorize code integration, production data collection, or closure of Issue #30.
