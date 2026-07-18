@@ -24,7 +24,7 @@ Ceny testowe zaczynają się od 149–189 zł, zależnie od modelu i personaliza
 
 Cześć! Pracuję nad pierwszą małą kolekcją organizerów do domu i biura. Zanim podejmę decyzję o dalszej produkcji, zbieram krótkie opinie od osób w Polsce.
 
-Który kierunek ma najwięcej sensu: organizer kosmetyczny, modułowy organizer biurkowy czy minimalistyczna tacka? Ceny startowe w obecnych założeniach to 149–189 zł. Nie musisz nic kupować — zależy mi na konkretnej opinii, szczególnie o cenie i możliwości personalizacji.
+Który kierunek ma najwięcej sensu: organizer kosmetyczny, modułowy organizer biurkowy czy minimalistyczna tacka? Obecne ceny testowe zaczynają się od 149–189 zł, zależnie od modelu, i wymagają finalnego potwierdzenia. Nie musisz nic kupować — zależy mi na konkretnej opinii, szczególnie o cenie i możliwości personalizacji.
 
 [Link do strony lub ogłoszenia]
 
