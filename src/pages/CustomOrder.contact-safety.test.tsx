@@ -23,7 +23,7 @@ describe('CustomOrder contact safety', () => {
     cleanup();
   });
 
-  it('keeps the Polish page explicit about the inactive destination without exposing a mail link', () => {
+  it('keeps the Polish-first page explicit about the inactive destination without exposing a mail link', () => {
     renderPage();
 
     expect(
@@ -32,6 +32,7 @@ describe('CustomOrder contact safety', () => {
     expect(screen.queryByText(/hello@vitao\.studio/i)).not.toBeInTheDocument();
     expect(document.querySelector('a[href^="mailto:"]')).toBeNull();
     expect(screen.queryByText(/official inquiry destination/i)).not.toBeInTheDocument();
+    expect(document.documentElement.lang).toBe('pl');
   });
 
   it('shows only the English contact instruction when English is selected', () => {
