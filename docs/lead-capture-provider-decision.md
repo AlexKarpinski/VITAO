@@ -119,7 +119,7 @@ Score each viable provider from 0 (unacceptable) to 3 (strong). A zero in any ma
 | Secret-free browser integration | Yes | 3 | Public endpoint design and secret boundaries |
 | Owner review access | Yes | 3 | Dashboard/inbox/access method |
 | Visitor-facing manual-send destination | Yes | 3 | Confirmed visible destination independent of provider dashboard |
-| Data retention and deletion controls | Yes | 3 | Provider documentation and chosen settings |
+| Data retention and deletion controls | Yes | 3 | Provider documentation before selection; applied selected-endpoint settings and verification before activation |
 | EU/Polish privacy suitability | Yes | 3 | Processor terms, data region, privacy notes |
 | PL/EN custom success and error UX | Yes | 2 | API behavior and frontend control |
 | Preserves current form data on failure | Yes | 2 | Tested active-session behavior and draft lifecycle |
@@ -158,7 +158,7 @@ Complete this section only after the evidence above is collected.
 - **Plan and verified limits:** TBD
 - **Why this is the smallest production-safe option:** TBD
 - **Rejected alternatives and reasons:** TBD
-- **Data retention/deletion configuration:** TBD
+- **Data retention/deletion configuration and verification:** TBD
 - **Configured server-side validation:** TBD
 - **Configured spam/rate-limit/origin controls:** TBD
 - **Client draft lifecycle:** TBD
@@ -172,16 +172,17 @@ Once the owner confirms the provider and destination, the first implementation P
 1. implement and test the generated request preview, copy control, and manual-send fallback if they are not already present on the current branch;
 2. configure and verify the selected provider's actual server-side schema, required fields, field-size limits, and malformed-request rejection in a non-production environment;
 3. configure the selected endpoint's available spam protection, rate limiting, and origin allowlist or equivalent abuse controls, then verify the effective behavior in a non-production environment;
-4. add a typed submission client for the selected endpoint;
-5. preserve all current form fields, including delivery city;
-6. apply and test the privacy-safe client draft lifecycle defined above;
-7. add Polish and English pending, success, validation-error, rate-limit, and service-error states;
-8. update privacy/order information with verified provider and retention facts;
-9. add tests for preview/copy fallback, success, validation rejection, provider failure, rate limiting, origin/abuse rejection when supported, and retained form data; when browser storage is selected, also test expiry, clear-draft behavior, and storage failure/corruption handling;
-10. verify production submission from GitHub Pages and owner-side receipt/dashboard visibility;
-11. verify that the independent visitor-facing manual-send destination is visible and usable when provider submission is unavailable.
+4. apply the approved provider-side retention and deletion settings, verify them in a non-production environment where possible, and record the evidence and owner deletion workflow;
+5. add a typed submission client for the selected endpoint;
+6. preserve all current form fields, including delivery city;
+7. apply and test the privacy-safe client draft lifecycle defined above;
+8. add Polish and English pending, success, validation-error, rate-limit, and service-error states;
+9. update privacy/order information with verified provider, retention, deletion, and access facts;
+10. add tests for preview/copy fallback, success, validation rejection, provider failure, rate limiting, origin/abuse rejection when supported, and retained form data; when browser storage is selected, also test expiry, clear-draft behavior, and storage failure/corruption handling;
+11. verify production submission from GitHub Pages and owner-side receipt/dashboard visibility;
+12. verify that the independent visitor-facing manual-send destination is visible and usable when provider submission is unavailable.
 
-Provider-backed submission must not be activated until all applicable items 1–11 are complete and verified on the same implementation branch. This includes the selected endpoint's configured server-side validation and abuse controls, privacy-safe draft lifecycle, PL/EN failure handling, verified provider and retention disclosures, required tests, owner-side receipt, and the independent visitor-facing fallback destination.
+Provider-backed submission must not be activated until all applicable items 1–12 are complete and verified on the same implementation branch. This includes the selected endpoint's configured server-side validation and abuse controls, applied and verified retention/deletion settings, privacy-safe draft lifecycle, PL/EN failure handling, verified provider and retention disclosures, required tests, owner-side receipt, and the independent visitor-facing fallback destination.
 
 ## Current blocker
 
