@@ -107,7 +107,7 @@ Rules:
 - One row is required for every acceptance criterion defined for the selected product and revision.
 - Record orientation, repeated assembly, support-free printing, fit, packaging, slicer data, and other product-specific checks whenever the specification requires them.
 - `Not tested` is permitted only when accompanied by a blocker and follow-up action.
-- A GO decision is prohibited while any mandatory criterion is omitted, failed without accepted remediation, or marked `Not tested`.
+- A GO decision is prohibited while any mandatory criterion is omitted, marked `Not tested`, or has a failing result. A failed mandatory criterion requires REWORK, implementation of the remediation, and a passing retest on the applicable prototype revision before GO can be selected.
 - If the specification changes, update this record or create a new revision-specific record before relying on the previous result.
 
 ## 8. Buyer-use test
@@ -196,5 +196,5 @@ This evidence record is complete only when:
 - packaging and delivery risks are recorded;
 - affected buyer-facing claims are traced to a keep, correct, qualify, or remove action;
 - a GO, REWORK, or DROP decision has an evidence-based rationale;
-- GO is selected only when all mandatory product-specific criteria pass or have an explicitly accepted evidence-backed disposition;
+- GO is selected only when every mandatory product-specific criterion passes on the applicable prototype revision; an accepted remediation plan or disposition does not replace a passing retest;
 - no unverified fact is presented as measured or customer-validated.
