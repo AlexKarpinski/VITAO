@@ -9,16 +9,18 @@ This document defines evidence requirements. It does not prove that a deployment
 - Verification date and time (Europe/Warsaw):
 - Verifier:
 - Expected `main` commit SHA:
-- Deployed commit SHA or immutable build identifier:
+- Deployed commit SHA, when exposed:
+- Immutable deployment/build identifier, when exposed:
+- Evidence linking the deployment/build identifier to the expected commit SHA:
 - GitHub Pages deployment/workflow URL:
 - Production URL: `https://alexkarpinski.github.io/VITAO/`
 - Browser and version:
 - Mobile viewport:
 - Desktop viewport:
-- Result: `PASS`, `FAIL`, or `BLOCKED`
+- Result: `PASS`, `FAIL`, `BLOCKED`, or `N/A` for a check that does not apply to the deployed UI
 - Access limitation, when blocked:
 
-The expected and deployed identifiers must match before the deployment is reported as current. When the deployed identifier cannot be obtained, report deployment drift as unverified rather than assuming that production matches `main`.
+When production exposes a commit SHA, it must equal the expected `main` SHA. When production exposes only another immutable build or deployment identifier, record evidence from the Pages workflow or deployment metadata that associates that identifier with the expected SHA. When neither relationship can be established, report deployment drift as unverified rather than assuming that production matches `main`.
 
 ## Evidence rules
 
@@ -27,6 +29,7 @@ The expected and deployed identifiers must match before the deployment is report
 - Do not claim mobile, desktop, visual, console, network, or accessibility behavior without direct live evidence.
 - Never introduce or confirm contact details, product measurements, production data, pickup options, social channels, or user feedback without owner or physical evidence.
 - Capture the tested route, viewport, result, and supporting screenshot or browser evidence for every failure.
+- Use `N/A` only when the control or behavior is demonstrably absent from the deployed UI; include the observation that makes the check inapplicable.
 
 ## Primary route matrix
 
@@ -66,7 +69,8 @@ For every route verify:
 ## Navigation and footer
 
 - Test the primary navigation with pointer and keyboard.
-- At mobile width, open and close the menu and confirm focus remains usable.
+- At mobile width, verify the navigation remains usable without clipping or inaccessible controls.
+- When a collapsible mobile menu is present, open and close it and confirm focus remains usable. Record `N/A` when the deployed header intentionally uses flat navigation and no menu control exists.
 - Confirm the current-page state is understandable.
 - Check every footer link in both languages.
 - Confirm legal and order-information links open the intended route.
@@ -138,10 +142,10 @@ Do not create repetitive issues or comments for the same audit-environment acces
 
 A production verification is complete only when:
 
-- the deployed build identifier is known and matches the intended `main` commit;
+- the deployed commit SHA matches the intended `main` commit, or an immutable deployment/build identifier is supported by evidence linking it to that commit;
 - every primary route has live evidence at mobile and desktop widths;
 - Polish-default and English-persistence checks pass;
-- navigation, footer/legal links, images, prices, contact safety, and the currently deployed custom-request behavior pass;
+- navigation, footer/legal links, images, prices, contact safety, and the currently deployed custom-request behavior pass, with demonstrably inapplicable controls recorded as `N/A`;
 - console and failed-network checks are recorded;
 - metadata, canonical, and approved external links are checked;
 - every concrete regression is linked to an issue with evidence;
