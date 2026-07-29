@@ -85,6 +85,13 @@ type StoredDraft = {
   expiresAt: number;
 };
 
+type RestoredDraft = {
+  draft: Draft;
+  expiresAt: number | null;
+};
+
+type StatusKind = 'submitted' | 'copied' | 'copyError' | 'cleared';
+
 const EMPTY_DRAFT: Draft = {
   name: '',
   email: '',
@@ -110,15 +117,15 @@ function hasDraftContent(draft: Draft) {
   return Object.entries(draft).some(([field, value]) => field === 'quantity' ? value !== '1' : value.trim() !== '');
 }
 
-function restoreDraft(requestedProduct: string): Draft {
+function restoreDraft(requestedProduct: string): RestoredDraft {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return { ...EMPTY_DRAFT, productName: requestedProduct };
+    if (!saved) return { draft: { ...EMPTY_DRAFT, productName: requestedProduct }, expiresAt: null };
 
     const stored = JSON.parse(saved) as Partial<StoredDraft>;
     if (!stored.draft || typeof stored.expiresAt !== 'number' || stored.expiresAt <= Date.now()) {
       removeStoredDraft();
-      return { ...EMPTY_DRAFT, productName: requestedProduct };
+      return { draft: { ...EMPTY_DRAFT, productName: requestedProduct }, expiresAt: null };
     }
 
     const restored = { ...EMPTY_DRAFT };
@@ -128,10 +135,10 @@ function restoreDraft(requestedProduct: string): Draft {
     }
 
     restored.productName = requestedProduct || restored.productName;
-    return restored;
+    return { draft: restored, expiresAt: stored.expiresAt };
   } catch {
     removeStoredDraft();
-    return { ...EMPTY_DRAFT, productName: requestedProduct };
+    return { draft: { ...EMPTY_DRAFT, productName: requestedProduct }, expiresAt: null };
   }
 }
 
@@ -140,9 +147,11 @@ export function CustomOrder() {
   const { language } = useLanguage();
   const text = copy[language];
   const requestedProduct = useMemo(() => searchParams.get('product') ?? '', [searchParams]);
-  const [draft, setDraft] = useState<Draft>(() => restoreDraft(requestedProduct));
-  const [status, setStatus] = useState('');
+  const restoredDraft = useMemo(() => restoreDraft(requestedProduct), [requestedProduct]);
+  const [draft, setDraft] = useState<Draft>(restoredDraft.draft);
+  const [status, setStatus] = useState<StatusKind | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const draftExpiry = useRef<number | null>(restoredDraft.expiresAt);
   const skipNextDraftWrite = useRef(false);
 
   useEffect(() => {
@@ -158,8 +167,10 @@ export function CustomOrder() {
     }
 
     try {
-      const stored: StoredDraft = { draft, expiresAt: Date.now() + DRAFT_TTL_MS };
+      const expiresAt = draftExpiry.current ?? Date.now() + DRAFT_TTL_MS;
+      const stored: StoredDraft = { draft, expiresAt };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      draftExpiry.current = expiresAt;
     } catch {
       // Keep the request flow usable when browser storage is unavailable.
     }
@@ -176,31 +187,43 @@ export function CustomOrder() {
     `${text.labels.notes}: ${draft.notes}`,
   ].join('\n'), [draft, text]);
 
+  const statusText = status === 'submitted'
+    ? text.submitStatus
+    : status === 'copied'
+      ? text.copySuccess
+      : status === 'copyError'
+        ? text.copyError
+        : status === 'cleared'
+          ? text.clearStatus
+          : '';
+
   function updateField(field: keyof Draft, value: string) {
+    draftExpiry.current = null;
     setDraft((current) => ({ ...current, [field]: value }));
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setShowPreview(true);
-    setStatus(text.submitStatus);
+    setStatus('submitted');
   }
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(requestText);
-      setStatus(text.copySuccess);
+      setStatus('copied');
     } catch {
-      setStatus(text.copyError);
+      setStatus('copyError');
     }
   }
 
   function handleClearDraft() {
     skipNextDraftWrite.current = true;
+    draftExpiry.current = null;
     removeStoredDraft();
     setDraft({ ...EMPTY_DRAFT, productName: requestedProduct });
     setShowPreview(false);
-    setStatus(text.clearStatus);
+    setStatus('cleared');
   }
 
   return (
@@ -238,7 +261,7 @@ export function CustomOrder() {
               <button type="button" onClick={handleCopy}>{text.copyButton}</button>
             </section>
           )}
-          {status && <p className="form-note" role="status">{status}</p>}
+          {statusText && <p className="form-note" role="status">{statusText}</p>}
         </form>
       </section>
     </>
