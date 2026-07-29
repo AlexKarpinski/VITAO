@@ -1,15 +1,25 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LanguageProvider } from '../i18n/LanguageContext';
+import { LanguageProvider, useLanguage } from '../i18n/LanguageContext';
 import { CustomOrder } from './CustomOrder';
 
 const STORAGE_KEY = 'vitao-custom-request-draft';
+
+function LanguageToggle() {
+  const { language, setLanguage } = useLanguage();
+  return (
+    <button type="button" onClick={() => setLanguage(language === 'pl' ? 'en' : 'pl')}>
+      Switch language
+    </button>
+  );
+}
 
 function renderPage(initialEntry = '/custom-order') {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <LanguageProvider>
+        <LanguageToggle />
         <CustomOrder />
       </LanguageProvider>
     </MemoryRouter>,
@@ -76,6 +86,21 @@ describe('CustomOrder fallback flow', () => {
     expect(screen.getByLabelText('Imię')).toHaveValue('Alex');
     expect(screen.getByLabelText('Produkt lub pomysł')).toHaveValue('Ridge Tray');
     expect(screen.getByLabelText('Miasto dostawy')).toHaveValue('Gdańsk');
+  });
+
+  it('preserves the original expiry when a stored draft is restored without edits', async () => {
+    const expiresAt = Date.now() + 60_000;
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      storedDraft({ name: 'Alex', productName: 'Saved product' }, expiresAt),
+    );
+
+    renderPage();
+
+    await waitFor(() => {
+      const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}');
+      expect(saved.expiresAt).toBe(expiresAt);
+    });
   });
 
   it('removes an expired saved draft', () => {
@@ -153,6 +178,19 @@ describe('CustomOrder fallback flow', () => {
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith(preview.value);
       expect(screen.getByRole('status')).toHaveTextContent('Treść zapytania została skopiowana.');
     });
+  });
+
+  it('retranslates an existing status when the language changes', () => {
+    renderPage();
+    fillRequiredRequest('Organizer');
+    fireEvent.click(screen.getByRole('button', { name: 'Przygotuj zapytanie' }));
+
+    expect(screen.getByRole('status')).toHaveTextContent('Zapytanie jest gotowe.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch language' }));
+
+    expect(screen.getByRole('status')).toHaveTextContent('Your inquiry is ready.');
+    expect(screen.getByRole('status')).not.toHaveTextContent('Zapytanie jest gotowe.');
   });
 
   it('clears the saved draft and preview on request', async () => {
