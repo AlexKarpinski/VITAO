@@ -152,6 +152,7 @@ export function CustomOrder() {
   const [status, setStatus] = useState<StatusKind | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const draftExpiry = useRef<number | null>(restoredDraft.expiresAt);
+  const copiedRequestText = useRef<string | null>(null);
   const skipNextDraftWrite = useRef(false);
 
   useEffect(() => {
@@ -176,6 +177,30 @@ export function CustomOrder() {
     }
   }, [draft]);
 
+  useEffect(() => {
+    const expiresAt = draftExpiry.current;
+    if (!expiresAt || !hasDraftContent(draft)) return;
+
+    const clearExpiredDraft = () => {
+      skipNextDraftWrite.current = true;
+      draftExpiry.current = null;
+      copiedRequestText.current = null;
+      removeStoredDraft();
+      setDraft({ ...EMPTY_DRAFT, productName: requestedProduct });
+      setShowPreview(false);
+      setStatus(null);
+    };
+
+    const remainingTtl = expiresAt - Date.now();
+    if (remainingTtl <= 0) {
+      clearExpiredDraft();
+      return;
+    }
+
+    const timeoutId = window.setTimeout(clearExpiredDraft, remainingTtl);
+    return () => window.clearTimeout(timeoutId);
+  }, [draft, requestedProduct]);
+
   const requestText = useMemo(() => [
     `${text.labels.name}: ${draft.name}`,
     `${text.labels.email}: ${draft.email}`,
@@ -186,6 +211,13 @@ export function CustomOrder() {
     `${text.labels.city}: ${draft.deliveryCity}`,
     `${text.labels.notes}: ${draft.notes}`,
   ].join('\n'), [draft, text]);
+
+  useEffect(() => {
+    if (status === 'copied' && copiedRequestText.current !== requestText) {
+      copiedRequestText.current = null;
+      setStatus(null);
+    }
+  }, [requestText, status]);
 
   const statusText = status === 'submitted'
     ? text.submitStatus
@@ -211,8 +243,10 @@ export function CustomOrder() {
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(requestText);
+      copiedRequestText.current = requestText;
       setStatus('copied');
     } catch {
+      copiedRequestText.current = null;
       setStatus('copyError');
     }
   }
@@ -220,6 +254,7 @@ export function CustomOrder() {
   function handleClearDraft() {
     skipNextDraftWrite.current = true;
     draftExpiry.current = null;
+    copiedRequestText.current = null;
     removeStoredDraft();
     setDraft({ ...EMPTY_DRAFT, productName: requestedProduct });
     setShowPreview(false);
