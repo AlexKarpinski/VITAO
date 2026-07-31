@@ -113,6 +113,17 @@ function removeStoredDraft() {
   }
 }
 
+function getStoredDraftExpiry() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return null;
+    const stored = JSON.parse(saved) as Partial<StoredDraft>;
+    return typeof stored.expiresAt === 'number' ? stored.expiresAt : null;
+  } catch {
+    return null;
+  }
+}
+
 function hasDraftContent(draft: Draft) {
   return Object.entries(draft).some(([field, value]) => field === 'quantity' ? value !== '1' : value.trim() !== '');
 }
@@ -178,8 +189,10 @@ export function CustomOrder() {
   }, [draft]);
 
   useEffect(() => {
-    const expiresAt = draftExpiry.current;
-    if (!expiresAt || !hasDraftContent(draft)) return;
+    const initialExpiresAt = draftExpiry.current;
+    if (!initialExpiresAt || !hasDraftContent(draft)) return;
+
+    let timeoutId: number;
 
     const clearExpiredDraft = () => {
       skipNextDraftWrite.current = true;
@@ -191,13 +204,31 @@ export function CustomOrder() {
       setStatus(null);
     };
 
-    const remainingTtl = expiresAt - Date.now();
-    if (remainingTtl <= 0) {
-      clearExpiredDraft();
-      return;
-    }
+    const scheduleCleanup = (expectedExpiresAt: number) => {
+      const remainingTtl = expectedExpiresAt - Date.now();
+      if (remainingTtl <= 0) {
+        const storedExpiresAt = getStoredDraftExpiry();
+        if (storedExpiresAt && storedExpiresAt !== expectedExpiresAt) {
+          draftExpiry.current = storedExpiresAt;
+          scheduleCleanup(storedExpiresAt);
+          return;
+        }
+        clearExpiredDraft();
+        return;
+      }
 
-    const timeoutId = window.setTimeout(clearExpiredDraft, remainingTtl);
+      timeoutId = window.setTimeout(() => {
+        const storedExpiresAt = getStoredDraftExpiry();
+        if (storedExpiresAt && storedExpiresAt !== expectedExpiresAt) {
+          draftExpiry.current = storedExpiresAt;
+          scheduleCleanup(storedExpiresAt);
+          return;
+        }
+        clearExpiredDraft();
+      }, remainingTtl);
+    };
+
+    scheduleCleanup(initialExpiresAt);
     return () => window.clearTimeout(timeoutId);
   }, [draft, requestedProduct]);
 
