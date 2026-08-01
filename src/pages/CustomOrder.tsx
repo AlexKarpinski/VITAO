@@ -113,15 +113,30 @@ function removeStoredDraft() {
   }
 }
 
-function getStoredDraftExpiry() {
+function sanitizeStoredDraft(stored: Partial<StoredDraft>): RestoredDraft | null {
+  if (!stored.draft || typeof stored.expiresAt !== 'number' || stored.expiresAt <= Date.now()) return null;
+
+  const draft = { ...EMPTY_DRAFT };
+  for (const field of DRAFT_FIELDS) {
+    const value = stored.draft[field];
+    if (typeof value === 'string') draft[field] = value;
+  }
+
+  return { draft, expiresAt: stored.expiresAt };
+}
+
+function readStoredDraft(): RestoredDraft | null {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return null;
-    const stored = JSON.parse(saved) as Partial<StoredDraft>;
-    return typeof stored.expiresAt === 'number' ? stored.expiresAt : null;
+    return sanitizeStoredDraft(JSON.parse(saved) as Partial<StoredDraft>);
   } catch {
     return null;
   }
+}
+
+function getStoredDraftExpiry() {
+  return readStoredDraft()?.expiresAt ?? null;
 }
 
 function hasDraftContent(draft: Draft) {
@@ -129,28 +144,16 @@ function hasDraftContent(draft: Draft) {
 }
 
 function restoreDraft(requestedProduct: string): RestoredDraft {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return { draft: { ...EMPTY_DRAFT, productName: requestedProduct }, expiresAt: null };
-
-    const stored = JSON.parse(saved) as Partial<StoredDraft>;
-    if (!stored.draft || typeof stored.expiresAt !== 'number' || stored.expiresAt <= Date.now()) {
-      removeStoredDraft();
-      return { draft: { ...EMPTY_DRAFT, productName: requestedProduct }, expiresAt: null };
-    }
-
-    const restored = { ...EMPTY_DRAFT };
-    for (const field of DRAFT_FIELDS) {
-      const value = stored.draft[field];
-      if (typeof value === 'string') restored[field] = value;
-    }
-
-    restored.productName = requestedProduct || restored.productName;
-    return { draft: restored, expiresAt: stored.expiresAt };
-  } catch {
+  const stored = readStoredDraft();
+  if (!stored) {
     removeStoredDraft();
     return { draft: { ...EMPTY_DRAFT, productName: requestedProduct }, expiresAt: null };
   }
+
+  return {
+    draft: { ...stored.draft, productName: requestedProduct || stored.draft.productName },
+    expiresAt: stored.expiresAt,
+  };
 }
 
 export function CustomOrder() {
@@ -261,8 +264,15 @@ export function CustomOrder() {
           : '';
 
   function updateField(field: keyof Draft, value: string) {
+    const latestStored = readStoredDraft();
     draftExpiry.current = null;
-    setDraft((current) => ({ ...current, [field]: value }));
+    copiedRequestText.current = null;
+    setShowPreview(false);
+    setStatus(null);
+    setDraft((current) => ({
+      ...(latestStored && latestStored.expiresAt !== draftExpiry.current ? latestStored.draft : current),
+      [field]: value,
+    }));
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
