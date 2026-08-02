@@ -104,7 +104,11 @@ describe('CustomOrder concurrent edits and prepared-state validity', () => {
     const pendingCopy = new Promise<void>((_resolve, reject) => {
       rejectCopy = reject;
     });
-    vi.spyOn(navigator.clipboard, 'writeText').mockReturnValue(pendingCopy);
+    const writeText = vi.fn().mockReturnValue(pendingCopy);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
 
     renderPage();
     fillRequiredRequest();
