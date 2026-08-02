@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LanguageProvider } from '../i18n/LanguageContext';
 import { CustomOrder } from './CustomOrder';
 
@@ -34,6 +34,7 @@ describe('CustomOrder concurrent edits and prepared-state validity', () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
   });
 
   it('merges the latest stored draft before a stale tab writes one edited field', async () => {
@@ -96,5 +97,26 @@ describe('CustomOrder concurrent edits and prepared-state validity', () => {
 
     expect(screen.queryByRole('heading', { name: 'Podgląd zapytania' })).not.toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('ignores a pending clipboard rejection after the prepared request is invalidated', async () => {
+    let rejectCopy: (reason?: unknown) => void = () => undefined;
+    const pendingCopy = new Promise<void>((_resolve, reject) => {
+      rejectCopy = reject;
+    });
+    vi.spyOn(navigator.clipboard, 'writeText').mockReturnValue(pendingCopy);
+
+    renderPage();
+    fillRequiredRequest();
+    fireEvent.click(screen.getByRole('button', { name: 'Przygotuj zapytanie' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Kopiuj zapytanie' }));
+
+    fireEvent.change(screen.getByLabelText('E-mail'), { target: { value: '' } });
+    rejectCopy(new Error('Clipboard denied'));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Nie udało się skopiować automatycznie/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
   });
 });
