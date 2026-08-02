@@ -167,6 +167,7 @@ export function CustomOrder() {
   const [showPreview, setShowPreview] = useState(false);
   const draftExpiry = useRef<number | null>(restoredDraft.expiresAt);
   const copiedRequestText = useRef<string | null>(null);
+  const copyAttempt = useRef(0);
   const skipNextDraftWrite = useRef(false);
 
   useEffect(() => {
@@ -198,6 +199,7 @@ export function CustomOrder() {
     let timeoutId: number;
 
     const clearExpiredDraft = () => {
+      copyAttempt.current += 1;
       skipNextDraftWrite.current = true;
       draftExpiry.current = null;
       copiedRequestText.current = null;
@@ -265,6 +267,7 @@ export function CustomOrder() {
 
   function updateField(field: keyof Draft, value: string) {
     const latestStored = readStoredDraft();
+    copyAttempt.current += 1;
     draftExpiry.current = null;
     copiedRequestText.current = null;
     setShowPreview(false);
@@ -282,17 +285,24 @@ export function CustomOrder() {
   }
 
   async function handleCopy() {
+    const attempt = copyAttempt.current + 1;
+    copyAttempt.current = attempt;
+    const attemptedRequestText = requestText;
+
     try {
-      await navigator.clipboard.writeText(requestText);
-      copiedRequestText.current = requestText;
+      await navigator.clipboard.writeText(attemptedRequestText);
+      if (copyAttempt.current !== attempt) return;
+      copiedRequestText.current = attemptedRequestText;
       setStatus('copied');
     } catch {
+      if (copyAttempt.current !== attempt) return;
       copiedRequestText.current = null;
       setStatus('copyError');
     }
   }
 
   function handleClearDraft() {
+    copyAttempt.current += 1;
     skipNextDraftWrite.current = true;
     draftExpiry.current = null;
     copiedRequestText.current = null;
