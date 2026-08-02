@@ -188,7 +188,7 @@ export function CustomOrder() {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
       draftExpiry.current = expiresAt;
     } catch {
-      // Keep the request flow usable when browser storage is unavailable.
+      draftExpiry.current = getStoredDraftExpiry();
     }
   }, [draft]);
 
