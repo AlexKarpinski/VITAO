@@ -266,6 +266,7 @@ export function CustomOrder() {
           : '';
 
   function updateField(field: keyof Draft, value: string) {
+    const previousExpiry = draftExpiry.current;
     const latestStored = readStoredDraft();
     copyAttempt.current += 1;
     draftExpiry.current = null;
@@ -273,7 +274,7 @@ export function CustomOrder() {
     setShowPreview(false);
     setStatus(null);
     setDraft((current) => ({
-      ...(latestStored && latestStored.expiresAt !== draftExpiry.current ? latestStored.draft : current),
+      ...(latestStored && latestStored.expiresAt !== previousExpiry ? latestStored.draft : current),
       [field]: value,
     }));
   }
