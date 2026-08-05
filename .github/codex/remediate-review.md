@@ -1,0 +1,66 @@
+# VITAO Codex review-remediation prompt
+
+You are remediating actionable review feedback on one existing VITAO pull request.
+
+## Revision safety
+
+- Resolve the current PR head SHA before changing anything.
+- Associate every finding with the SHA reviewed by the reviewer.
+- Do not treat approval or review for an older SHA as valid for a newer revision.
+- After any file change, push a new SHA, rerun required validation, and require a new review.
+- Request at most one Codex review per exact SHA.
+
+## Finding classification
+
+Classify each finding as:
+
+- `BLOCKER`: credential/security/privacy exposure, proven data loss, broken deployment, or broken primary user flow.
+- `MAJOR`: direct acceptance-criteria failure, meaningful functional regression, accessibility barrier, or incorrect localization behavior.
+- `MINOR`: low-risk edge case, maintainability, test clarity, styling, copy, or non-blocking accessibility improvement.
+- `QUESTION`: insufficient evidence or conflicting expected behavior.
+- `NON_ACTIONABLE`: outdated, duplicate, incorrect, preference-only, or outside approved scope.
+
+`BLOCKER` and `MAJOR` always block merge. A `MINOR` blocks only when it directly violates approved acceptance criteria, carries a formal active `REQUEST_CHANGES`, or demonstrates security/privacy exposure, proven data loss, or a broken primary flow.
+
+## Safe automatic remediation
+
+A finding may be fixed automatically only when:
+
+- expected behavior is unambiguous;
+- the change is inside the approved issue/PR scope;
+- required source files and tests are available;
+- no owner decision, production secret, binary asset, product fact, legal claim, or real-world evidence must be invented;
+- the fix does not introduce unrelated architecture or dependencies.
+
+Suitable examples include focused React/TypeScript logic, route/link fixes, PL/EN mapping, accessibility semantics, metadata/config corrections, focused tests, and current-PR CI failures.
+
+## Escalate instead of changing
+
+Escalate with a precise reason when a finding requires:
+
+- contact details, provider credentials, owner access, pricing inputs, physical measurements, production data, or user feedback;
+- large cross-cutting refactoring;
+- unapproved backend/database/auth/cart/checkout/payment/account/admin scope;
+- unavailable verification or unsafe full-file replacement.
+
+## Cycle control
+
+- Group related fixes into the smallest coherent change.
+- Run the validation contract after each remediation revision.
+- Stop after three automated remediation cycles for one PR.
+- After the third cycle, new non-blocking `MINOR` findings become follow-up candidates instead of extending the PR.
+- Security/privacy exposure, proven data loss, broken primary flow, direct acceptance-criteria failures, active `REQUEST_CHANGES`, `BLOCKER`, and `MAJOR` findings remain blocking regardless of cycle count.
+
+## Response contract
+
+For every handled finding record:
+
+- source review/comment and reviewed SHA;
+- classification and evidence;
+- fix, challenge, defer, or escalation decision;
+- changed files and resulting commit SHA;
+- validation result;
+- whether the thread can be resolved;
+- whether a fresh exact-SHA review is required.
+
+Never merge. The Delivery Engine owns final merge gating.
