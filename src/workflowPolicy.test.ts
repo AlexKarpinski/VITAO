@@ -137,8 +137,8 @@ async function runScript(options: {
 describe('Codex issue trigger policy', () => {
   it('runs only for newly created issue comments', () => {
     const on = indentedBlock(workflow, 'on', 0);
+    expect(on.trim()).toBe('issue_comment:\n    types: [created]');
     expect(mapping(on, 'issue_comment', 2)).toEqual({ types: '[created]' });
-    expect(on).not.toMatch(/^  [^\s#][^:]*:/m);
   });
 
   it('accepts only the exact command from trusted repository participants', () => {
