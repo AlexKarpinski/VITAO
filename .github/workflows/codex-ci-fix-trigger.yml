@@ -15,30 +15,39 @@ jobs:
   ask-codex:
     if: github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
+    concurrency:
+      group: codex-ci-fix-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
+      cancel-in-progress: false
 
     steps:
       - name: Ask Codex to fix failed CI
         uses: actions/github-script@v7
         with:
           script: |
-            const prs = context.payload.workflow_run.pull_requests || [];
+            const workflowRun = context.payload.workflow_run;
+            const prs = workflowRun.pull_requests || [];
 
-            if (!prs.length) {
-              core.info('No PR found for this failed workflow run. Skipping.');
+            if (prs.length !== 1) {
+              core.info(`Expected exactly one PR for this failed workflow run; found ${prs.length}. Skipping.`);
               return;
             }
 
-            const pr = prs[0];
-            const prNumber = pr.number;
+            const prNumber = prs[0].number;
+            const requestMarker = `<!-- codex-ci-fix-requested:${workflowRun.id}:${workflowRun.head_sha} -->`;
+            const requestPrefix = '@codex fix the CI failures in this PR.';
 
-            const { data: issue } = await github.rest.issues.get({
+            const { data: pullRequest } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: prNumber,
+              pull_number: prNumber,
             });
 
-            const labels = issue.labels.map((label) => label.name);
+            if (pullRequest.state !== 'open' || pullRequest.head.sha !== workflowRun.head_sha) {
+              core.info('The pull request is closed or has moved beyond the failed workflow SHA. Skipping stale remediation.');
+              return;
+            }
 
+            const labels = pullRequest.labels.map((label) => label.name);
             if (!labels.includes('codex-auto-fix')) {
               core.info('PR does not have codex-auto-fix label. Skipping.');
               return;
@@ -51,28 +60,40 @@ jobs:
               per_page: 100,
             });
 
-            const alreadyAskedForThisRun = comments.some((comment) =>
-              comment.body?.includes(`workflow run ${context.payload.workflow_run.id}`)
-            );
+            const alreadyAskedForThisRun = comments.some((comment) => {
+              if (comment.user?.login !== 'github-actions[bot]' || comment.user?.type !== 'Bot') {
+                return false;
+              }
+
+              return (comment.body ?? '').startsWith(`${requestMarker}\n${requestPrefix}`);
+            });
 
             if (alreadyAskedForThisRun) {
-              core.info('Codex was already asked to fix this workflow run. Skipping.');
+              core.info('A trusted Codex CI-fix request already exists for this workflow run and SHA. Skipping.');
               return;
             }
+
+            const requestBody = [
+              requestMarker,
+              requestPrefix,
+              '',
+              `Failed workflow run ${workflowRun.id}: ${workflowRun.html_url}`,
+              `Failed head SHA: ${workflowRun.head_sha}`,
+              '',
+              'Please:',
+              '- inspect this exact failed GitHub Actions run;',
+              '- confirm the PR head still matches the failed SHA before editing;',
+              '- fix only CI, build, dependency, or test issues;',
+              '- run install, build, and tests;',
+              '- push the fix to the same PR branch;',
+              '- do not create a new PR;',
+              '- keep scope limited to making CI green;',
+              '- do not expose credentials or introduce unsupported product or architecture scope.',
+            ].join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              body: `@codex fix the CI failures in this PR.
-
-Failed workflow run ${context.payload.workflow_run.id}: ${context.payload.workflow_run.html_url}
-
-Please:
-- inspect the failed GitHub Actions run
-- fix only CI, build, dependency, or test issues
-- run install, build, and tests
-- push the fix to the same PR branch
-- do not create a new PR
-- keep scope limited to making CI green`,
+              body: requestBody,
             });
