@@ -16,7 +16,6 @@ jobs:
   trigger-codex:
     if: >-
       github.event.issue.pull_request == null &&
-      github.event.issue.state == 'open' &&
       github.event.comment.body == '/codex implement' &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
@@ -26,10 +25,21 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const issue = context.payload.issue;
+            const eventIssue = context.payload.issue;
             const commandComment = context.payload.comment;
             const readyLabel = 'ready-for-codex';
             const requestMarker = '<!-- codex-implementation-requested -->';
+
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: eventIssue.number,
+            });
+
+            if (issue.pull_request || issue.state !== 'open') {
+              core.info('Implementation was not started because the current item is not an open issue.');
+              return;
+            }
 
             const labels = issue.labels.map((label) =>
               typeof label === 'string' ? label : label.name
@@ -52,8 +62,14 @@ jobs:
               per_page: 100,
             });
 
-            if (comments.some((comment) => comment.body?.includes(requestMarker))) {
-              core.info('A Codex implementation request already exists for this issue.');
+            const hasTrustedRequest = comments.some((comment) =>
+              comment.user?.login === 'github-actions[bot]' &&
+              comment.user?.type === 'Bot' &&
+              comment.body?.startsWith(`${requestMarker}\n@codex implement this issue.`)
+            );
+
+            if (hasTrustedRequest) {
+              core.info('A trusted Codex implementation request already exists for this issue.');
               return;
             }
 
