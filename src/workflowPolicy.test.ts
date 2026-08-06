@@ -1,23 +1,34 @@
 import { readFileSync } from 'node:fs';
-import { AsyncFunction } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 
 const workflow = readFileSync('.github/workflows/codex-issue-trigger.yml', 'utf8');
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
+  ...args: string[]
+) => (...values: unknown[]) => Promise<void>;
 
 type Event = {
   issue: { number: number; pull_request?: object };
   comment: { body: string; author_association: string; user: { login: string } };
 };
 
+function takeWhile<T>(values: T[], predicate: (value: T) => boolean): T[] {
+  const result: T[] = [];
+  for (const value of values) {
+    if (!predicate(value)) break;
+    result.push(value);
+  }
+  return result;
+}
+
 function indentedBlock(source: string, key: string, indent: number): string {
   const lines = source.split('\n');
   const start = lines.findIndex((line) => line === `${' '.repeat(indent)}${key}:`);
   if (start < 0) throw new Error(`Missing ${key} block`);
 
-  return lines
-    .slice(start + 1)
-    .takeWhile((line) => line.trim() === '' || line.length - line.trimStart().length > indent)
-    .join('\n');
+  return takeWhile(
+    lines.slice(start + 1),
+    (line) => line.trim() === '' || line.length - line.trimStart().length > indent,
+  ).join('\n');
 }
 
 function scalar(source: string, key: string, indent: number): string {
@@ -26,9 +37,10 @@ function scalar(source: string, key: string, indent: number): string {
   if (start < 0) throw new Error(`Missing ${key} scalar`);
   const baseIndent = lines[start].length - lines[start].trimStart().length;
 
-  return lines
-    .slice(start + 1)
-    .takeWhile((line) => line.trim() === '' || line.length - line.trimStart().length > baseIndent)
+  return takeWhile(
+    lines.slice(start + 1),
+    (line) => line.trim() === '' || line.length - line.trimStart().length > baseIndent,
+  )
     .map((line) => line.slice(indent))
     .join('\n');
 }
@@ -141,18 +153,3 @@ describe('Codex issue trigger policy', () => {
     expect(body).toContain('do not invent contact details');
   });
 });
-
-declare global {
-  interface Array<T> {
-    takeWhile(predicate: (value: T) => boolean): T[];
-  }
-}
-
-Array.prototype.takeWhile = function <T>(predicate: (value: T) => boolean): T[] {
-  const result: T[] = [];
-  for (const value of this as T[]) {
-    if (!predicate(value)) break;
-    result.push(value);
-  }
-  return result;
-};
