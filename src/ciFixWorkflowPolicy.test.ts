@@ -6,16 +6,6 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as
   ...args: string[]
 ) => (...values: unknown[]) => Promise<void>;
 
-function scriptScalar(): string {
-  const lines = workflow.split('\n');
-  const start = lines.findIndex((line) => line.trim() === 'script: |');
-  if (start < 0) throw new Error('Missing github-script body');
-  const indent = lines[start].length - lines[start].trimStart().length;
-  return lines
-    .slice(start + 1)
-    .takeWhile?.(() => true) as never;
-}
-
 function extractScript(): string {
   const lines = workflow.split('\n');
   const start = lines.findIndex((line) => line.trim() === 'script: |');
