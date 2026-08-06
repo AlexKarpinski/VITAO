@@ -8,10 +8,6 @@ permissions:
   contents: read
   issues: write
 
-concurrency:
-  group: codex-issue-${{ github.event.issue.number }}
-  cancel-in-progress: false
-
 jobs:
   trigger-codex:
     if: >-
@@ -19,6 +15,9 @@ jobs:
       github.event.comment.body == '/codex implement' &&
       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
+    concurrency:
+      group: codex-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
 
     steps:
       - name: Validate readiness and request implementation
