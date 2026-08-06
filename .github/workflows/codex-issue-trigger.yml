@@ -29,6 +29,7 @@ jobs:
             const commandComment = context.payload.comment;
             const readyLabel = 'ready-for-codex';
             const requestMarker = '<!-- codex-implementation-requested -->';
+            const implementationPrefix = '@codex implement this issue.';
 
             const { data: issue } = await github.rest.issues.get({
               owner: context.repo.owner,
@@ -62,11 +63,15 @@ jobs:
               per_page: 100,
             });
 
-            const hasTrustedRequest = comments.some((comment) =>
-              comment.user?.login === 'github-actions[bot]' &&
-              comment.user?.type === 'Bot' &&
-              comment.body?.startsWith(`${requestMarker}\n@codex implement this issue.`)
-            );
+            const hasTrustedRequest = comments.some((comment) => {
+              if (comment.user?.login !== 'github-actions[bot]' || comment.user?.type !== 'Bot') {
+                return false;
+              }
+
+              const body = comment.body ?? '';
+              return body.startsWith(`${requestMarker}\n${implementationPrefix}`) ||
+                body.startsWith(implementationPrefix);
+            });
 
             if (hasTrustedRequest) {
               core.info('A trusted Codex implementation request already exists for this issue.');
@@ -75,7 +80,7 @@ jobs:
 
             const branchName = `codex/issue-${issue.number}`;
             const requestBody = `${requestMarker}
-@codex implement this issue.
+${implementationPrefix}
 
 Use the repository-owned instructions in \`.github/codex/implement.md\` and \`.github/codex/validate.md\`.
 
