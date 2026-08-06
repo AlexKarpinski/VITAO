@@ -31,6 +31,21 @@ function indentedBlock(source: string, key: string, indent: number): string {
   ).join('\n');
 }
 
+function mapping(source: string, key: string, indent: number): Record<string, string> {
+  const block = indentedBlock(source, key, indent);
+  const result: Record<string, string> = {};
+
+  for (const line of block.split('\n').filter((candidate) => candidate.trim())) {
+    const lineIndent = line.length - line.trimStart().length;
+    if (lineIndent !== indent + 2) throw new Error(`Nested or malformed ${key} entry: ${line}`);
+    const match = line.trim().match(/^([^:]+):\s*(.+)$/);
+    if (!match) throw new Error(`Malformed ${key} entry: ${line}`);
+    result[match[1]] = match[2];
+  }
+
+  return result;
+}
+
 function scalar(source: string, key: string, indent: number): string {
   const lines = source.split('\n');
   const start = lines.findIndex((line) => line.trim() === `${key}: |-` || line.trim() === `${key}: |`);
@@ -120,6 +135,12 @@ async function runScript(options: {
 }
 
 describe('Codex issue trigger policy', () => {
+  it('runs only for newly created issue comments', () => {
+    const on = indentedBlock(workflow, 'on', 0);
+    expect(mapping(on, 'issue_comment', 2)).toEqual({ types: '[created]' });
+    expect(on).not.toMatch(/^  [^\s#][^:]*:/m);
+  });
+
   it('accepts only the exact command from trusted repository participants', () => {
     const base: Event = {
       issue: { number: 37 },
@@ -133,10 +154,12 @@ describe('Codex issue trigger policy', () => {
   });
 
   it('uses effective minimum permissions and non-cancelling per-issue concurrency', () => {
-    const topPermissions = indentedBlock(workflow, 'permissions', 0);
     const job = indentedBlock(workflow, 'trigger-codex', 2);
 
-    expect(topPermissions).toMatch(/^  contents: read\n  issues: write$/m);
+    expect(mapping(workflow, 'permissions', 0)).toEqual({
+      contents: 'read',
+      issues: 'write',
+    });
     expect(job).not.toMatch(/^\s{4}permissions:/m);
     expect(job).toContain('group: codex-issue-${{ github.event.issue.number }}');
     expect(job).toContain('cancel-in-progress: false');
