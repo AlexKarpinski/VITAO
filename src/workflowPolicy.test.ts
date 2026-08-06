@@ -45,12 +45,41 @@ function scalar(source: string, key: string, indent: number): string {
     .join('\n');
 }
 
-function jobAllows(event: Event): boolean {
-  return (
-    !event.issue.pull_request &&
-    event.comment.body === '/codex implement' &&
-    ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(event.comment.author_association)
-  );
+function foldedScalar(source: string, key: string, indent: number): string {
+  const lines = source.split('\n');
+  const start = lines.findIndex((line) => line === `${' '.repeat(indent)}${key}: >-`);
+  if (start < 0) throw new Error(`Missing ${key} folded scalar`);
+
+  return takeWhile(
+    lines.slice(start + 1),
+    (line) => line.trim() === '' || line.length - line.trimStart().length > indent,
+  )
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' ');
+}
+
+function workflowAllows(event: Event): boolean {
+  const job = indentedBlock(workflow, 'trigger-codex', 2);
+  const condition = foldedScalar(job, 'if', 4)
+    .replace(
+      'github.event.issue.pull_request == null',
+      String(event.issue.pull_request == null),
+    )
+    .replace(
+      "github.event.comment.body == '/codex implement'",
+      String(event.comment.body === '/codex implement'),
+    )
+    .replace(
+      /contains\(fromJSON\('\["OWNER", "MEMBER", "COLLABORATOR"\]'\), github\.event\.comment\.author_association\)/,
+      String(['OWNER', 'MEMBER', 'COLLABORATOR'].includes(event.comment.author_association)),
+    );
+
+  if (!/^(?:true|false|\s|&&|\|\||!|\(|\))+$/.test(condition)) {
+    throw new Error(`Unsupported workflow condition: ${condition}`);
+  }
+
+  return Boolean(Function(`"use strict"; return (${condition});`)());
 }
 
 async function runScript(options: {
@@ -97,14 +126,10 @@ describe('Codex issue trigger policy', () => {
       comment: { body: '/codex implement', author_association: 'OWNER', user: { login: 'owner' } },
     };
 
-    expect(jobAllows(base)).toBe(true);
-    expect(jobAllows({ ...base, issue: { number: 37, pull_request: {} } })).toBe(false);
-    expect(jobAllows({ ...base, comment: { ...base.comment, body: '/codex implement now' } })).toBe(false);
-    expect(jobAllows({ ...base, comment: { ...base.comment, author_association: 'CONTRIBUTOR' } })).toBe(false);
-
-    const job = indentedBlock(workflow, 'trigger-codex', 2);
-    expect(job).toContain("github.event.comment.body == '/codex implement'");
-    expect(job).not.toMatch(/\|\|\s*true/);
+    expect(workflowAllows(base)).toBe(true);
+    expect(workflowAllows({ ...base, issue: { number: 37, pull_request: {} } })).toBe(false);
+    expect(workflowAllows({ ...base, comment: { ...base.comment, body: '/codex implement now' } })).toBe(false);
+    expect(workflowAllows({ ...base, comment: { ...base.comment, author_association: 'CONTRIBUTOR' } })).toBe(false);
   });
 
   it('uses effective minimum permissions and non-cancelling per-issue concurrency', () => {
