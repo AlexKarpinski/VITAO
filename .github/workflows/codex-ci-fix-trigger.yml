@@ -33,23 +33,28 @@ jobs:
             }
 
             const prNumber = prs[0].number;
-            const requestMarker = `<!-- codex-ci-fix-requested:${workflowRun.id}:${workflowRun.head_sha} -->`;
+            const requestMarker = `<!-- codex-ci-fix-requested:${prNumber} -->`;
             const requestPrefix = '@codex fix the CI failures in this PR.';
 
-            const { data: pullRequest } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
-            });
+            const getCurrentPullRequest = async () => {
+              const { data } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+              });
+              return data;
+            };
 
-            if (pullRequest.state !== 'open' || pullRequest.head.sha !== workflowRun.head_sha) {
-              core.info('The pull request is closed or has moved beyond the failed workflow SHA. Skipping stale remediation.');
-              return;
-            }
+            const isEligible = (pullRequest) => {
+              const labels = pullRequest.labels.map((label) => label.name);
+              return pullRequest.state === 'open'
+                && pullRequest.head.sha === workflowRun.head_sha
+                && labels.includes('codex-auto-fix');
+            };
 
-            const labels = pullRequest.labels.map((label) => label.name);
-            if (!labels.includes('codex-auto-fix')) {
-              core.info('PR does not have codex-auto-fix label. Skipping.');
+            const initialPullRequest = await getCurrentPullRequest();
+            if (!isEligible(initialPullRequest)) {
+              core.info('The pull request is closed, moved beyond the failed SHA, or is not opted in. Skipping.');
               return;
             }
 
@@ -60,7 +65,7 @@ jobs:
               per_page: 100,
             });
 
-            const alreadyAskedForThisRun = comments.some((comment) => {
+            const alreadyRequestedForPullRequest = comments.some((comment) => {
               if (comment.user?.login !== 'github-actions[bot]' || comment.user?.type !== 'Bot') {
                 return false;
               }
@@ -68,8 +73,14 @@ jobs:
               return (comment.body ?? '').startsWith(`${requestMarker}\n${requestPrefix}`);
             });
 
-            if (alreadyAskedForThisRun) {
-              core.info('A trusted Codex CI-fix request already exists for this workflow run and SHA. Skipping.');
+            if (alreadyRequestedForPullRequest) {
+              core.info('A trusted automatic Codex CI-fix request already exists for this pull request. Skipping overlapping remediation.');
+              return;
+            }
+
+            const currentPullRequest = await getCurrentPullRequest();
+            if (!isEligible(currentPullRequest)) {
+              core.info('The pull request changed state, head SHA, or opt-in while the request was being prepared. Skipping.');
               return;
             }
 
@@ -79,6 +90,8 @@ jobs:
               '',
               `Failed workflow run ${workflowRun.id}: ${workflowRun.html_url}`,
               `Failed head SHA: ${workflowRun.head_sha}`,
+              '',
+              'This is the single automatic remediation request permitted for this PR. Further failures require an explicit human request.',
               '',
               'Please:',
               '- inspect this exact failed GitHub Actions run;',
