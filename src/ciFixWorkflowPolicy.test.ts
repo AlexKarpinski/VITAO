@@ -88,6 +88,14 @@ describe('Codex CI-fix trigger policy', () => {
     expect(trusted.createComment).not.toHaveBeenCalled();
   });
 
+  it('honors trusted legacy prefix-only requests without trusting spoofed copies', async () => {
+    const legacy = '@codex fix the CI failures in this PR.\n\nFailed workflow run 99';
+    const spoofed = await runScript({ comments: [{ user: { login: 'attacker', type: 'User' }, body: legacy }] });
+    expect(spoofed.createComment).toHaveBeenCalledOnce();
+    const trusted = await runScript({ comments: [{ user: { login: 'github-actions[bot]', type: 'Bot' }, body: legacy }] });
+    expect(trusted.createComment).not.toHaveBeenCalled();
+  });
+
   it('revalidates eligibility after comment pagination', async () => {
     const eligible: PullRequest = { state: 'open', head: { sha: 'expected-sha' }, labels: [{ name: 'codex-auto-fix' }] };
     const advanced: PullRequest = { state: 'open', head: { sha: 'new-sha' }, labels: [{ name: 'codex-auto-fix' }] };
