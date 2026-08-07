@@ -70,7 +70,9 @@ jobs:
                 return false;
               }
 
-              return (comment.body ?? '').startsWith(`${requestMarker}\n${requestPrefix}`);
+              const body = comment.body ?? '';
+              return body.startsWith(`${requestMarker}\n${requestPrefix}`)
+                || body.startsWith(requestPrefix);
             });
 
             if (alreadyRequestedForPullRequest) {
