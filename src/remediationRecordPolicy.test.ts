@@ -11,6 +11,25 @@ type ConditionalRequirement = {
   then: { required: string[] };
 };
 
+type ApplicableVerificationShaRequirement = {
+  if: {
+    properties: {
+      verification: {
+        properties: { status: { enum: string[] } };
+        required: string[];
+      };
+    };
+    required: string[];
+  };
+  then: {
+    properties: {
+      verification: {
+        required: string[];
+      };
+    };
+  };
+};
+
 type VerificationEvidenceRequirement = {
   if: {
     properties: {
@@ -65,7 +84,11 @@ type FixedVerificationRequirement = {
 type RemediationSchema = {
   additionalProperties: boolean;
   required: string[];
-  allOf: Array<VerificationEvidenceRequirement | FixedVerificationRequirement>;
+  allOf: Array<
+    | ApplicableVerificationShaRequirement
+    | VerificationEvidenceRequirement
+    | FixedVerificationRequirement
+  >;
   properties: {
     reviewedSha: { pattern: string };
     severity: { enum: string[] };
@@ -205,6 +228,31 @@ describe('Codex remediation decision record contract', () => {
             properties: { status: { const: 'escalated' } },
           }),
           then: { required: ['escalation'] },
+        }),
+      ]),
+    );
+  });
+
+  it('requires an exact SHA for every applicable verification state, including partial work', () => {
+    expect(schema.allOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          if: {
+            properties: {
+              verification: {
+                properties: { status: { enum: ['pending', 'passed', 'failed'] } },
+                required: ['status'],
+              },
+            },
+            required: ['verification'],
+          },
+          then: {
+            properties: {
+              verification: {
+                required: ['verifiedSha'],
+              },
+            },
+          },
         }),
       ]),
     );
