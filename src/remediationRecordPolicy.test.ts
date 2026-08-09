@@ -27,6 +27,7 @@ type FixedVerificationRequirement = {
         properties: {
           status: { const: string };
           commands: {
+            minItems: number;
             items: {
               properties: { status: { const: string } };
               required: string[];
@@ -60,9 +61,10 @@ type RemediationSchema = {
     verification: {
       required: string[];
       properties: {
+        status: { enum: string[] };
         verifiedSha: { pattern: string; description: string };
         commands: {
-          minItems: number;
+          minItems?: number;
           items: {
             required: string[];
             properties: { status: { enum: string[] } };
@@ -137,17 +139,12 @@ describe('Codex remediation decision record contract', () => {
       items: { type: 'string', minLength: 1 },
       uniqueItems: true,
     });
-    expect(schema.properties.verification.required).toEqual([
-      'method',
-      'status',
-      'verifiedSha',
-      'commands',
-    ]);
+    expect(schema.properties.verification.required).toEqual(['method', 'status', 'commands']);
+    expect(schema.properties.verification.properties.status.enum).toContain('not-applicable');
     expect(schema.properties.verification.properties.verifiedSha.pattern).toBe(
       '^[0-9a-f]{40}$',
     );
     expect(schema.properties.verification.properties.commands).toMatchObject({
-      minItems: 1,
       items: {
         required: ['command', 'status'],
         properties: {
@@ -155,6 +152,7 @@ describe('Codex remediation decision record contract', () => {
         },
       },
     });
+    expect(schema.properties.verification.properties.commands.minItems).toBeUndefined();
     expect(schema.properties.threadResolution.required).toEqual(['canResolve', 'reason']);
     expect(schema.properties.threadResolution.properties.canResolve.type).toBe('boolean');
     expect(schema.properties.freshReviewRequired.type).toBe('boolean');
@@ -207,6 +205,7 @@ describe('Codex remediation decision record contract', () => {
                 properties: {
                   status: { const: 'passed' },
                   commands: {
+                    minItems: 1,
                     items: {
                       properties: { status: { const: 'passed' } },
                       required: ['status'],
@@ -223,5 +222,11 @@ describe('Codex remediation decision record contract', () => {
     expect(schema.properties.verification.properties.verifiedSha.description).toContain(
       'result.commitSha',
     );
+  });
+
+  it('allows challenge, defer, or escalation without fabricated verification evidence', () => {
+    expect(schema.properties.verification.required).not.toContain('verifiedSha');
+    expect(schema.properties.verification.properties.commands.minItems).toBeUndefined();
+    expect(schema.properties.verification.properties.status.enum).toContain('not-applicable');
   });
 });
