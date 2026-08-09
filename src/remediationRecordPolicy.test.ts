@@ -1,13 +1,55 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const schema = JSON.parse(
-  readFileSync('.github/codex/remediation-record.schema.json', 'utf8'),
-) as {
+type ConditionalRequirement = {
+  if: {
+    properties: {
+      status: { const: string };
+    };
+    required: string[];
+  };
+  then: { required: string[] };
+};
+
+type RemediationSchema = {
   additionalProperties: boolean;
   required: string[];
-  properties: Record<string, any>;
+  properties: {
+    reviewedSha: { pattern: string };
+    severity: { enum: string[] };
+    target: { required: string[] };
+    evidence: { minLength: number };
+    decision: {
+      required: string[];
+      properties: { action: { enum: string[] } };
+    };
+    changedFiles: {
+      type: string;
+      items: { type: string; minLength: number };
+      uniqueItems: boolean;
+    };
+    verification: { required: string[] };
+    threadResolution: {
+      required: string[];
+      properties: { canResolve: { type: string }; reason: { minLength: number } };
+    };
+    freshReviewRequired: { type: string };
+    automation: { required: string[] };
+    result: {
+      required: string[];
+      properties: {
+        status: { enum: string[] };
+        commitSha: { pattern: string };
+        escalation: { minLength: number };
+      };
+      allOf: ConditionalRequirement[];
+    };
+  };
 };
+
+const schema = JSON.parse(
+  readFileSync('.github/codex/remediation-record.schema.json', 'utf8'),
+) as RemediationSchema;
 
 describe('Codex remediation decision record contract', () => {
   it('requires the evidence needed to tie a finding to one reviewed revision', () => {
@@ -19,7 +61,10 @@ describe('Codex remediation decision record contract', () => {
       'target',
       'evidence',
       'decision',
+      'changedFiles',
       'verification',
+      'threadResolution',
+      'freshReviewRequired',
       'automation',
       'result',
     ]);
@@ -36,7 +81,7 @@ describe('Codex remediation decision record contract', () => {
     ]);
   });
 
-  it('records evidence, target, decision, verification, and automation eligibility', () => {
+  it('records every outcome required by the remediation response contract', () => {
     expect(schema.properties.target.required).toContain('summary');
     expect(schema.properties.evidence.minLength).toBe(1);
     expect(schema.properties.decision.required).toEqual(['action', 'reason']);
@@ -46,11 +91,19 @@ describe('Codex remediation decision record contract', () => {
       'defer',
       'escalate',
     ]);
+    expect(schema.properties.changedFiles).toMatchObject({
+      type: 'array',
+      items: { type: 'string', minLength: 1 },
+      uniqueItems: true,
+    });
     expect(schema.properties.verification.required).toEqual(['method', 'status']);
+    expect(schema.properties.threadResolution.required).toEqual(['canResolve', 'reason']);
+    expect(schema.properties.threadResolution.properties.canResolve.type).toBe('boolean');
+    expect(schema.properties.freshReviewRequired.type).toBe('boolean');
     expect(schema.properties.automation.required).toEqual(['eligible', 'reason']);
   });
 
-  it('supports only explicit remediation outcomes and exact commit identities', () => {
+  it('requires traceable evidence for terminal fixed and escalated results', () => {
     expect(schema.properties.result.required).toEqual(['status']);
     expect(schema.properties.result.properties.status.enum).toEqual([
       'pending',
@@ -60,5 +113,22 @@ describe('Codex remediation decision record contract', () => {
       'escalated',
     ]);
     expect(schema.properties.result.properties.commitSha.pattern).toBe('^[0-9a-f]{40}$');
+
+    expect(schema.properties.result.allOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          if: expect.objectContaining({
+            properties: { status: { const: 'fixed' } },
+          }),
+          then: { required: ['commitSha'] },
+        }),
+        expect.objectContaining({
+          if: expect.objectContaining({
+            properties: { status: { const: 'escalated' } },
+          }),
+          then: { required: ['escalation'] },
+        }),
+      ]),
+    );
   });
 });
