@@ -53,14 +53,21 @@ Escalate with a precise reason when a finding requires:
 
 ## Response contract
 
-For every handled finding record:
+For every handled finding, emit one remediation decision record that conforms to `.github/codex/remediation-record.schema.json`.
 
-- source review/comment and reviewed SHA;
-- classification and evidence;
-- fix, challenge, defer, or escalation decision;
-- changed files and resulting commit SHA;
-- validation result;
-- whether the thread can be resolved;
-- whether a fresh exact-SHA review is required.
+Populate the schema from current evidence only:
+
+- `source` identifies the review/comment that produced the finding.
+- `reviewedSha` is the exact SHA actually reviewed.
+- `severity`, `target`, and `evidence` capture classification and concrete proof.
+- `decision` records `fix`, `challenge`, `defer`, or `escalate` plus the reason.
+- `changedFiles` lists only files changed for this finding.
+- `verification` records the exact verified SHA and every command actually run under `.github/codex/validate.md`; do not report skipped or unrun commands as passed.
+- `threadResolution` records whether the review thread can now be resolved and why.
+- `freshReviewRequired` is `true` after any remediation commit changes the PR head.
+- `automation` records whether the worker is allowed to apply the decision automatically under this prompt.
+- `result` records the resulting commit SHA for a fixed finding or the concrete escalation/follow-up outcome required by the schema.
+
+Do not invent placeholder values to satisfy the schema. If required evidence is unavailable, use an escalation decision rather than claiming a successful fix or verification.
 
 Never merge. The Delivery Engine owns final merge gating.
