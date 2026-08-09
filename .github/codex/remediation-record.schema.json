@@ -74,7 +74,7 @@
         "verifiedSha": {
           "type": "string",
           "pattern": "^[0-9a-f]{40}$",
-          "description": "Exact head SHA on which the recorded verification commands ran; required whenever verification is passed or failed, and for a fixed result must be the same commit as result.commitSha."
+          "description": "Exact head SHA on which the recorded verification commands ran; required for every applicable verification status, and for a fixed result must be the same commit as result.commitSha."
         },
         "commands": {
           "type": "array",
@@ -134,6 +134,24 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verification": {
+            "properties": { "status": { "enum": ["pending", "passed", "failed"] } },
+            "required": ["status"]
+          }
+        },
+        "required": ["verification"]
+      },
+      "then": {
+        "properties": {
+          "verification": {
+            "required": ["verifiedSha"]
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {
