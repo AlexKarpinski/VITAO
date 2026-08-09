@@ -176,6 +176,26 @@
     {
       "if": {
         "properties": {
+          "verification": {
+            "properties": { "status": { "const": "not-applicable" } },
+            "required": ["status"]
+          }
+        },
+        "required": ["verification"]
+      },
+      "then": {
+        "properties": {
+          "verification": {
+            "properties": {
+              "commands": { "maxItems": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "result": {
             "properties": { "status": { "const": "fixed" } },
             "required": ["status"]
