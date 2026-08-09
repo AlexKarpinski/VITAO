@@ -11,7 +11,10 @@
     "target",
     "evidence",
     "decision",
+    "changedFiles",
     "verification",
+    "threadResolution",
+    "freshReviewRequired",
     "automation",
     "result"
   ],
@@ -68,6 +71,11 @@
         "followUpIssue": { "type": "integer", "minimum": 1 }
       }
     },
+    "changedFiles": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
     "verification": {
       "type": "object",
       "additionalProperties": false,
@@ -79,6 +87,18 @@
           "enum": ["pending", "passed", "failed", "not-applicable"]
         }
       }
+    },
+    "threadResolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canResolve", "reason"],
+      "properties": {
+        "canResolve": { "type": "boolean" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "freshReviewRequired": {
+      "type": "boolean"
     },
     "automation": {
       "type": "object",
@@ -103,7 +123,23 @@
           "pattern": "^[0-9a-f]{40}$"
         },
         "escalation": { "type": "string", "minLength": 1 }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "fixed" } },
+            "required": ["status"]
+          },
+          "then": { "required": ["commitSha"] }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "escalated" } },
+            "required": ["status"]
+          },
+          "then": { "required": ["escalation"] }
+        }
+      ]
     }
   }
 }
