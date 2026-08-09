@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AlexKarpinski/VITAO/blob/main/.github/codex/remediation-record.schema.json",
+  "title": "Codex review remediation decision record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "reviewedSha",
+    "severity",
+    "target",
+    "evidence",
+    "decision",
+    "verification",
+    "automation",
+    "result"
+  ],
+  "properties": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "url"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["review", "review-comment", "issue-comment"]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "reviewedSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["BLOCKER", "MAJOR", "MINOR", "QUESTION", "NON_ACTIONABLE"]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "component": { "type": "string", "minLength": 1 },
+        "route": { "type": "string", "minLength": 1 },
+        "flow": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidence": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "reason"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["fix", "challenge", "defer", "escalate"]
+        },
+        "reason": { "type": "string", "minLength": 1 },
+        "followUpIssue": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "status"],
+      "properties": {
+        "method": { "type": "string", "minLength": 1 },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "passed", "failed", "not-applicable"]
+        }
+      }
+    },
+    "automation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eligible", "reason"],
+      "properties": {
+        "eligible": { "type": "boolean" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pending", "fixed", "challenged", "deferred", "escalated"]
+        },
+        "commitSha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "escalation": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
