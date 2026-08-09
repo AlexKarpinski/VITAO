@@ -11,9 +11,38 @@ type ConditionalRequirement = {
   then: { required: string[] };
 };
 
+type FixedVerificationRequirement = {
+  if: {
+    properties: {
+      result: {
+        properties: { status: { const: string } };
+        required: string[];
+      };
+    };
+    required: string[];
+  };
+  then: {
+    properties: {
+      verification: {
+        properties: {
+          status: { const: string };
+          commands: {
+            items: {
+              properties: { status: { const: string } };
+              required: string[];
+            };
+          };
+        };
+        required: string[];
+      };
+    };
+  };
+};
+
 type RemediationSchema = {
   additionalProperties: boolean;
   required: string[];
+  allOf: FixedVerificationRequirement[];
   properties: {
     reviewedSha: { pattern: string };
     severity: { enum: string[] };
@@ -28,7 +57,19 @@ type RemediationSchema = {
       items: { type: string; minLength: number };
       uniqueItems: boolean;
     };
-    verification: { required: string[] };
+    verification: {
+      required: string[];
+      properties: {
+        verifiedSha: { pattern: string; description: string };
+        commands: {
+          minItems: number;
+          items: {
+            required: string[];
+            properties: { status: { enum: string[] } };
+          };
+        };
+      };
+    };
     threadResolution: {
       required: string[];
       properties: { canResolve: { type: string }; reason: { minLength: number } };
@@ -96,7 +137,24 @@ describe('Codex remediation decision record contract', () => {
       items: { type: 'string', minLength: 1 },
       uniqueItems: true,
     });
-    expect(schema.properties.verification.required).toEqual(['method', 'status']);
+    expect(schema.properties.verification.required).toEqual([
+      'method',
+      'status',
+      'verifiedSha',
+      'commands',
+    ]);
+    expect(schema.properties.verification.properties.verifiedSha.pattern).toBe(
+      '^[0-9a-f]{40}$',
+    );
+    expect(schema.properties.verification.properties.commands).toMatchObject({
+      minItems: 1,
+      items: {
+        required: ['command', 'status'],
+        properties: {
+          status: { enum: ['pending', 'passed', 'failed'] },
+        },
+      },
+    });
     expect(schema.properties.threadResolution.required).toEqual(['canResolve', 'reason']);
     expect(schema.properties.threadResolution.properties.canResolve.type).toBe('boolean');
     expect(schema.properties.freshReviewRequired.type).toBe('boolean');
@@ -129,6 +187,41 @@ describe('Codex remediation decision record contract', () => {
           then: { required: ['escalation'] },
         }),
       ]),
+    );
+  });
+
+  it('binds fixed results to successful exact-head verification evidence', () => {
+    expect(schema.allOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          if: expect.objectContaining({
+            properties: {
+              result: expect.objectContaining({
+                properties: { status: { const: 'fixed' } },
+              }),
+            },
+          }),
+          then: {
+            properties: {
+              verification: {
+                properties: {
+                  status: { const: 'passed' },
+                  commands: {
+                    items: {
+                      properties: { status: { const: 'passed' } },
+                      required: ['status'],
+                    },
+                  },
+                },
+                required: ['verifiedSha', 'commands', 'status'],
+              },
+            },
+          },
+        }),
+      ]),
+    );
+    expect(schema.properties.verification.properties.verifiedSha.description).toContain(
+      'result.commitSha',
     );
   });
 });
