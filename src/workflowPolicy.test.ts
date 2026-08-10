@@ -165,6 +165,13 @@ describe('Codex issue trigger policy', () => {
     expect(job).toContain('cancel-in-progress: false');
   });
 
+  it('pins third-party workflow actions to immutable commit SHAs', () => {
+    expect(workflow).toContain(
+      'uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1',
+    );
+    expect(workflow).not.toMatch(/uses:\s+actions\/github-script@v\d+/);
+  });
+
   it('enforces current issue state and readiness before requesting work', async () => {
     const closed = await runScript({ issueState: 'closed' });
     expect(closed.createComment).not.toHaveBeenCalled();
