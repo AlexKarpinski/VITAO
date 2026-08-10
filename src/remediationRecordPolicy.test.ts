@@ -11,6 +11,47 @@ type ConditionalRequirement = {
   then: { required: string[] };
 };
 
+type ApplicableVerificationShaRequirement = {
+  if: {
+    properties: {
+      verification: {
+        properties: { status: { enum: string[] } };
+        required: string[];
+      };
+    };
+    required: string[];
+  };
+  then: {
+    properties: {
+      verification: {
+        required: string[];
+      };
+    };
+  };
+};
+
+type VerificationEvidenceRequirement = {
+  if: {
+    properties: {
+      verification: {
+        properties: { status: { enum: string[] } };
+        required: string[];
+      };
+    };
+    required: string[];
+  };
+  then: {
+    properties: {
+      verification: {
+        properties: {
+          commands: { minItems: number };
+        };
+        required: string[];
+      };
+    };
+  };
+};
+
 type FixedVerificationRequirement = {
   if: {
     properties: {
@@ -27,6 +68,7 @@ type FixedVerificationRequirement = {
         properties: {
           status: { const: string };
           commands: {
+            minItems: number;
             items: {
               properties: { status: { const: string } };
               required: string[];
@@ -42,7 +84,11 @@ type FixedVerificationRequirement = {
 type RemediationSchema = {
   additionalProperties: boolean;
   required: string[];
-  allOf: FixedVerificationRequirement[];
+  allOf: Array<
+    | ApplicableVerificationShaRequirement
+    | VerificationEvidenceRequirement
+    | FixedVerificationRequirement
+  >;
   properties: {
     reviewedSha: { pattern: string };
     severity: { enum: string[] };
@@ -60,9 +106,10 @@ type RemediationSchema = {
     verification: {
       required: string[];
       properties: {
+        status: { enum: string[] };
         verifiedSha: { pattern: string; description: string };
         commands: {
-          minItems: number;
+          minItems?: number;
           items: {
             required: string[];
             properties: { status: { enum: string[] } };
@@ -137,17 +184,12 @@ describe('Codex remediation decision record contract', () => {
       items: { type: 'string', minLength: 1 },
       uniqueItems: true,
     });
-    expect(schema.properties.verification.required).toEqual([
-      'method',
-      'status',
-      'verifiedSha',
-      'commands',
-    ]);
+    expect(schema.properties.verification.required).toEqual(['method', 'status', 'commands']);
+    expect(schema.properties.verification.properties.status.enum).toContain('not-applicable');
     expect(schema.properties.verification.properties.verifiedSha.pattern).toBe(
       '^[0-9a-f]{40}$',
     );
     expect(schema.properties.verification.properties.commands).toMatchObject({
-      minItems: 1,
       items: {
         required: ['command', 'status'],
         properties: {
@@ -155,6 +197,7 @@ describe('Codex remediation decision record contract', () => {
         },
       },
     });
+    expect(schema.properties.verification.properties.commands.minItems).toBeUndefined();
     expect(schema.properties.threadResolution.required).toEqual(['canResolve', 'reason']);
     expect(schema.properties.threadResolution.properties.canResolve.type).toBe('boolean');
     expect(schema.properties.freshReviewRequired.type).toBe('boolean');
@@ -190,6 +233,57 @@ describe('Codex remediation decision record contract', () => {
     );
   });
 
+  it('requires an exact SHA for every applicable verification state, including partial work', () => {
+    expect(schema.allOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          if: {
+            properties: {
+              verification: {
+                properties: { status: { enum: ['pending', 'passed', 'failed'] } },
+                required: ['status'],
+              },
+            },
+            required: ['verification'],
+          },
+          then: {
+            properties: {
+              verification: {
+                required: ['verifiedSha'],
+              },
+            },
+          },
+        }),
+      ]),
+    );
+  });
+
+  it('requires evidence whenever verification is reported as passed or failed', () => {
+    expect(schema.allOf).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          if: {
+            properties: {
+              verification: {
+                properties: { status: { enum: ['passed', 'failed'] } },
+                required: ['status'],
+              },
+            },
+            required: ['verification'],
+          },
+          then: {
+            properties: {
+              verification: {
+                properties: { commands: { minItems: 1 } },
+                required: ['verifiedSha', 'commands'],
+              },
+            },
+          },
+        }),
+      ]),
+    );
+  });
+
   it('binds fixed results to successful exact-head verification evidence', () => {
     expect(schema.allOf).toEqual(
       expect.arrayContaining([
@@ -207,6 +301,7 @@ describe('Codex remediation decision record contract', () => {
                 properties: {
                   status: { const: 'passed' },
                   commands: {
+                    minItems: 1,
                     items: {
                       properties: { status: { const: 'passed' } },
                       required: ['status'],
@@ -223,5 +318,11 @@ describe('Codex remediation decision record contract', () => {
     expect(schema.properties.verification.properties.verifiedSha.description).toContain(
       'result.commitSha',
     );
+  });
+
+  it('allows challenge, defer, or escalation without fabricated verification evidence', () => {
+    expect(schema.properties.verification.required).not.toContain('verifiedSha');
+    expect(schema.properties.verification.properties.commands.minItems).toBeUndefined();
+    expect(schema.properties.verification.properties.status.enum).toContain('not-applicable');
   });
 });
