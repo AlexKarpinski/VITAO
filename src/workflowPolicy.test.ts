@@ -8,7 +8,11 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as
 
 type Event = {
   issue: { number: number; pull_request?: object };
-  comment: { body: string; author_association: string; user: { login: string } };
+  comment: {
+    body: string;
+    author_association: string;
+    user: { login: string; type: 'User' | 'Bot' };
+  };
 };
 
 function takeWhile<T>(values: T[], predicate: (value: T) => boolean): T[] {
@@ -86,6 +90,10 @@ function workflowAllows(event: Event): boolean {
       String(event.comment.body === '/codex implement'),
     )
     .replace(
+      "github.event.comment.user.type == 'User'",
+      String(event.comment.user.type === 'User'),
+    )
+    .replace(
       /contains\(fromJSON\('\["OWNER", "MEMBER", "COLLABORATOR"\]'\), github\.event\.comment\.author_association\)/,
       String(['OWNER', 'MEMBER', 'COLLABORATOR'].includes(event.comment.author_association)),
     );
@@ -141,16 +149,26 @@ describe('Codex issue trigger policy', () => {
     expect(mapping(on, 'issue_comment', 2)).toEqual({ types: '[created]' });
   });
 
-  it('accepts only the exact command from trusted repository participants', () => {
+  it('accepts only the exact command from trusted human repository participants', () => {
     const base: Event = {
       issue: { number: 37 },
-      comment: { body: '/codex implement', author_association: 'OWNER', user: { login: 'owner' } },
+      comment: {
+        body: '/codex implement',
+        author_association: 'OWNER',
+        user: { login: 'owner', type: 'User' },
+      },
     };
 
     expect(workflowAllows(base)).toBe(true);
     expect(workflowAllows({ ...base, issue: { number: 37, pull_request: {} } })).toBe(false);
     expect(workflowAllows({ ...base, comment: { ...base.comment, body: '/codex implement now' } })).toBe(false);
     expect(workflowAllows({ ...base, comment: { ...base.comment, author_association: 'CONTRIBUTOR' } })).toBe(false);
+    expect(
+      workflowAllows({
+        ...base,
+        comment: { ...base.comment, user: { login: 'trusted-bot', type: 'Bot' } },
+      }),
+    ).toBe(false);
   });
 
   it('uses effective minimum permissions and non-cancelling per-issue concurrency', () => {
