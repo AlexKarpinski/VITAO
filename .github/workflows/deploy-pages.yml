@@ -11,9 +11,12 @@ permissions:
   pages: write
   id-token: write
 
+# Pages has a single production target. Cancel an older queued/in-progress run
+# when a newer main revision is ready instead of allowing a stale deployment
+# to hold the production queue indefinitely.
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
