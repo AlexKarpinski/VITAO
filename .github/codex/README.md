@@ -4,15 +4,24 @@ This directory contains repository-owned prompts for the future Issue #37 Codex 
 
 ## Current status
 
-These files are **inactive groundwork only**. This PR does not enable a GitHub Actions worker, add credentials, or permit automatic merges.
+These files are **inactive groundwork only**. The repository does not yet enable a complete Codex implementation/remediation worker, add credentials, or permit automatic merges.
+
+The repository-owned trigger workflows now enforce a five-minute GitHub Actions job timeout. This bounds trigger execution time, but it does not decide API token usage or spend limits for a future worker.
 
 Activation remains blocked until the owner confirms:
 
 - trusted users allowed to trigger the worker;
 - the exact readiness label and commands;
-- OpenAI/Codex credential and API-budget strategy;
+- OpenAI/Codex credential, model, token, and API-budget strategy;
 - branch-protection and merge policy;
-- timeout, token, retry, and cancellation limits.
+- retry and manual-cancellation behavior for the future implementation/remediation worker.
+
+## Runtime policy
+
+- `.github/workflows/codex-issue-trigger.yml` uses `timeout-minutes: 5`.
+- `.github/workflows/codex-ci-fix-trigger.yml` uses `timeout-minutes: 5`.
+- These limits bound the trigger jobs only; they are not approval for an unbounded downstream implementation/remediation process.
+- Model choice, token/cost limits, retry policy, and operator cancellation behavior must be explicitly documented before the worker is enabled.
 
 ## Repository validation baseline
 
