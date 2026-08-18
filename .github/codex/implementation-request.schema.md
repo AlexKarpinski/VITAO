@@ -26,7 +26,7 @@ Before changing files, the worker must verify that:
 5. no required owner decision is missing;
 6. an existing issue branch or PR is reused instead of duplicated.
 
-If a precondition fails, stop without repository mutation and report the exact failed condition.
+If a precondition fails, stop without repository mutation, report the exact failed condition, and emit the `precondition-failed` result state.
 
 ## Repository mutation contract
 
@@ -51,6 +51,6 @@ A successful or failed run must report:
 - validation commands and results;
 - completed and remaining acceptance criteria;
 - prompt revision/base SHA;
-- start/end result (`success`, `validation-failed`, `blocked-owner`, `blocked-tooling`, or `no-safe-slice`).
+- start/end result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, or `no-safe-slice`).
 
 Do not include secrets, raw credentials, private tokens, or unnecessary raw logs in the record.
