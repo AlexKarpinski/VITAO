@@ -8,6 +8,8 @@ describe('Codex remediation cycle policy', () => {
     expect(remediationPrompt).toContain('Stop after three automated remediation cycles for one PR.');
     expect(remediationPrompt).toContain('After the third cycle, new non-blocking `MINOR` findings become follow-up candidates');
     expect(remediationPrompt).toContain('Security/privacy exposure, proven data loss, broken primary flow');
+    expect(remediationPrompt).toContain('direct acceptance-criteria failures');
+    expect(remediationPrompt).toContain('active `REQUEST_CHANGES`');
     expect(remediationPrompt).toContain('`BLOCKER`, and `MAJOR` findings remain blocking regardless of cycle count.');
   });
 
