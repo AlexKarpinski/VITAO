@@ -9,11 +9,12 @@ Every admitted implementation run must bind to:
 - repository: `AlexKarpinski/VITAO`;
 - issue number and current issue URL;
 - exact triggering comment ID and trusted actor;
+- exact workflow run ID and workflow name recorded by the repository-owned trigger;
 - exact base `main` SHA observed when implementation starts;
 - deterministic branch prefix `codex/issue-<number>`;
-- prompt files `.github/codex/implement.md` and `.github/codex/validate.md` from that base revision.
+- prompt files `.github/codex/implement.md`, `.github/codex/validate.md`, and `.github/codex/implementation-request.schema.md` loaded from that exact base revision.
 
-The worker must re-read the issue from GitHub instead of trusting copied issue text in a command or shell environment.
+The worker must re-read the issue from GitHub instead of trusting copied issue text in a command or shell environment. It must verify the recorded command comment and workflow-run provenance against GitHub before treating the request as admitted.
 
 ## Preconditions
 
@@ -21,7 +22,7 @@ Before changing files, the worker must verify that:
 
 1. the issue is still open;
 2. `ready-for-codex` is still present;
-3. the implementation request came from the repository-owned trigger workflow;
+3. the implementation request came from the repository-owned trigger workflow and its recorded command-comment/workflow-run provenance matches GitHub;
 4. scope and acceptance criteria are concrete enough for a repository-only slice;
 5. no required owner decision is missing;
 6. an existing issue branch or PR is reused instead of duplicated.
