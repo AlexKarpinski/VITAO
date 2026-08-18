@@ -1,6 +1,6 @@
 # VITAO Codex worker prompts
 
-This directory contains repository-owned prompts for the future Issue #37 Codex implementation and review-remediation worker.
+This directory contains repository-owned prompts and contracts for the future Issue #37 Codex implementation and review-remediation worker.
 
 ## Current status
 
@@ -48,6 +48,7 @@ npm run build
 
 ## Files
 
-- `implement.md` — implementation-worker behavior.
+- `implement.md` — authoritative implementation-worker behavior; it must follow the implementation request/result contract below.
+- `implementation-request.schema.md` — admitted-request identity, preconditions, deterministic mutation rules, recoverable result states, and result-record contract.
 - `remediate-review.md` — review-finding classification and safe remediation.
 - `validate.md` — exact validation commands and reporting contract.
