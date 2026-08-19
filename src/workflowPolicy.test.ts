@@ -107,6 +107,7 @@ function workflowAllows(event: Event): boolean {
 
 async function runScript(options: {
   issueState?: 'open' | 'closed';
+  issueBody?: string;
   labels?: string[];
   comments?: Array<{ user?: { login?: string; type?: string }; body?: string }>;
   workerEnabled?: boolean;
@@ -119,6 +120,7 @@ async function runScript(options: {
           data: {
             number: 37,
             state: options.issueState ?? 'open',
+            body: options.issueBody ?? '## Goal\nScoped work\n\n## Acceptance criteria\n- [ ] Complete',
             labels: (options.labels ?? ['ready-for-codex']).map((name) => ({ name })),
           },
         }),
