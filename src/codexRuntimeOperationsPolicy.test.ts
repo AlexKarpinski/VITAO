@@ -28,6 +28,16 @@ function assertInactiveTrigger(workflow: string, exactPermissions: string[]) {
   expect(permissions).toEqual([...exactPermissions].sort());
 }
 
+function getEnvValue(workflow: string, key: string) {
+  const prefix = `${key}:`;
+  const line = workflow
+    .split('\n')
+    .map((candidate) => candidate.trim())
+    .find((candidate) => candidate.startsWith(prefix));
+
+  return line?.slice(prefix.length).trim();
+}
+
 describe('Codex runtime operations policy', () => {
   it('keeps the worker inactive until owner-controlled runtime decisions are documented', () => {
     expect(readme).toContain('These files are **inactive groundwork only**.');
@@ -52,6 +62,16 @@ describe('Codex runtime operations policy', () => {
       expect(workflow).not.toContain('workspace-write');
       expect(workflow).not.toContain('contents: write');
     }
+  });
+
+  it('requires an explicit fail-closed repository enable switch before implementation admission', () => {
+    expect(getEnvValue(issueTrigger, 'CODEX_WORKER_ENABLED')).toBe(
+      "${{ vars.CODEX_WORKER_ENABLED || 'false' }}"
+    );
+    expect(issueTrigger).toContain("if (process.env.CODEX_WORKER_ENABLED !== 'true')");
+    expect(issueTrigger).toContain('the repository Codex worker enable switch is off');
+    expect(readme).toContain('`CODEX_WORKER_ENABLED=true`');
+    expect(readme).toContain('unset or any value other than `true` keeps implementation admission disabled');
   });
 
   it('bounds trigger execution without pretending that it bounds downstream API spend', () => {

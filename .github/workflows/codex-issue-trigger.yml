@@ -20,6 +20,8 @@ jobs:
     concurrency:
       group: codex-issue-${{ github.event.issue.number }}
       cancel-in-progress: false
+    env:
+      CODEX_WORKER_ENABLED: ${{ vars.CODEX_WORKER_ENABLED || 'false' }}
 
     steps:
       - name: Validate readiness and request implementation
@@ -31,6 +33,16 @@ jobs:
             const readyLabel = 'ready-for-codex';
             const requestMarker = '<!-- codex-implementation-requested -->';
             const implementationPrefix = '@codex implement this issue.';
+
+            if (process.env.CODEX_WORKER_ENABLED !== 'true') {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: eventIssue.number,
+                body: 'Implementation was not started: the repository Codex worker enable switch is off.',
+              });
+              return;
+            }
 
             const { data: issue } = await github.rest.issues.get({
               owner: context.repo.owner,
