@@ -8,7 +8,7 @@ These files are **inactive groundwork only**. The repository does not yet enable
 
 The repository-owned trigger workflows now enforce a five-minute GitHub Actions job timeout. This bounds trigger execution time, but it does not decide API token usage or spend limits for a future worker.
 
-Implementation and automatic CI-remediation admission share a repository-level fail-closed switch. The trigger workflows admit Codex work only when the repository Actions variable is set exactly to `CODEX_WORKER_ENABLED=true`; unset or any value other than `true` keeps both implementation and automatic CI-remediation admission disabled. Turning this variable off is the repository disable switch for new Codex admissions. It does not cancel a downstream worker that has already started; manual cancellation behavior for a future worker must still be explicitly designed before activation.
+Implementation and automatic CI-remediation admission share a repository-level fail-closed switch. The trigger workflows admit Codex work only when the repository Actions variable is set exactly to `CODEX_WORKER_ENABLED=true`; unset or any value other than `true` keeps implementation admission disabled. The same value also keeps automatic CI-remediation admission disabled. Turning this variable off is the repository disable switch for new Codex admissions. It does not cancel a downstream worker that has already started; manual cancellation behavior for a future worker must still be explicitly designed before activation.
 
 Activation remains blocked until the owner confirms:
 
