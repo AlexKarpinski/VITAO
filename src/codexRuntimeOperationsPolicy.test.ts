@@ -54,8 +54,8 @@ describe('Codex runtime operations policy', () => {
     }
   });
 
-  it('requires an explicit repository enable switch before implementation admission', () => {
-    expect(issueTrigger).toContain("CODEX_WORKER_ENABLED: ${{ vars.CODEX_WORKER_ENABLED || 'false' }}");
+  it('requires an explicit fail-closed repository enable switch before implementation admission', () => {
+    expect(issueTrigger).toMatch(/CODEX_WORKER_ENABLED:\s*\$\{\{\s*vars\.CODEX_WORKER_ENABLED\s*\|\|\s*'false'\s*\}\}/);
     expect(issueTrigger).toContain("if (process.env.CODEX_WORKER_ENABLED !== 'true')");
     expect(issueTrigger).toContain('the repository Codex worker enable switch is off');
     expect(readme).toContain('`CODEX_WORKER_ENABLED=true`');
