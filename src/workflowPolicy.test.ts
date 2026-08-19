@@ -109,6 +109,7 @@ async function runScript(options: {
   issueState?: 'open' | 'closed';
   labels?: string[];
   comments?: Array<{ user?: { login?: string; type?: string }; body?: string }>;
+  workerEnabled?: boolean;
 }) {
   const createComment = vi.fn();
   const github = {
@@ -135,10 +136,15 @@ async function runScript(options: {
     },
   };
   const core = { info: vi.fn() };
+  const process = {
+    env: {
+      CODEX_WORKER_ENABLED: options.workerEnabled === false ? 'false' : 'true',
+    },
+  };
   const script = scalar(workflow, 'script', 12);
-  const execute = new AsyncFunction('github', 'context', 'core', script);
+  const execute = new AsyncFunction('github', 'context', 'core', 'process', script);
 
-  await execute(github, context, core);
+  await execute(github, context, core, process);
   return { createComment, core, github };
 }
 
@@ -188,6 +194,13 @@ describe('Codex issue trigger policy', () => {
       'uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1',
     );
     expect(workflow).not.toMatch(/uses:\s+actions\/github-script@v\d+/);
+  });
+
+  it('fails closed when the repository worker enable switch is off', async () => {
+    const disabled = await runScript({ workerEnabled: false });
+    expect(disabled.github.rest.issues.get).not.toHaveBeenCalled();
+    expect(disabled.createComment).toHaveBeenCalledOnce();
+    expect(disabled.createComment.mock.calls[0][0].body).toContain('worker enable switch is off');
   });
 
   it('enforces current issue state and readiness before requesting work', async () => {
