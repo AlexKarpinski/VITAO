@@ -10,10 +10,10 @@ const githubScriptAction = 'actions/github-script@60a0d83039c74a4aee543508d2ffcb
 
 function assertInactiveTrigger(workflow: string, exactPermissions: string[]) {
   expect(workflow).not.toMatch(/\$\{\{\s*secrets\./);
-  expect(workflow).not.toMatch(/^\s*run:/m);
+  expect(workflow).not.toMatch(/^\s*(?:-\s*)?run:/m);
   expect(workflow).not.toContain('permissions: write-all');
 
-  const uses = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s+#.*)?$/gm)].map(
+  const uses = [...workflow.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)(?:\s+#.*)?$/gm)].map(
     (match) => match[1]
   );
   expect(uses).toEqual([githubScriptAction]);
