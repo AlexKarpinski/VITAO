@@ -5,7 +5,9 @@ const implementationContract = readFileSync('.github/codex/implementation-reques
 
 describe('Codex implementation recovery policy', () => {
   it('keeps failed runs recoverable without destructive branch mutation', () => {
-    expect(implementationContract).toContain('Never force-push over owner changes.');
+    expect(implementationContract).toContain(
+      'Never force-push an existing issue branch; preserve owner-authored and prior successful Codex commits.',
+    );
     expect(implementationContract).toContain('Create at most one draft PR for the issue, or update the existing one.');
     expect(implementationContract).toContain('Push successful commits to the deterministic issue branch.');
   });
