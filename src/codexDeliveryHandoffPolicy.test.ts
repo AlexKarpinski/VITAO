@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const implementationContract = readFileSync('.github/codex/implementation-request.schema.md', 'utf8');
+const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8');
 
 describe('Codex Delivery Engine handoff policy', () => {
   it('records GitHub-owned evidence needed to reconcile a generated PR', () => {
@@ -11,6 +12,17 @@ describe('Codex Delivery Engine handoff policy', () => {
     expect(implementationContract).toContain('required validation commands and their results for that exact head');
     expect(implementationContract).toContain('completed and remaining acceptance criteria');
     expect(implementationContract).toContain('owner-input or tooling blocker');
+  });
+
+  it('publishes every required validation command through exact-head CI', () => {
+    const installIndex = ciWorkflow.indexOf('run: npm ci');
+    const testIndex = ciWorkflow.indexOf('run: npm test -- --run');
+    const buildIndex = ciWorkflow.indexOf('run: npm run build');
+
+    expect(installIndex).toBeGreaterThan(-1);
+    expect(testIndex).toBeGreaterThan(installIndex);
+    expect(buildIndex).toBeGreaterThan(testIndex);
+    expect(ciWorkflow).not.toContain('run: npm install');
   });
 
   it('forbids non-GitHub-only handoff evidence', () => {
