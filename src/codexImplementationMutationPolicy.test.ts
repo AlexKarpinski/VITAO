@@ -25,7 +25,7 @@ describe('Codex implementation mutation policy', () => {
   });
 
   it('preserves existing branch commits and keeps merge authority in the Delivery Engine', () => {
-    const forcePushBan = 'never force-push an existing issue branch; preserve owner-authored and prior successful Codex commits.';
+    const forcePushBan = 'never force-push an existing issue branch; preserve owner-authored and prior successful codex commits.';
     expect(implementationContract.toLowerCase()).toContain(forcePushBan);
     expect(implementationPrompt.toLowerCase()).toContain(forcePushBan);
     expect(implementationContract).toContain('Do not merge; Delivery Engine owns merge gating.');
