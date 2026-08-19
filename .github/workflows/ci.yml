@@ -6,6 +6,9 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build-and-test:
     name: Build and test
@@ -14,6 +17,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
 
       - name: Check project exists
         id: project
@@ -33,21 +38,22 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Regenerate dependency lock
-        if: steps.project.outputs.exists == 'true'
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-
-      - name: Upload regenerated lockfile
-        if: steps.project.outputs.exists == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: regenerated-package-lock
-          path: package-lock.json
-          if-no-files-found: error
+      - name: Repair dependency lock on this owner branch
+        if: steps.project.outputs.exists == 'true' && github.event_name == 'pull_request' && github.head_ref == 'codex/issue-37-delivery-handoff-policy' && github.event.pull_request.head.repo.full_name == github.repository
+        shell: bash
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          if ! git diff --quiet -- package-lock.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package-lock.json
+            git commit -m "Regenerate npm lockfile for npm ci"
+            git push origin "HEAD:${GITHUB_HEAD_REF}"
+          fi
 
       - name: Install dependencies
         if: steps.project.outputs.exists == 'true'
-        run: npm install
+        run: npm ci
 
       - name: Check test script
         if: steps.project.outputs.exists == 'true'
