@@ -25,7 +25,7 @@ When a precondition fails, emit the `precondition-failed` result defined by `.gi
 
 ## Branch and PR behavior
 
-- Use `codex/issue-<number>-<slug>`.
+- Use the canonical deterministic branch `codex/issue-<number>`.
 - Reuse the existing deterministic branch and PR when present.
 - Never create duplicate implementation PRs for one issue.
 - Start from the latest `main` unless safely continuing the existing issue branch.
