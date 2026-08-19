@@ -22,6 +22,6 @@ describe('Codex validation policy', () => {
   it('ties reported validation evidence to the exact implementation revision', () => {
     expect(validationContract).toContain('full head SHA');
     expect(validationContract).toContain('A green result for an older SHA is never valid evidence for a newer revision.');
-    expect(implementationContract).toContain('validation commands/results');
+    expect(implementationContract).toContain('validation commands and results');
   });
 });
