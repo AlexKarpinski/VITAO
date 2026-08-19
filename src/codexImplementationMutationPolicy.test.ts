@@ -8,11 +8,15 @@ const issueTrigger = readFileSync('.github/workflows/codex-issue-trigger.yml', '
 describe('Codex implementation mutation policy', () => {
   it('requires one canonical deterministic issue branch across authoritative sources', () => {
     expect(implementationContract).toContain('deterministic branch prefix `codex/issue-<number>`');
-    expect(implementationPrompt).toContain('canonical deterministic branch `codex/issue-<number>`');
+    expect(implementationPrompt).toContain('canonical deterministic branch `codex/issue-<number>` for new issue branches');
     expect(issueTrigger).toContain('const branchName = `codex/issue-${issue.number}`;');
     expect(issueTrigger).toContain('use and reuse the canonical deterministic branch');
-    expect(implementationPrompt).not.toContain('codex/issue-<number>-<slug>');
     expect(issueTrigger).not.toContain('beginning with');
+  });
+
+  it('preserves an existing legacy issue PR instead of creating a duplicate canonical branch', () => {
+    expect(implementationPrompt).toContain('previous deterministic `codex/issue-<number>-<slug>` form');
+    expect(implementationPrompt).toContain('continue that exact existing branch rather than creating or migrating to a duplicate branch');
   });
 
   it('requires deterministic issue branch and single PR reuse', () => {
