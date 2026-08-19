@@ -5,11 +5,17 @@ const validationContract = readFileSync('.github/codex/validate.md', 'utf8');
 const implementationPrompt = readFileSync('.github/codex/implement.md', 'utf8');
 const implementationContract = readFileSync('.github/codex/implementation-request.schema.md', 'utf8');
 
+const requiredCommandsMatch = validationContract.match(
+  /## Required commands\s+```bash\n([\s\S]*?)\n```/
+);
+const requiredCommands = requiredCommandsMatch?.[1]
+  .split('\n')
+  .map((command) => command.trim())
+  .filter(Boolean);
+
 describe('Codex validation policy', () => {
-  it('keeps the repository-approved required command set explicit', () => {
-    expect(validationContract).toContain('npm ci');
-    expect(validationContract).toContain('npm test -- --run');
-    expect(validationContract).toContain('npm run build');
+  it('keeps the repository-approved required command set exact and ordered', () => {
+    expect(requiredCommands).toEqual(['npm ci', 'npm test -- --run', 'npm run build']);
   });
 
   it('forbids false success when required validation was skipped or unavailable', () => {
