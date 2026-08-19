@@ -54,6 +54,14 @@ describe('Codex runtime operations policy', () => {
     }
   });
 
+  it('requires an explicit repository enable switch before implementation admission', () => {
+    expect(issueTrigger).toContain("CODEX_WORKER_ENABLED: ${{ vars.CODEX_WORKER_ENABLED || 'false' }}");
+    expect(issueTrigger).toContain("if (process.env.CODEX_WORKER_ENABLED !== 'true')");
+    expect(issueTrigger).toContain('the repository Codex worker enable switch is off');
+    expect(readme).toContain('`CODEX_WORKER_ENABLED=true`');
+    expect(readme).toContain('unset or any value other than `true` keeps implementation admission disabled');
+  });
+
   it('bounds trigger execution without pretending that it bounds downstream API spend', () => {
     expect(readme).toContain('`.github/workflows/codex-issue-trigger.yml` uses `timeout-minutes: 5`.');
     expect(readme).toContain('`.github/workflows/codex-ci-fix-trigger.yml` uses `timeout-minutes: 5`.');
