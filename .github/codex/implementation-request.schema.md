@@ -43,6 +43,21 @@ If a precondition fails, stop without repository mutation, report the exact fail
 - Use `Refs #<number>` unless the implementation completes the whole issue and can legitimately use `Closes #<number>`.
 - Do not merge; Delivery Engine owns merge gating.
 
+## Delivery Engine handoff
+
+When a PR exists, the worker result must make the generated PR discoverable and reconcilable from GitHub alone. Record:
+
+- issue number and PR URL/number;
+- exact current PR head SHA and base branch;
+- deterministic branch name;
+- draft/non-draft state;
+- changed files;
+- required validation commands and their results for that exact head;
+- completed and remaining acceptance criteria;
+- any owner-input or tooling blocker that still prevents merge readiness.
+
+Do not rely on local workspace state, unpushed commits, hidden runner files, or prose-only status comments as handoff evidence. The Delivery Engine must be able to continue CI, review, remediation, and merge-gate reconciliation using GitHub issue/PR state and exact-SHA evidence.
+
 ## Result record
 
 A successful or failed run must report:
