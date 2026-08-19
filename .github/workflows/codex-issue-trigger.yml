@@ -87,7 +87,8 @@ jobs:
                   content.push(issueLines[contentIndex]);
                 }
 
-                if (content.join('\n').trim().length > 0) {
+                const visibleContent = content.join('\n').replace(/<!--[\s\S]*?-->/g, '').trim();
+                if (visibleContent.length > 0) {
                   return true;
                 }
               }
