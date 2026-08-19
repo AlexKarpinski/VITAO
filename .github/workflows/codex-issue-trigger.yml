@@ -70,18 +70,41 @@ jobs:
             }
 
             const issueBody = issue.body ?? '';
+            const issueLines = issueBody.split('\n');
+            const headingPattern = /^#{2,3}\s+(.+?)\s*$/;
+            const hasSectionContent = (acceptedHeadings) => {
+              for (let index = 0; index < issueLines.length; index += 1) {
+                const heading = issueLines[index].match(headingPattern)?.[1]?.toLowerCase();
+                if (!heading || !acceptedHeadings.includes(heading)) {
+                  continue;
+                }
+
+                const content = [];
+                for (let contentIndex = index + 1; contentIndex < issueLines.length; contentIndex += 1) {
+                  if (headingPattern.test(issueLines[contentIndex])) {
+                    break;
+                  }
+                  content.push(issueLines[contentIndex]);
+                }
+
+                if (content.join('\n').trim().length > 0) {
+                  return true;
+                }
+              }
+              return false;
+            };
             const requiredSections = [
               {
                 name: 'Goal or Scope',
-                pattern: /^##\s+(?:Goal|Scope)\s*$/im,
+                headings: ['goal', 'scope'],
               },
               {
                 name: 'Acceptance criteria',
-                pattern: /^##\s+Acceptance criteria\s*$/im,
+                headings: ['acceptance criteria'],
               },
             ];
             const missingRequiredSections = requiredSections
-              .filter(({ pattern }) => !pattern.test(issueBody))
+              .filter(({ headings }) => !hasSectionContent(headings))
               .map(({ name }) => name);
 
             if (missingRequiredSections.length > 0) {
@@ -89,7 +112,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issue.number,
-                body: `Implementation was not started: issue scope is incomplete. Add required sections: ${missingRequiredSections.join(', ')}.`,
+                body: `Implementation was not started: issue scope is incomplete. Add required sections with content: ${missingRequiredSections.join(', ')}.`,
               });
               return;
             }
