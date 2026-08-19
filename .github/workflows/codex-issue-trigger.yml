@@ -69,6 +69,31 @@ jobs:
               return;
             }
 
+            const issueBody = issue.body ?? '';
+            const requiredSections = [
+              {
+                name: 'Goal or Scope',
+                pattern: /^##\s+(?:Goal|Scope)\s*$/im,
+              },
+              {
+                name: 'Acceptance criteria',
+                pattern: /^##\s+Acceptance criteria\s*$/im,
+              },
+            ];
+            const missingRequiredSections = requiredSections
+              .filter(({ pattern }) => !pattern.test(issueBody))
+              .map(({ name }) => name);
+
+            if (missingRequiredSections.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Implementation was not started: issue scope is incomplete. Add required sections: ${missingRequiredSections.join(', ')}.`,
+              });
+              return;
+            }
+
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
