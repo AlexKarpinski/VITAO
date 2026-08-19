@@ -28,7 +28,8 @@ describe('Codex remediation enable-switch policy', () => {
   });
 
   it('documents that the switch blocks new admissions without claiming cancellation of running work', () => {
-    expect(readme).toContain('both implementation and automatic CI-remediation admission disabled');
+    expect(readme).toContain('keeps implementation admission disabled');
+    expect(readme).toContain('also keeps automatic CI-remediation admission disabled');
     expect(readme).toContain('disable switch for new Codex admissions');
     expect(readme).toContain('does not cancel a downstream worker that has already started');
   });
