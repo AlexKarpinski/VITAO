@@ -51,7 +51,7 @@ When a precondition fails, emit the `precondition-failed` result defined by `.gi
 4. Add focused regression coverage for behavior changes.
 5. Keep unrelated refactors and dependency upgrades out of scope.
 6. Never edit generated or binary assets unless the issue explicitly requires them and the source is available.
-7. Preserve recoverability: do not force-push over owner work.
+7. Preserve recoverability: never force-push an existing issue branch; preserve owner-authored and prior successful Codex commits.
 
 ## Validation
 
