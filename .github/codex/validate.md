@@ -16,7 +16,15 @@ npm run build
 - `npm test -- --run` executes the Vitest suite once in CI mode.
 - `npm run build` runs TypeScript project compilation and the Vite production build.
 
-There is currently no separate repository lint script. Do not report lint as passed, failed, or skipped unless the repository adds and documents one.
+## Applicability of other checks
+
+- Format: there is currently no repository format or format-check script, so formatting is not a separately executable required check.
+- Lint: there is currently no repository lint script, so lint is not a separately executable required check.
+- TypeScript type checking: it is required and is executed by `npm run build` through `tsc -b`; do not report a separate typecheck command unless the repository adds one.
+- Playwright/live-site checks: no Playwright command is currently configured in `package.json`; run one only when the repository adds and documents an approved command and the issue makes it applicable.
+- Security/dependency checks: no separate repository-required security or dependency audit command is currently configured; do not invent one.
+
+Do not report a non-configured check as passed or failed. If an issue explicitly requires a check that is not configured, report it as unavailable with the exact reason and do not claim the issue's validation is complete.
 
 ## Failure behavior
 
