@@ -6,12 +6,40 @@ const issueTrigger = readFileSync('.github/workflows/codex-issue-trigger.yml', '
 const ciFixTrigger = readFileSync('.github/workflows/codex-ci-fix-trigger.yml', 'utf8');
 const triggerWorkflows = [issueTrigger, ciFixTrigger];
 
+const githubScriptAction = 'uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea';
+
+function assertInactiveTrigger(workflow: string, exactPermissions: string[]) {
+  expect(workflow).not.toMatch(/\$\{\{\s*secrets\./);
+  expect(workflow).not.toMatch(/^\s*run:/m);
+  expect(workflow).not.toContain('permissions: write-all');
+
+  const uses = [...workflow.matchAll(/^\s*uses:\s*(.+)$/gm)].map((match) => match[1].trim());
+  expect(uses).toEqual([githubScriptAction.replace('uses: ', '')]);
+
+  const permissionsBlock = workflow.match(/permissions:\n((?:\s{2}[^\n]+\n)+)/)?.[1] ?? '';
+  const permissions = permissionsBlock
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => line.trim())
+    .sort();
+  expect(permissions).toEqual([...exactPermissions].sort());
+}
+
 describe('Codex runtime operations policy', () => {
   it('keeps the worker inactive until owner-controlled runtime decisions are documented', () => {
     expect(readme).toContain('These files are **inactive groundwork only**.');
     expect(readme).toContain('OpenAI/Codex credential, model, token, and API-budget strategy');
     expect(readme).toContain('retry and manual-cancellation behavior');
     expect(readme).toContain('branch-protection and merge policy');
+
+    assertInactiveTrigger(issueTrigger, ['contents: read', 'issues: write']);
+    assertInactiveTrigger(ciFixTrigger, [
+      'pull-requests: read',
+      'issues: write',
+      'actions: read',
+      'contents: read',
+    ]);
 
     for (const workflow of triggerWorkflows) {
       expect(workflow).not.toContain('actions/checkout@');
