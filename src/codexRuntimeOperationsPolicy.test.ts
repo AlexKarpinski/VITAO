@@ -6,15 +6,17 @@ const issueTrigger = readFileSync('.github/workflows/codex-issue-trigger.yml', '
 const ciFixTrigger = readFileSync('.github/workflows/codex-ci-fix-trigger.yml', 'utf8');
 const triggerWorkflows = [issueTrigger, ciFixTrigger];
 
-const githubScriptAction = 'uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea';
+const githubScriptAction = 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea';
 
 function assertInactiveTrigger(workflow: string, exactPermissions: string[]) {
   expect(workflow).not.toMatch(/\$\{\{\s*secrets\./);
   expect(workflow).not.toMatch(/^\s*run:/m);
   expect(workflow).not.toContain('permissions: write-all');
 
-  const uses = [...workflow.matchAll(/^\s*uses:\s*(.+)$/gm)].map((match) => match[1].trim());
-  expect(uses).toEqual([githubScriptAction.replace('uses: ', '')]);
+  const uses = [...workflow.matchAll(/^\s*uses:\s*([^\s#]+)(?:\s+#.*)?$/gm)].map(
+    (match) => match[1]
+  );
+  expect(uses).toEqual([githubScriptAction]);
 
   const permissionsBlock = workflow.match(/permissions:\n((?:\s{2}[^\n]+\n)+)/)?.[1] ?? '';
   const permissions = permissionsBlock
