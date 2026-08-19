@@ -25,6 +25,8 @@ describe('Codex Delivery Engine handoff policy', () => {
     expect(testIndex).toBeGreaterThan(installIndex);
     expect(buildIndex).toBeGreaterThan(testIndex);
     expect(ciWorkflow).not.toContain('run: npm install');
+    expect(ciWorkflow).not.toContain('Check test script');
+    expect(ciWorkflow).not.toContain("steps.test-script.outputs.exists == 'true'");
   });
 
   it('forbids non-GitHub-only handoff evidence', () => {
