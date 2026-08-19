@@ -69,5 +69,6 @@ Populate the schema from current evidence only:
 - `result` records the resulting commit SHA for a fixed finding or the concrete escalation/follow-up outcome required by the schema.
 
 Do not invent placeholder values to satisfy the schema. If required evidence is unavailable, use an escalation decision rather than claiming a successful fix or verification.
+Never include secrets, credentials, tokens, environment values, or unnecessary raw logs in remediation records, PR comments, or review replies.
 
 Never merge. The Delivery Engine owns final merge gating.
