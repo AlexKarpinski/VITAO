@@ -39,20 +39,8 @@ jobs:
         if: steps.project.outputs.exists == 'true'
         run: npm ci
 
-      - name: Check test script
-        if: steps.project.outputs.exists == 'true'
-        id: test-script
-        shell: bash
-        run: |
-          if npm run | grep -q " test"; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "No test script found yet. Skipping tests until test tooling is initialized."
-          fi
-
       - name: Test
-        if: steps.project.outputs.exists == 'true' && steps.test-script.outputs.exists == 'true'
+        if: steps.project.outputs.exists == 'true'
         run: npm test -- --run
 
       - name: Build
