@@ -15,6 +15,8 @@ describe('Codex Delivery Engine handoff policy', () => {
   });
 
   it('publishes every required validation command through exact-head CI', () => {
+    expect(ciWorkflow).toContain('ref: ${{ github.event.pull_request.head.sha || github.sha }}');
+
     const installIndex = ciWorkflow.indexOf('run: npm ci');
     const testIndex = ciWorkflow.indexOf('run: npm test -- --run');
     const buildIndex = ciWorkflow.indexOf('run: npm run build');
