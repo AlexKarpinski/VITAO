@@ -35,11 +35,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.project.outputs.exists == 'true'
-        run: npm install
-
-      - name: Build
-        if: steps.project.outputs.exists == 'true'
-        run: npm run build
+        run: npm ci
 
       - name: Check test script
         if: steps.project.outputs.exists == 'true'
@@ -55,4 +51,8 @@ jobs:
 
       - name: Test
         if: steps.project.outputs.exists == 'true' && steps.test-script.outputs.exists == 'true'
-        run: npm run test -- --run
+        run: npm test -- --run
+
+      - name: Build
+        if: steps.project.outputs.exists == 'true'
+        run: npm run build
