@@ -25,7 +25,9 @@ describe('Codex review finding classification policy', () => {
     );
   });
 
-  it('protects every evidence gate for safe automatic remediation', () => {
+  it('protects every evidence gate as a required condition for safe automatic remediation', () => {
+    expect(remediationPrompt).toContain('A finding may be fixed automatically only when:');
+
     const evidenceGates = [
       'expected behavior is unambiguous;',
       'the change is inside the approved issue/PR scope;',
