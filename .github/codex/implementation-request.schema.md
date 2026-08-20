@@ -63,12 +63,17 @@ Do not rely on local workspace state, unpushed commits, hidden runner files, or 
 A successful or failed run must report:
 
 - issue number;
+- workflow run ID and workflow name;
 - base SHA and resulting head SHA;
 - branch and PR URL when present;
 - changed files;
 - validation commands and results;
 - completed and remaining acceptance criteria;
+- exact model identifier and repository-owned configuration identifier actually used for the run; if execution never reached the worker, record them as `not-started` rather than inventing values;
 - prompt revision/base SHA;
-- start/end result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, or `no-safe-slice`).
+- start and end timestamps for the implementation attempt;
+- terminal result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, or `no-safe-slice`).
+
+Model choice, credentials, token limits, and API/cost budgets remain owner-controlled activation inputs. Recording execution evidence does not authorize or invent those values.
 
 Do not include secrets, raw credentials, private tokens, or unnecessary raw logs in the record.
