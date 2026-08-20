@@ -49,9 +49,10 @@ jobs:
 
             const issueBody = issue.body ?? '';
             const issueLines = issueBody.split('\n');
-            const headingPattern = /^\s{0,3}#{2,3}\s+(.+?)\s*$/;
-            const fencePattern = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
-            const linkReferencePattern = /^\s{0,3}\[[^\]]+\]:\s*\S+(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
+            const headingPattern = /^ {0,3}#{2,3}\s+(.+?)\s*$/;
+            const fencePattern = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+            const linkReferencePattern = /^ {0,3}\[[^\]]+\]:\s*\S+(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
+            const linkReferenceTitlePattern = /^ {0,3}(?:"[^"]*"|'[^']*'|\([^)]*\))\s*$/;
             let activeCodeSpanLength = null;
             const maskInlineCode = (line) => {
               let cursor = 0;
@@ -78,7 +79,7 @@ jobs:
             const fenceDelimiterLines = [];
             const commentStrippedLines = issueLines.map((line) => {
               if (activeFence !== null) {
-                const closingFence = line.match(/^\s{0,3}(`+|~+)\s*$/)?.[1];
+                const closingFence = line.match(/^ {0,3}(`+|~+)\s*$/)?.[1];
                 const isClosingFence = Boolean(closingFence && closingFence[0] === activeFence.marker && closingFence.length >= activeFence.length);
                 fencedLines.push(true);
                 fenceDelimiterLines.push(isClosingFence);
@@ -125,6 +126,14 @@ jobs:
               const heading = commentStrippedLines[index].match(headingPattern)?.[1];
               return heading ? normalizeHeading(heading) : null;
             })();
+            const isInvisibleLinkReferenceLine = (entries, index) => {
+              const current = entries[index];
+              if (current.fenced) return false;
+              if (linkReferencePattern.test(current.line)) return true;
+              if (!linkReferenceTitlePattern.test(current.line) || index === 0) return false;
+              const previous = entries[index - 1];
+              return !previous.fenced && linkReferencePattern.test(previous.line);
+            };
             const hasSectionContent = (acceptedHeadings) => {
               for (let index = 0; index < issueLines.length; index += 1) {
                 const heading = headingAt(index);
@@ -136,7 +145,7 @@ jobs:
                 }
                 const visibleContent = content
                   .filter(({ delimiter }) => !delimiter)
-                  .filter(({ line, fenced }) => fenced || !linkReferencePattern.test(line))
+                  .filter((_entry, contentIndex, entries) => !isInvisibleLinkReferenceLine(entries, contentIndex))
                   .map(({ line }) => line)
                   .join('\n')
                   .trim();
