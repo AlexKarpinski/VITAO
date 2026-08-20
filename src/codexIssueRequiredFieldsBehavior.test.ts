@@ -23,30 +23,16 @@ function extractScript(): string {
 async function run(body: string | null) {
   const createComment = vi.fn();
   const github = {
-    rest: {
-      issues: {
-        get: vi.fn().mockResolvedValue({
-          data: {
-            number: 37,
-            state: 'open',
-            body,
-            labels: [{ name: 'ready-for-codex' }],
-          },
-        }),
-        createComment,
-        listComments: vi.fn(),
-      },
-    },
+    rest: { issues: {
+      get: vi.fn().mockResolvedValue({ data: { number: 37, state: 'open', body, labels: [{ name: 'ready-for-codex' }] } }),
+      createComment,
+      listComments: vi.fn(),
+    } },
     paginate: vi.fn().mockResolvedValue([]),
   };
   const context = {
-    repo: { owner: 'AlexKarpinski', repo: 'VITAO' },
-    runId: 123,
-    workflow: 'Trigger Codex from issue',
-    payload: {
-      issue: { number: 37 },
-      comment: { id: 456, user: { login: 'owner' } },
-    },
+    repo: { owner: 'AlexKarpinski', repo: 'VITAO' }, runId: 123, workflow: 'Trigger Codex from issue',
+    payload: { issue: { number: 37 }, comment: { id: 456, user: { login: 'owner' } } },
   };
   const core = { info: vi.fn() };
   const process = { env: { CODEX_WORKER_ENABLED: 'true' } };
@@ -57,10 +43,7 @@ async function run(body: string | null) {
 
 describe('Codex required-field admission behavior', () => {
   it('accepts populated headings emitted by the repository Codex issue form', async () => {
-    const createComment = await run(
-      '### Goal\nImplement one focused change.\n\n### Requirements\nStay scoped.\n\n### Acceptance criteria\n- Tests pass.'
-    );
-
+    const createComment = await run('### Goal\nImplement one focused change.\n\n### Requirements\nStay scoped.\n\n### Acceptance criteria\n- Tests pass.');
     expect(createComment).toHaveBeenCalledOnce();
     expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
   });
@@ -69,13 +52,10 @@ describe('Codex required-field admission behavior', () => {
     ['missing body', null],
     ['empty goal', '### Goal\n\n### Acceptance criteria\n- Tests pass.'],
     ['empty acceptance criteria', '### Goal\nImplement one focused change.\n\n### Acceptance criteria\n'],
-    [
-      'HTML-comment-only required sections',
-      '### Goal\n<!-- Describe the goal here -->\n\n### Acceptance criteria\n<!-- Add acceptance criteria here -->',
-    ],
+    ['HTML-comment-only required sections', '### Goal\n<!-- Describe the goal here -->\n\n### Acceptance criteria\n<!-- Add acceptance criteria here -->'],
+    ['unclosed HTML comment', '### Goal\n<!-- placeholder\n\n### Acceptance criteria\n- Tests pass.'],
   ])('rejects %s before request generation', async (_name, body) => {
     const createComment = await run(body);
-
     expect(createComment).toHaveBeenCalledOnce();
     expect(createComment.mock.calls[0][0].body).toContain('issue scope is incomplete');
     expect(createComment.mock.calls[0][0].body).not.toContain('@codex implement this issue.');
