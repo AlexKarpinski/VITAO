@@ -9,6 +9,7 @@ You are remediating actionable review feedback on one existing VITAO pull reques
 - Do not treat approval or review for an older SHA as valid for a newer revision.
 - After any file change, push a new SHA, rerun required validation, and require a new review.
 - Request at most one Codex review per exact SHA.
+- Every Codex review request must include the hidden marker `<!-- codex-review-requested:<full-head-sha> -->` using the full exact PR head SHA. Treat a request without that marker, with a short SHA, or with a marker for a different revision as invalid delivery evidence.
 
 ## Finding classification
 

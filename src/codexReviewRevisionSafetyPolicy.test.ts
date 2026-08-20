@@ -15,4 +15,11 @@ describe('Codex review revision safety policy', () => {
     expect(remediationPrompt).toContain('Request at most one Codex review per exact SHA.');
     expect(remediationPrompt).toContain('`freshReviewRequired` is `true` after any remediation commit changes the PR head.');
   });
+
+  it('requires a full exact-head marker on every Codex review request', () => {
+    expect(remediationPrompt).toContain('<!-- codex-review-requested:<full-head-sha> -->');
+    expect(remediationPrompt).toContain('using the full exact PR head SHA');
+    expect(remediationPrompt).toContain('with a short SHA');
+    expect(remediationPrompt).toContain('with a marker for a different revision');
+  });
 });
