@@ -54,6 +54,8 @@ describe('Codex required-field admission behavior', () => {
     ['empty acceptance criteria', '### Goal\nImplement one focused change.\n\n### Acceptance criteria\n'],
     ['HTML-comment-only required sections', '### Goal\n<!-- Describe the goal here -->\n\n### Acceptance criteria\n<!-- Add acceptance criteria here -->'],
     ['unclosed HTML comment', '### Goal\n<!-- placeholder\n\n### Acceptance criteria\n- Tests pass.'],
+    ['fenced-code headings', '```md\n### Goal\nExample only.\n### Acceptance criteria\n- Example only.\n```'],
+    ['tilde-fenced headings', '~~~md\n### Goal\nExample only.\n### Acceptance criteria\n- Example only.\n~~~'],
   ])('rejects %s before request generation', async (_name, body) => {
     const createComment = await run(body);
     expect(createComment).toHaveBeenCalledOnce();
