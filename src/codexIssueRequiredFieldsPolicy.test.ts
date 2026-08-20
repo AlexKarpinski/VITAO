@@ -18,7 +18,9 @@ describe('Codex issue required-field admission policy', () => {
 
   it('ignores HTML comments outside code while preserving literal code examples', () => {
     expect(workflow).toContain('let inHtmlComment = false;');
-    expect(workflow).toContain("const maskInlineCode = (line) => line.replace(/(`+)(.*?)\\1/g");
+    expect(workflow).toContain('let activeCodeSpanLength = null;');
+    expect(workflow).toContain('if (activeCodeSpanLength === null) activeCodeSpanLength = runLength;');
+    expect(workflow).toContain('else if (runLength === activeCodeSpanLength) activeCodeSpanLength = null;');
     expect(workflow).toContain("const open = scanLine.indexOf('<!--', cursor);");
     expect(workflow).toContain("const close = scanLine.indexOf('-->', cursor);");
     expect(workflow).toContain('const commentStrippedLines = issueLines.map((line) =>');
