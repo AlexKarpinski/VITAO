@@ -50,18 +50,48 @@ jobs:
             const issueBody = issue.body ?? '';
             const issueLines = issueBody.split('\n');
             const headingPattern = /^#{2,3}\s+(.+?)\s*$/;
-            const fencePattern = /^\s{0,3}(`{3,}|~{3,})/;
-            let activeFence = null;
-            const fencedLines = issueLines.map((line) => {
-              const fence = line.match(fencePattern)?.[1];
-              const isFenced = activeFence !== null || Boolean(fence);
-              if (fence) {
-                if (activeFence === null) activeFence = fence[0];
-                else if (fence[0] === activeFence) activeFence = null;
+            const fencePattern = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
+            let inHtmlComment = false;
+            const commentStrippedLines = issueLines.map((line) => {
+              let cursor = 0;
+              let visible = '';
+              while (cursor < line.length) {
+                if (inHtmlComment) {
+                  const close = line.indexOf('-->', cursor);
+                  if (close < 0) return visible;
+                  inHtmlComment = false;
+                  cursor = close + 3;
+                  continue;
+                }
+                const open = line.indexOf('<!--', cursor);
+                if (open < 0) {
+                  visible += line.slice(cursor);
+                  break;
+                }
+                visible += line.slice(cursor, open);
+                inHtmlComment = true;
+                cursor = open + 4;
               }
-              return isFenced;
+              return visible;
             });
-            const headingAt = (index) => fencedLines[index] ? null : issueLines[index].match(headingPattern)?.[1]?.toLowerCase() ?? null;
+            let activeFence = null;
+            const fencedLines = commentStrippedLines.map((line) => {
+              if (activeFence !== null) {
+                const closingFence = line.match(/^\s{0,3}(`+|~+)\s*$/)?.[1];
+                const isFenced = true;
+                if (closingFence && closingFence[0] === activeFence.marker && closingFence.length >= activeFence.length) {
+                  activeFence = null;
+                }
+                return isFenced;
+              }
+              const openingFence = line.match(fencePattern)?.[1];
+              if (openingFence) {
+                activeFence = { marker: openingFence[0], length: openingFence.length };
+                return true;
+              }
+              return false;
+            });
+            const headingAt = (index) => fencedLines[index] ? null : commentStrippedLines[index].match(headingPattern)?.[1]?.toLowerCase() ?? null;
             const hasSectionContent = (acceptedHeadings) => {
               for (let index = 0; index < issueLines.length; index += 1) {
                 const heading = headingAt(index);
@@ -71,7 +101,13 @@ jobs:
                   if (headingAt(contentIndex)) break;
                   content.push(issueLines[contentIndex]);
                 }
-                const visibleContent = content.join('\n').replace(/<!--[\s\S]*?(?:-->|$)/g, '').trim();
+                const visibleContent = content
+                  .join('\n')
+                  .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+                  .split('\n')
+                  .filter((line) => !/^\s{0,3}(?:`{3,}|~{3,})/.test(line))
+                  .join('\n')
+                  .trim();
                 if (visibleContent.length > 0) return true;
               }
               return false;
