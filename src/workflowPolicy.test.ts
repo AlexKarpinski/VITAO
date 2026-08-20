@@ -111,6 +111,8 @@ async function runScript(options: {
   labels?: string[];
   comments?: Array<{ user?: { login?: string; type?: string }; body?: string }>;
   workerEnabled?: boolean;
+  pilotSucceeded?: boolean;
+  pilotIssueNumber?: string;
 }) {
   const createComment = vi.fn();
   const github = {
@@ -141,6 +143,8 @@ async function runScript(options: {
   const process = {
     env: {
       CODEX_WORKER_ENABLED: options.workerEnabled === false ? 'false' : 'true',
+      CODEX_PILOT_SUCCEEDED: options.pilotSucceeded === false ? 'false' : 'true',
+      CODEX_PILOT_ISSUE_NUMBER: options.pilotIssueNumber ?? '',
     },
   };
   const script = scalar(workflow, 'script', 12);
@@ -203,6 +207,26 @@ describe('Codex issue trigger policy', () => {
     expect(disabled.github.rest.issues.get).not.toHaveBeenCalled();
     expect(disabled.createComment).toHaveBeenCalledOnce();
     expect(disabled.createComment.mock.calls[0][0].body).toContain('worker enable switch is off');
+  });
+
+  it('admits only the configured pilot issue until pilot success is recorded', async () => {
+    const missing = await runScript({ pilotSucceeded: false });
+    expect(missing.github.rest.issues.get).not.toHaveBeenCalled();
+    expect(missing.createComment.mock.calls[0][0].body).toContain('only the owner-configured pilot issue may run');
+
+    const malformed = await runScript({ pilotSucceeded: false, pilotIssueNumber: 'issue-37' });
+    expect(malformed.github.rest.issues.get).not.toHaveBeenCalled();
+
+    const mismatched = await runScript({ pilotSucceeded: false, pilotIssueNumber: '38' });
+    expect(mismatched.github.rest.issues.get).not.toHaveBeenCalled();
+
+    const pilot = await runScript({ pilotSucceeded: false, pilotIssueNumber: '37' });
+    expect(pilot.github.rest.issues.get).toHaveBeenCalledOnce();
+    expect(pilot.createComment.mock.calls.at(-1)?.[0].body).toContain('@codex implement this issue.');
+
+    const generalAfterSuccess = await runScript({ pilotSucceeded: true, pilotIssueNumber: '' });
+    expect(generalAfterSuccess.github.rest.issues.get).toHaveBeenCalledOnce();
+    expect(generalAfterSuccess.createComment.mock.calls.at(-1)?.[0].body).toContain('@codex implement this issue.');
   });
 
   it('enforces current issue state and readiness before requesting work', async () => {
