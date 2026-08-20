@@ -41,29 +41,39 @@ async function run(body: string | null) {
   return createComment;
 }
 
+async function expectAdmitted(body: string) {
+  const createComment = await run(body);
+  expect(createComment).toHaveBeenCalledOnce();
+  expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
+}
+
 describe('Codex required-field admission behavior', () => {
   it('accepts populated headings emitted by the repository Codex issue form', async () => {
-    const createComment = await run('### Goal\nImplement one focused change.\n\n### Requirements\nStay scoped.\n\n### Acceptance criteria\n- Tests pass.');
-    expect(createComment).toHaveBeenCalledOnce();
-    expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
+    await expectAdmitted('### Goal\nImplement one focused change.\n\n### Requirements\nStay scoped.\n\n### Acceptance criteria\n- Tests pass.');
   });
 
   it('accepts valid ATX headings with optional closing hashes', async () => {
-    const createComment = await run('### Goal ###\nImplement one focused change.\n\n### Acceptance criteria ###\n- Tests pass.');
-    expect(createComment).toHaveBeenCalledOnce();
-    expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
+    await expectAdmitted('### Goal ###\nImplement one focused change.\n\n### Acceptance criteria ###\n- Tests pass.');
+  });
+
+  it('accepts valid ATX headings indented by up to three spaces', async () => {
+    await expectAdmitted('   ### Goal\nImplement one focused change.\n\n  ### Acceptance criteria\n- Tests pass.');
   });
 
   it('accepts visible fenced-code content inside a real required section', async () => {
-    const createComment = await run('### Goal\nImplement one focused change.\n\n### Acceptance criteria\n```sh\nnpm test -- --run\n```');
-    expect(createComment).toHaveBeenCalledOnce();
-    expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
+    await expectAdmitted('### Goal\nImplement one focused change.\n\n### Acceptance criteria\n```sh\nnpm test -- --run\n```');
   });
 
   it('accepts link-reference syntax when it is literal fenced-code content', async () => {
-    const createComment = await run('### Goal\n```md\n[docs]: /new-url\n```\n\n### Acceptance criteria\n- Preserve the rendered example.');
-    expect(createComment).toHaveBeenCalledOnce();
-    expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
+    await expectAdmitted('### Goal\n```md\n[docs]: /new-url\n```\n\n### Acceptance criteria\n- Preserve the rendered example.');
+  });
+
+  it('preserves literal HTML-comment openers inside inline code', async () => {
+    await expectAdmitted('### Goal\nDocument the `<!--` token.\n\n### Acceptance criteria\n- Keep the token visible.');
+  });
+
+  it('preserves literal shorter fence markers inside longer fenced examples', async () => {
+    await expectAdmitted('### Goal\n````md\n```\n````\n\n### Acceptance criteria\n- Preserve the literal marker.');
   });
 
   it.each([
