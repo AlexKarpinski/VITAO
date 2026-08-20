@@ -84,6 +84,7 @@ describe('Codex required-field admission behavior', () => {
     ['missing body', null],
     ['empty goal', '### Goal\n\n### Acceptance criteria\n- Tests pass.'],
     ['empty acceptance criteria', '### Goal\nImplement one focused change.\n\n### Acceptance criteria\n'],
+    ['tab-indented pseudo-headings', '\t### Goal\nVisible text.\n\n\t### Acceptance criteria\n- Looks populated but renders as code.'],
     ['HTML-comment-only required sections', '### Goal\n<!-- Describe the goal here -->\n\n### Acceptance criteria\n<!-- Add acceptance criteria here -->'],
     ['HTML comment after a fenced block', '### Goal\n```text\nvisible goal\n```\n\n### Acceptance criteria\n<!-- hidden -->'],
     ['unmatched inline code before hidden acceptance criteria', '### Goal\nDocument the ` token.\n\n### Acceptance criteria\n<!-- hidden -->'],
@@ -94,6 +95,7 @@ describe('Codex required-field admission behavior', () => {
     ['tilde-fenced headings', '~~~md\n### Goal\nExample only.\n### Acceptance criteria\n- Example only.\n~~~'],
     ['short closing fence inside longer fence', '````md\n### Goal\nExample only.\n```\n### Acceptance criteria\n- Example only.\n````'],
     ['link-reference-only required sections', '### Goal\n[goal]: https://example.com\n\n### Acceptance criteria\n[criteria]: https://example.com/criteria'],
+    ['multiline link-reference-only required sections', '### Goal\n[goal]: /goal\n  "Goal title"\n\n### Acceptance criteria\n[criteria]: /criteria\n  "Criteria title"'],
   ])('rejects %s before request generation', async (_name, body) => {
     const createComment = await run(body);
     expect(createComment).toHaveBeenCalledOnce();
