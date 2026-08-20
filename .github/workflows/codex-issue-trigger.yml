@@ -111,7 +111,10 @@ jobs:
               }
 
               const openingFence = !inHtmlComment ? visible.match(fencePattern)?.[1] : null;
-              if (openingFence) activeFence = { marker: openingFence[0], length: openingFence.length };
+              if (openingFence) {
+                activeFence = { marker: openingFence[0], length: openingFence.length };
+                activeCodeSpanLength = null;
+              }
               fencedLines.push(Boolean(openingFence));
               fenceDelimiterLines.push(Boolean(openingFence));
               return visible;
