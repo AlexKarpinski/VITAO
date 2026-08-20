@@ -52,7 +52,26 @@ jobs:
             const headingPattern = /^\s{0,3}#{2,3}\s+(.+?)\s*$/;
             const fencePattern = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
             const linkReferencePattern = /^\s{0,3}\[[^\]]+\]:\s*\S+(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
-            const maskInlineCode = (line) => line.replace(/(`+)(.*?)\1/g, (match) => 'x'.repeat(match.length));
+            let activeCodeSpanLength = null;
+            const maskInlineCode = (line) => {
+              let cursor = 0;
+              let masked = '';
+              while (cursor < line.length) {
+                if (line[cursor] !== '`') {
+                  masked += activeCodeSpanLength === null ? line[cursor] : 'x';
+                  cursor += 1;
+                  continue;
+                }
+                let end = cursor + 1;
+                while (end < line.length && line[end] === '`') end += 1;
+                const runLength = end - cursor;
+                if (activeCodeSpanLength === null) activeCodeSpanLength = runLength;
+                else if (runLength === activeCodeSpanLength) activeCodeSpanLength = null;
+                masked += 'x'.repeat(runLength);
+                cursor = end;
+              }
+              return masked;
+            };
             let inHtmlComment = false;
             let activeFence = null;
             const fencedLines = [];
