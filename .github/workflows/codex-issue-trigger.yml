@@ -50,13 +50,25 @@ jobs:
             const issueBody = issue.body ?? '';
             const issueLines = issueBody.split('\n');
             const headingPattern = /^#{2,3}\s+(.+?)\s*$/;
+            const fencePattern = /^\s{0,3}(`{3,}|~{3,})/;
+            let activeFence = null;
+            const fencedLines = issueLines.map((line) => {
+              const fence = line.match(fencePattern)?.[1];
+              const isFenced = activeFence !== null || Boolean(fence);
+              if (fence) {
+                if (activeFence === null) activeFence = fence[0];
+                else if (fence[0] === activeFence) activeFence = null;
+              }
+              return isFenced;
+            });
+            const headingAt = (index) => fencedLines[index] ? null : issueLines[index].match(headingPattern)?.[1]?.toLowerCase() ?? null;
             const hasSectionContent = (acceptedHeadings) => {
               for (let index = 0; index < issueLines.length; index += 1) {
-                const heading = issueLines[index].match(headingPattern)?.[1]?.toLowerCase();
+                const heading = headingAt(index);
                 if (!heading || !acceptedHeadings.includes(heading)) continue;
                 const content = [];
                 for (let contentIndex = index + 1; contentIndex < issueLines.length; contentIndex += 1) {
-                  if (headingPattern.test(issueLines[contentIndex])) break;
+                  if (headingAt(contentIndex)) break;
                   content.push(issueLines[contentIndex]);
                 }
                 const visibleContent = content.join('\n').replace(/<!--[\s\S]*?(?:-->|$)/g, '').trim();
