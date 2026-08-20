@@ -48,6 +48,12 @@ describe('Codex required-field admission behavior', () => {
     expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
   });
 
+  it('accepts valid ATX headings with optional closing hashes', async () => {
+    const createComment = await run('### Goal ###\nImplement one focused change.\n\n### Acceptance criteria ###\n- Tests pass.');
+    expect(createComment).toHaveBeenCalledOnce();
+    expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
+  });
+
   it('accepts visible fenced-code content inside a real required section', async () => {
     const createComment = await run('### Goal\nImplement one focused change.\n\n### Acceptance criteria\n```sh\nnpm test -- --run\n```');
     expect(createComment).toHaveBeenCalledOnce();
@@ -65,6 +71,7 @@ describe('Codex required-field admission behavior', () => {
     ['fenced-code headings', '```md\n### Goal\nExample only.\n### Acceptance criteria\n- Example only.\n```'],
     ['tilde-fenced headings', '~~~md\n### Goal\nExample only.\n### Acceptance criteria\n- Example only.\n~~~'],
     ['short closing fence inside longer fence', '````md\n### Goal\nExample only.\n```\n### Acceptance criteria\n- Example only.\n````'],
+    ['link-reference-only required sections', '### Goal\n[goal]: https://example.com\n\n### Acceptance criteria\n[criteria]: https://example.com/criteria'],
   ])('rejects %s before request generation', async (_name, body) => {
     const createComment = await run(body);
     expect(createComment).toHaveBeenCalledOnce();
