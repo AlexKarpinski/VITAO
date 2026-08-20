@@ -5,15 +5,23 @@ const workflow = readFileSync('.github/workflows/codex-issue-trigger.yml', 'utf8
 
 describe('Codex issue required-field admission policy', () => {
   it('accepts repository issue-form headings while requiring visible scoped content', () => {
-    expect(workflow).toContain("const headingPattern = /^\\s{0,3}#{2,3}\\s+(.+?)\\s*$/;");
+    expect(workflow).toContain("const headingPattern = /^ {0,3}#{2,3}\\s+(.+?)\\s*$/;");
     expect(workflow).toContain("headings: ['goal', 'scope']");
     expect(workflow).toContain("headings: ['acceptance criteria']");
     expect(workflow).toContain('.filter(({ delimiter }) => !delimiter)');
-    expect(workflow).toContain(".filter(({ line, fenced }) => fenced || !linkReferencePattern.test(line))");
+    expect(workflow).toContain('isInvisibleLinkReferenceLine');
+    expect(workflow).toContain('linkReferenceTitlePattern');
     expect(workflow).toContain('if (visibleContent.length > 0)');
     expect(workflow).toContain('const missingRequiredSections = requiredSections');
     expect(workflow).toContain('if (missingRequiredSections.length > 0)');
     expect(workflow).toContain('Implementation was not started: issue scope is incomplete. Add required sections with content:');
+  });
+
+  it('uses Markdown structural indentation rules instead of generic whitespace', () => {
+    expect(workflow).toContain("const headingPattern = /^ {0,3}#{2,3}\\s+(.+?)\\s*$/;");
+    expect(workflow).toContain("const fencePattern = /^ {0,3}(`{3,}|~{3,})(.*)$/;");
+    expect(workflow).toContain("const linkReferencePattern = /^ {0,3}\\[[^\\]]+\\]:");
+    expect(workflow).not.toContain('const headingPattern = /^\\s{0,3}');
   });
 
   it('ignores HTML comments outside code while preserving literal code examples', () => {
@@ -37,6 +45,13 @@ describe('Codex issue required-field admission policy', () => {
     expect(workflow).toContain('closingFence[0] === activeFence.marker && closingFence.length >= activeFence.length');
     expect(workflow).toContain('fenceDelimiterLines.push(isClosingFence);');
     expect(workflow).toContain('delimiter: fenceDelimiterLines[contentIndex]');
+  });
+
+  it('treats multiline link-reference titles as invisible metadata outside fences', () => {
+    expect(workflow).toContain('const linkReferenceTitlePattern =');
+    expect(workflow).toContain('if (linkReferencePattern.test(current.line)) return true;');
+    expect(workflow).toContain('if (!linkReferenceTitlePattern.test(current.line) || index === 0) return false;');
+    expect(workflow).toContain('return !previous.fenced && linkReferencePattern.test(previous.line);');
   });
 
   it('checks required fields after readiness but before duplicate-request lookup or request creation', () => {
