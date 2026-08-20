@@ -10,6 +10,8 @@ The repository-owned trigger workflows now enforce a five-minute GitHub Actions 
 
 Implementation and automatic CI-remediation admission share a repository-level fail-closed switch. The trigger workflows admit Codex work only when the repository Actions variable is set exactly to `CODEX_WORKER_ENABLED=true`; unset or any value other than `true` keeps implementation admission disabled. The same value also keeps automatic CI-remediation admission disabled. Turning this variable off is the repository disable switch for new Codex admissions. It does not cancel a downstream worker that has already started; manual cancellation behavior for a future worker must still be explicitly designed before activation.
 
+Before pilot success is recorded, the enabled worker is additionally restricted to owner-configured pilot identifiers: `CODEX_PILOT_ISSUE_NUMBER` for implementation admission and `CODEX_PILOT_PR_NUMBER` for automatic CI remediation. Both must contain a positive decimal GitHub number that exactly matches the current issue or PR. Missing, malformed, zero, negative, or non-matching values fail closed. `CODEX_PILOT_SUCCEEDED` defaults to `false`; only the exact value `true` removes the pilot-only restriction after the owner has verified successful pilot evidence. These variables do not select a pilot automatically and do not create success evidence.
+
 Activation remains blocked until the owner confirms:
 
 - trusted users allowed to trigger the worker;
@@ -27,6 +29,7 @@ Even after those owner-controlled decisions are documented, do not treat the wor
 - `.github/workflows/codex-ci-fix-trigger.yml` uses `timeout-minutes: 5`.
 - These limits bound the trigger jobs only; they are not approval for an unbounded downstream implementation/remediation process.
 - New implementation and automatic CI-remediation admissions are fail-closed behind the repository Actions variable `CODEX_WORKER_ENABLED`; only the exact value `true` enables admission.
+- Until `CODEX_PILOT_SUCCEEDED=true`, implementation admission is limited to the exact positive `CODEX_PILOT_ISSUE_NUMBER` and automatic CI remediation is limited to the exact positive `CODEX_PILOT_PR_NUMBER`; absent or invalid pilot identifiers keep those paths closed.
 - Model choice, token/cost limits, retry policy, and operator cancellation behavior must be explicitly documented before the worker is enabled.
 - General activation also requires one completed small, non-critical pilot issue with GitHub-verifiable end-to-end evidence; an incomplete or failed pilot is not sufficient.
 
