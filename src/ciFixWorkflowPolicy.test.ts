@@ -30,6 +30,7 @@ async function runScript(options: {
   prs?: Array<{ number: number }>;
   pullRequests?: PullRequest[];
   comments?: Array<{ user?: { login?: string; type?: string }; body?: string }>;
+  workerEnabled?: boolean;
 }) {
   const workflowRun = {
     id: 123,
@@ -54,9 +55,14 @@ async function runScript(options: {
     payload: { workflow_run: workflowRun },
   };
   const core = { info: vi.fn() };
-  const execute = new AsyncFunction('github', 'context', 'core', extractScript());
-  await execute(github, context, core);
-  return { createComment, github };
+  const process = {
+    env: {
+      CODEX_WORKER_ENABLED: options.workerEnabled === false ? 'false' : 'true',
+    },
+  };
+  const execute = new AsyncFunction('github', 'context', 'core', 'process', extractScript());
+  await execute(github, context, core, process);
+  return { createComment, github, core };
 }
 
 describe('Codex CI-fix trigger policy', () => {
@@ -64,6 +70,15 @@ describe('Codex CI-fix trigger policy', () => {
     expect(workflow).toContain("github.event.workflow_run.conclusion == 'failure'");
     expect(workflow).toContain('group: codex-ci-fix-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}');
     expect(workflow).toContain('cancel-in-progress: false');
+  });
+
+  it('fails closed before PR lookup when the repository worker switch is disabled', async () => {
+    const result = await runScript({ workerEnabled: false });
+    expect(result.github.rest.pulls.get).not.toHaveBeenCalled();
+    expect(result.createComment).not.toHaveBeenCalled();
+    expect(result.core.info).toHaveBeenCalledWith(
+      'Automatic Codex CI remediation is disabled by the repository worker enable switch.'
+    );
   });
 
   it('requires exactly one associated pull request', async () => {
