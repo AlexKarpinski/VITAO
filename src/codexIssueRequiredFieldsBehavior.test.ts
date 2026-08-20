@@ -48,14 +48,23 @@ describe('Codex required-field admission behavior', () => {
     expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
   });
 
+  it('accepts visible fenced-code content inside a real required section', async () => {
+    const createComment = await run('### Goal\nImplement one focused change.\n\n### Acceptance criteria\n```sh\nnpm test -- --run\n```');
+    expect(createComment).toHaveBeenCalledOnce();
+    expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
+  });
+
   it.each([
     ['missing body', null],
     ['empty goal', '### Goal\n\n### Acceptance criteria\n- Tests pass.'],
     ['empty acceptance criteria', '### Goal\nImplement one focused change.\n\n### Acceptance criteria\n'],
     ['HTML-comment-only required sections', '### Goal\n<!-- Describe the goal here -->\n\n### Acceptance criteria\n<!-- Add acceptance criteria here -->'],
     ['unclosed HTML comment', '### Goal\n<!-- placeholder\n\n### Acceptance criteria\n- Tests pass.'],
+    ['headings inside HTML comments', '<!--\n### Goal\nHidden goal\n-->\n\n<!--\n### Acceptance criteria\n- Hidden criterion\n-->'],
+    ['empty fenced blocks', '### Goal\n```\n```\n\n### Acceptance criteria\n~~~\n~~~'],
     ['fenced-code headings', '```md\n### Goal\nExample only.\n### Acceptance criteria\n- Example only.\n```'],
     ['tilde-fenced headings', '~~~md\n### Goal\nExample only.\n### Acceptance criteria\n- Example only.\n~~~'],
+    ['short closing fence inside longer fence', '````md\n### Goal\nExample only.\n```\n### Acceptance criteria\n- Example only.\n````'],
   ])('rejects %s before request generation', async (_name, body) => {
     const createComment = await run(body);
     expect(createComment).toHaveBeenCalledOnce();
