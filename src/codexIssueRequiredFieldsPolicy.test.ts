@@ -22,7 +22,9 @@ describe('Codex issue required-field admission policy', () => {
     expect(workflow).toContain('const commentStrippedLines = issueLines.map((line) =>');
     expect(workflow).toContain('if (activeFence !== null)');
     expect(workflow).toContain('return line;');
-    expect(workflow).toContain('const headingAt = (index) => fencedLines[index] ? null : commentStrippedLines[index].match(headingPattern)?.[1]?.toLowerCase() ?? null;');
+    expect(workflow).toContain("const normalizeHeading = (heading) => heading.replace(/\\s+#+\\s*$/, '').trim().toLowerCase();");
+    expect(workflow).toContain('const headingAt = (index) => fencedLines[index] ? null : (() => {');
+    expect(workflow).toContain('return heading ? normalizeHeading(heading) : null;');
   });
 
   it('keeps fenced regions active until a valid same-marker closing fence of sufficient length', () => {
