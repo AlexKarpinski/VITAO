@@ -8,11 +8,25 @@ describe('Codex issue required-field admission policy', () => {
     expect(workflow).toContain("const headingPattern = /^#{2,3}\\s+(.+?)\\s*$/;");
     expect(workflow).toContain("headings: ['goal', 'scope']");
     expect(workflow).toContain("headings: ['acceptance criteria']");
-    expect(workflow).toContain("const visibleContent = content.join('\\n').replace(/<!--[\\s\\S]*?(?:-->|$)/g, '').trim();");
+    expect(workflow).toContain(".replace(/<!--[\\s\\S]*?(?:-->|$)/g, '')");
+    expect(workflow).toContain(".filter((line) => !/^\\s{0,3}(?:`{3,}|~{3,})/.test(line))");
     expect(workflow).toContain('if (visibleContent.length > 0)');
     expect(workflow).toContain('const missingRequiredSections = requiredSections');
     expect(workflow).toContain('if (missingRequiredSections.length > 0)');
     expect(workflow).toContain('Implementation was not started: issue scope is incomplete. Add required sections with content:');
+  });
+
+  it('ignores headings hidden by comments or fenced Markdown', () => {
+    expect(workflow).toContain('let inHtmlComment = false;');
+    expect(workflow).toContain("const open = line.indexOf('<!--', cursor);");
+    expect(workflow).toContain("const close = line.indexOf('-->', cursor);");
+    expect(workflow).toContain('const commentStrippedLines = issueLines.map((line) =>');
+    expect(workflow).toContain('const headingAt = (index) => fencedLines[index] ? null : commentStrippedLines[index].match(headingPattern)?.[1]?.toLowerCase() ?? null;');
+  });
+
+  it('keeps fenced regions active until a valid same-marker closing fence of sufficient length', () => {
+    expect(workflow).toContain('activeFence = { marker: openingFence[0], length: openingFence.length };');
+    expect(workflow).toContain('closingFence[0] === activeFence.marker && closingFence.length >= activeFence.length');
   });
 
   it('checks required fields after readiness but before duplicate-request lookup or request creation', () => {
