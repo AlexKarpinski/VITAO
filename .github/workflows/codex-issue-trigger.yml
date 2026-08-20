@@ -51,6 +51,7 @@ jobs:
             const issueLines = issueBody.split('\n');
             const headingPattern = /^#{2,3}\s+(.+?)\s*$/;
             const fencePattern = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
+            const linkReferencePattern = /^\s{0,3}\[[^\]]+\]:\s*\S+(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
             let inHtmlComment = false;
             let activeFence = null;
             const fencedLines = [];
@@ -90,7 +91,11 @@ jobs:
               fencedLines.push(Boolean(openingFence));
               return visible;
             });
-            const headingAt = (index) => fencedLines[index] ? null : commentStrippedLines[index].match(headingPattern)?.[1]?.toLowerCase() ?? null;
+            const normalizeHeading = (heading) => heading.replace(/\s+#+\s*$/, '').trim().toLowerCase();
+            const headingAt = (index) => fencedLines[index] ? null : (() => {
+              const heading = commentStrippedLines[index].match(headingPattern)?.[1];
+              return heading ? normalizeHeading(heading) : null;
+            })();
             const hasSectionContent = (acceptedHeadings) => {
               for (let index = 0; index < issueLines.length; index += 1) {
                 const heading = headingAt(index);
@@ -102,6 +107,7 @@ jobs:
                 }
                 const visibleContent = content
                   .filter((line) => !/^\s{0,3}(?:`{3,}|~{3,})/.test(line))
+                  .filter((line) => !linkReferencePattern.test(line))
                   .join('\n')
                   .trim();
                 if (visibleContent.length > 0) return true;
