@@ -16,7 +16,10 @@ Activation remains blocked until the owner confirms:
 - the exact readiness label and commands;
 - OpenAI/Codex credential, model, token, and API-budget strategy;
 - branch-protection and merge policy;
-- retry and manual-cancellation behavior for the future implementation/remediation worker.
+- retry and manual-cancellation behavior for the future implementation/remediation worker;
+- a small, non-critical pilot issue and the evidence required to declare that pilot successful.
+
+Even after those owner-controlled decisions are documented, do not treat the worker as generally enabled until one small, non-critical pilot issue has completed the full implementation path and produced GitHub-verifiable evidence for admission, deterministic branch/PR reuse, required validation, exact-SHA review, recoverable failure handling, and final Delivery Engine reconciliation. A failed or incomplete pilot keeps general worker activation blocked; do not reinterpret partial execution as successful activation evidence.
 
 ## Runtime policy
 
@@ -25,6 +28,7 @@ Activation remains blocked until the owner confirms:
 - These limits bound the trigger jobs only; they are not approval for an unbounded downstream implementation/remediation process.
 - New implementation and automatic CI-remediation admissions are fail-closed behind the repository Actions variable `CODEX_WORKER_ENABLED`; only the exact value `true` enables admission.
 - Model choice, token/cost limits, retry policy, and operator cancellation behavior must be explicitly documented before the worker is enabled.
+- General activation also requires one completed small, non-critical pilot issue with GitHub-verifiable end-to-end evidence; an incomplete or failed pilot is not sufficient.
 
 ## Repository validation baseline
 
