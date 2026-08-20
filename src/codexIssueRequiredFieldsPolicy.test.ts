@@ -8,7 +8,8 @@ describe('Codex issue required-field admission policy', () => {
     expect(workflow).toContain("const headingPattern = /^#{2,3}\\s+(.+?)\\s*$/;");
     expect(workflow).toContain("headings: ['goal', 'scope']");
     expect(workflow).toContain("headings: ['acceptance criteria']");
-    expect(workflow).toContain(".filter((line) => !/^\\s{0,3}(?:`{3,}|~{3,})/.test(line))");
+    expect(workflow).toContain(".filter(({ line }) => !/^\\s{0,3}(?:`{3,}|~{3,})/.test(line))");
+    expect(workflow).toContain(".filter(({ line, fenced }) => fenced || !linkReferencePattern.test(line))");
     expect(workflow).toContain('if (visibleContent.length > 0)');
     expect(workflow).toContain('const missingRequiredSections = requiredSections');
     expect(workflow).toContain('if (missingRequiredSections.length > 0)');
