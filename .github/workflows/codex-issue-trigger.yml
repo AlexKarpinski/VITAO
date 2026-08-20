@@ -103,11 +103,12 @@ jobs:
                 const content = [];
                 for (let contentIndex = index + 1; contentIndex < issueLines.length; contentIndex += 1) {
                   if (headingAt(contentIndex)) break;
-                  content.push(commentStrippedLines[contentIndex]);
+                  content.push({ line: commentStrippedLines[contentIndex], fenced: fencedLines[contentIndex] });
                 }
                 const visibleContent = content
-                  .filter((line) => !/^\s{0,3}(?:`{3,}|~{3,})/.test(line))
-                  .filter((line) => !linkReferencePattern.test(line))
+                  .filter(({ line }) => !/^\s{0,3}(?:`{3,}|~{3,})/.test(line))
+                  .filter(({ line, fenced }) => fenced || !linkReferencePattern.test(line))
+                  .map(({ line }) => line)
                   .join('\n')
                   .trim();
                 if (visibleContent.length > 0) return true;
