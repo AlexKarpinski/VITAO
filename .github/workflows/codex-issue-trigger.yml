@@ -49,25 +49,30 @@ jobs:
 
             const issueBody = issue.body ?? '';
             const issueLines = issueBody.split('\n');
-            const headingPattern = /^#{2,3}\s+(.+?)\s*$/;
+            const headingPattern = /^\s{0,3}#{2,3}\s+(.+?)\s*$/;
             const fencePattern = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
             const linkReferencePattern = /^\s{0,3}\[[^\]]+\]:\s*\S+(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
+            const maskInlineCode = (line) => line.replace(/(`+)(.*?)\1/g, (match) => 'x'.repeat(match.length));
             let inHtmlComment = false;
             let activeFence = null;
             const fencedLines = [];
+            const fenceDelimiterLines = [];
             const commentStrippedLines = issueLines.map((line) => {
               if (activeFence !== null) {
-                fencedLines.push(true);
                 const closingFence = line.match(/^\s{0,3}(`+|~+)\s*$/)?.[1];
-                if (closingFence && closingFence[0] === activeFence.marker && closingFence.length >= activeFence.length) activeFence = null;
+                const isClosingFence = Boolean(closingFence && closingFence[0] === activeFence.marker && closingFence.length >= activeFence.length);
+                fencedLines.push(true);
+                fenceDelimiterLines.push(isClosingFence);
+                if (isClosingFence) activeFence = null;
                 return line;
               }
 
+              const scanLine = maskInlineCode(line);
               let cursor = 0;
               let visible = '';
               while (cursor < line.length) {
                 if (inHtmlComment) {
-                  const close = line.indexOf('-->', cursor);
+                  const close = scanLine.indexOf('-->', cursor);
                   if (close < 0) {
                     cursor = line.length;
                     break;
@@ -76,7 +81,7 @@ jobs:
                   cursor = close + 3;
                   continue;
                 }
-                const open = line.indexOf('<!--', cursor);
+                const open = scanLine.indexOf('<!--', cursor);
                 if (open < 0) {
                   visible += line.slice(cursor);
                   break;
@@ -89,6 +94,7 @@ jobs:
               const openingFence = !inHtmlComment ? visible.match(fencePattern)?.[1] : null;
               if (openingFence) activeFence = { marker: openingFence[0], length: openingFence.length };
               fencedLines.push(Boolean(openingFence));
+              fenceDelimiterLines.push(Boolean(openingFence));
               return visible;
             });
             const normalizeHeading = (heading) => heading.replace(/\s+#+\s*$/, '').trim().toLowerCase();
@@ -103,10 +109,10 @@ jobs:
                 const content = [];
                 for (let contentIndex = index + 1; contentIndex < issueLines.length; contentIndex += 1) {
                   if (headingAt(contentIndex)) break;
-                  content.push({ line: commentStrippedLines[contentIndex], fenced: fencedLines[contentIndex] });
+                  content.push({ line: commentStrippedLines[contentIndex], fenced: fencedLines[contentIndex], delimiter: fenceDelimiterLines[contentIndex] });
                 }
                 const visibleContent = content
-                  .filter(({ line }) => !/^\s{0,3}(?:`{3,}|~{3,})/.test(line))
+                  .filter(({ delimiter }) => !delimiter)
                   .filter(({ line, fenced }) => fenced || !linkReferencePattern.test(line))
                   .map(({ line }) => line)
                   .join('\n')
