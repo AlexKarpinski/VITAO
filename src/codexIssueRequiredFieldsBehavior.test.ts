@@ -60,6 +60,12 @@ describe('Codex required-field admission behavior', () => {
     expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
   });
 
+  it('accepts link-reference syntax when it is literal fenced-code content', async () => {
+    const createComment = await run('### Goal\n```md\n[docs]: /new-url\n```\n\n### Acceptance criteria\n- Preserve the rendered example.');
+    expect(createComment).toHaveBeenCalledOnce();
+    expect(createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
+  });
+
   it.each([
     ['missing body', null],
     ['empty goal', '### Goal\n\n### Acceptance criteria\n- Tests pass.'],
