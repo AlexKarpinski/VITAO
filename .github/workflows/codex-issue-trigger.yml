@@ -86,6 +86,7 @@ jobs:
                 return line;
               }
 
+              if (line.trim() === '' || headingPattern.test(line)) activeCodeSpanLength = null;
               const scanLine = maskInlineCode(line);
               let cursor = 0;
               let visible = '';
