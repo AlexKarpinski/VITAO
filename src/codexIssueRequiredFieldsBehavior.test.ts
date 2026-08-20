@@ -72,6 +72,10 @@ describe('Codex required-field admission behavior', () => {
     await expectAdmitted('### Goal\nDocument the `<!--` token.\n\n### Acceptance criteria\n- Keep the token visible.');
   });
 
+  it('preserves literal HTML-comment openers inside multiline code spans', async () => {
+    await expectAdmitted('### Goal\nDocument the `<!--\ntoken` safely.\n\n### Acceptance criteria\n- Keep the token visible.');
+  });
+
   it('preserves literal shorter fence markers inside longer fenced examples', async () => {
     await expectAdmitted('### Goal\n````md\n```\n````\n\n### Acceptance criteria\n- Preserve the literal marker.');
   });
