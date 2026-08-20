@@ -21,6 +21,8 @@ jobs:
       cancel-in-progress: false
     env:
       CODEX_WORKER_ENABLED: ${{ vars.CODEX_WORKER_ENABLED || 'false' }}
+      CODEX_PILOT_SUCCEEDED: ${{ vars.CODEX_PILOT_SUCCEEDED || 'false' }}
+      CODEX_PILOT_PR_NUMBER: ${{ vars.CODEX_PILOT_PR_NUMBER || '' }}
 
     steps:
       - name: Ask Codex to fix failed CI
@@ -41,6 +43,14 @@ jobs:
             }
 
             const prNumber = prs[0].number;
+            const pilotSucceeded = process.env.CODEX_PILOT_SUCCEEDED === 'true';
+            const pilotPrValue = process.env.CODEX_PILOT_PR_NUMBER ?? '';
+            const pilotPrNumber = /^[1-9]\d*$/.test(pilotPrValue) ? Number(pilotPrValue) : null;
+            if (!pilotSucceeded && pilotPrNumber !== prNumber) {
+              core.info('Automatic Codex CI remediation is blocked until the configured pilot succeeds; before then, only the owner-configured pilot PR may run.');
+              return;
+            }
+
             const requestMarker = `<!-- codex-ci-fix-requested:${prNumber} -->`;
             const requestPrefix = '@codex fix the CI failures in this PR.';
 
