@@ -4,11 +4,11 @@ import { describe, expect, it } from 'vitest';
 const workflow = readFileSync('.github/workflows/codex-issue-trigger.yml', 'utf8');
 
 describe('Codex issue required-field admission policy', () => {
-  it('accepts repository issue-form heading levels while requiring visible scoped content', () => {
-    expect(workflow).toContain("const headingPattern = /^#{2,3}\\s+(.+?)\\s*$/;");
+  it('accepts repository issue-form headings while requiring visible scoped content', () => {
+    expect(workflow).toContain("const headingPattern = /^\\s{0,3}#{2,3}\\s+(.+?)\\s*$/;");
     expect(workflow).toContain("headings: ['goal', 'scope']");
     expect(workflow).toContain("headings: ['acceptance criteria']");
-    expect(workflow).toContain(".filter(({ line }) => !/^\\s{0,3}(?:`{3,}|~{3,})/.test(line))");
+    expect(workflow).toContain('.filter(({ delimiter }) => !delimiter)');
     expect(workflow).toContain(".filter(({ line, fenced }) => fenced || !linkReferencePattern.test(line))");
     expect(workflow).toContain('if (visibleContent.length > 0)');
     expect(workflow).toContain('const missingRequiredSections = requiredSections');
@@ -16,10 +16,11 @@ describe('Codex issue required-field admission policy', () => {
     expect(workflow).toContain('Implementation was not started: issue scope is incomplete. Add required sections with content:');
   });
 
-  it('ignores headings hidden by comments while preserving literal comment examples inside fences', () => {
+  it('ignores HTML comments outside code while preserving literal code examples', () => {
     expect(workflow).toContain('let inHtmlComment = false;');
-    expect(workflow).toContain("const open = line.indexOf('<!--', cursor);");
-    expect(workflow).toContain("const close = line.indexOf('-->', cursor);");
+    expect(workflow).toContain("const maskInlineCode = (line) => line.replace(/(`+)(.*?)\\1/g");
+    expect(workflow).toContain("const open = scanLine.indexOf('<!--', cursor);");
+    expect(workflow).toContain("const close = scanLine.indexOf('-->', cursor);");
     expect(workflow).toContain('const commentStrippedLines = issueLines.map((line) =>');
     expect(workflow).toContain('if (activeFence !== null)');
     expect(workflow).toContain('return line;');
@@ -28,9 +29,12 @@ describe('Codex issue required-field admission policy', () => {
     expect(workflow).toContain('return heading ? normalizeHeading(heading) : null;');
   });
 
-  it('keeps fenced regions active until a valid same-marker closing fence of sufficient length', () => {
+  it('tracks actual fence delimiters separately from visible literal fence markers', () => {
+    expect(workflow).toContain('const fenceDelimiterLines = [];');
     expect(workflow).toContain('activeFence = { marker: openingFence[0], length: openingFence.length };');
     expect(workflow).toContain('closingFence[0] === activeFence.marker && closingFence.length >= activeFence.length');
+    expect(workflow).toContain('fenceDelimiterLines.push(isClosingFence);');
+    expect(workflow).toContain('delimiter: fenceDelimiterLines[contentIndex]');
   });
 
   it('checks required fields after readiness but before duplicate-request lookup or request creation', () => {
