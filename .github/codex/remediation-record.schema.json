@@ -121,6 +121,8 @@
         "commitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "escalation": { "type": "string", "minLength": 1 },
         "workflowRunId": { "type": "integer", "minimum": 1 },
+        "headSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "branch": { "type": "string", "minLength": 1 },
         "cancellationReason": { "type": "string", "minLength": 1 }
       },
       "allOf": [
@@ -134,7 +136,7 @@
         },
         {
           "if": { "properties": { "status": { "const": "cancelled" } }, "required": ["status"] },
-          "then": { "required": ["workflowRunId", "cancellationReason"] }
+          "then": { "required": ["workflowRunId", "headSha", "branch", "cancellationReason"] }
         }
       ]
     }
