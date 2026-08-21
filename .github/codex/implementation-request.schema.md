@@ -73,9 +73,10 @@ A successful, failed, or cancelled run must report:
 - exact model identifier and repository-owned configuration identifier actually used for the run; if execution never reached the worker, record them as `not-started` rather than inventing values;
 - prompt revision/base SHA;
 - start and end timestamps for the implementation attempt;
-- terminal result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, `no-safe-slice`, or `cancelled`).
+- terminal result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, `no-safe-slice`, or `cancelled`);
+- for `cancelled`, a concise secret-safe cancellation reason explaining why the run was stopped.
 
-A `cancelled` result is valid only when the corresponding GitHub Actions run is observably cancelled. Preserve any already-pushed branch/PR state and commits; do not claim rollback. A retry is a new attempt: it requires a new trusted request and full precondition/GitHub-state validation rather than silently resuming or automatically retrying a cancelled run.
+A `cancelled` result is valid only when the corresponding GitHub Actions run is observably cancelled. It must record the exact branch/head SHA known at cancellation time and the cancellation reason. Preserve any already-pushed branch/PR state and commits; do not claim rollback. A retry is a new attempt: it requires a new trusted request and full precondition/GitHub-state validation rather than silently resuming or automatically retrying a cancelled run.
 
 Model choice, credentials, token limits, and API/cost budgets remain owner-controlled activation inputs. Recording execution evidence does not authorize or invent those values.
 
