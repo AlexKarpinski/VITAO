@@ -20,6 +20,7 @@ function assertInactiveTrigger(workflow: string, exactPermissions: string[]) {
 
   const runSteps = [...workflow.matchAll(/^\s*run:\s*\|\s*$/gm)];
   expect(runSteps).toHaveLength(1);
+  expect(workflow).toContain("if: env.CODEX_WORKER_ENABLED == 'true'");
   expect(workflow).toContain("JSON.parse(fs.readFileSync('.github/codex/runtime-policy.json', 'utf8'))");
   expect(workflow).toContain("policy.status === 'approved'");
   expect(workflow).toContain('positive(policy.maxTokensPerRun)');
