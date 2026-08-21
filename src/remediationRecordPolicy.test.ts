@@ -129,6 +129,10 @@ type RemediationSchema = {
         status: { enum: string[] };
         commitSha: { pattern: string };
         escalation: { minLength: number };
+        workflowRunId: { type: string; minimum: number };
+        headSha: { type: string; pattern: string };
+        branch: { type: string; minLength: number };
+        cancellationReason: { type: string; minLength: number };
       };
       allOf: ConditionalRequirement[];
     };
@@ -204,7 +208,7 @@ describe('Codex remediation decision record contract', () => {
     expect(schema.properties.automation.required).toEqual(['eligible', 'reason']);
   });
 
-  it('requires traceable evidence for terminal fixed and escalated results', () => {
+  it('requires traceable evidence for terminal fixed, escalated, and cancelled results', () => {
     expect(schema.properties.result.required).toEqual(['status']);
     expect(schema.properties.result.properties.status.enum).toEqual([
       'pending',
@@ -212,8 +216,16 @@ describe('Codex remediation decision record contract', () => {
       'challenged',
       'deferred',
       'escalated',
+      'cancelled',
     ]);
     expect(schema.properties.result.properties.commitSha.pattern).toBe('^[0-9a-f]{40}$');
+    expect(schema.properties.result.properties.workflowRunId).toMatchObject({
+      type: 'integer',
+      minimum: 1,
+    });
+    expect(schema.properties.result.properties.headSha.pattern).toBe('^[0-9a-f]{40}$');
+    expect(schema.properties.result.properties.branch.minLength).toBe(1);
+    expect(schema.properties.result.properties.cancellationReason.minLength).toBe(1);
 
     expect(schema.properties.result.allOf).toEqual(
       expect.arrayContaining([
@@ -228,6 +240,14 @@ describe('Codex remediation decision record contract', () => {
             properties: { status: { const: 'escalated' } },
           }),
           then: { required: ['escalation'] },
+        }),
+        expect.objectContaining({
+          if: expect.objectContaining({
+            properties: { status: { const: 'cancelled' } },
+          }),
+          then: {
+            required: ['workflowRunId', 'headSha', 'branch', 'cancellationReason'],
+          },
         }),
       ]),
     );

@@ -116,10 +116,14 @@
       "properties": {
         "status": {
           "type": "string",
-          "enum": ["pending", "fixed", "challenged", "deferred", "escalated"]
+          "enum": ["pending", "fixed", "challenged", "deferred", "escalated", "cancelled"]
         },
         "commitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-        "escalation": { "type": "string", "minLength": 1 }
+        "escalation": { "type": "string", "minLength": 1 },
+        "workflowRunId": { "type": "integer", "minimum": 1 },
+        "headSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "branch": { "type": "string", "minLength": 1 },
+        "cancellationReason": { "type": "string", "minLength": 1 }
       },
       "allOf": [
         {
@@ -129,6 +133,10 @@
         {
           "if": { "properties": { "status": { "const": "escalated" } }, "required": ["status"] },
           "then": { "required": ["escalation"] }
+        },
+        {
+          "if": { "properties": { "status": { "const": "cancelled" } }, "required": ["status"] },
+          "then": { "required": ["workflowRunId", "headSha", "branch", "cancellationReason"] }
         }
       ]
     }

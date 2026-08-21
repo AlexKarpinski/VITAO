@@ -42,7 +42,7 @@ describe('Codex runtime operations policy', () => {
   it('keeps the worker inactive until owner-controlled runtime decisions are documented', () => {
     expect(readme).toContain('These files are **inactive groundwork only**.');
     expect(readme).toContain('OpenAI/Codex credential, model, token, and API-budget strategy');
-    expect(readme).toContain('retry and manual-cancellation behavior');
+    expect(readme).toContain('which trusted operators are authorized to cancel worker runs');
     expect(readme).toContain('branch-protection and merge policy');
 
     assertInactiveTrigger(issueTrigger, ['contents: read', 'issues: write']);
@@ -78,7 +78,20 @@ describe('Codex runtime operations policy', () => {
     expect(readme).toContain('`.github/workflows/codex-issue-trigger.yml` uses `timeout-minutes: 5`.');
     expect(readme).toContain('`.github/workflows/codex-ci-fix-trigger.yml` uses `timeout-minutes: 5`.');
     expect(readme).toContain('they are not approval for an unbounded downstream implementation/remediation process');
-    expect(readme).toContain('Model choice, token/cost limits, retry policy, and operator cancellation behavior must be explicitly documented before the worker is enabled.');
+    expect(readme).toContain('Model choice and token/cost limits must be explicitly documented before the worker is enabled.');
+  });
+
+  it('defines recoverable manual cancellation and explicit retry semantics before activation', () => {
+    expect(readme).toContain('## Cancellation and retry policy');
+    expect(readme).toContain('It is not evidence that an already-running worker was cancelled.');
+    expect(readme).toContain('cancel the specific GitHub Actions workflow run through GitHub Actions controls (UI or API)');
+    expect(readme).toContain('verify that GitHub records the run as cancelled before claiming cancellation succeeded');
+    expect(readme).toContain('Cancellation must leave the existing issue branch and PR recoverable.');
+    expect(readme).toContain('A cancelled run must be recorded as the terminal result `cancelled`');
+    expect(readme).toContain('Cancellation does not automatically authorize a retry.');
+    expect(readme).toContain('Retry requires a new explicit request from a trusted actor');
+    expect(readme).toContain('Do not automatically retry after cancellation, timeout, owner-input blockers, unsafe branch drift, or failed required validation.');
+    expect(readme).toContain('keep general activation blocked until a separate verified cancellation mechanism exists');
   });
 
   it('requires one successful small non-critical pilot before general worker activation', () => {
