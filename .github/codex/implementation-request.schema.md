@@ -61,7 +61,7 @@ Do not rely on local workspace state, unpushed commits, hidden runner files, or 
 
 ## Result record
 
-A successful or failed run must report:
+A successful, failed, or cancelled run must report:
 
 - issue number;
 - workflow run ID and workflow name;
@@ -73,7 +73,9 @@ A successful or failed run must report:
 - exact model identifier and repository-owned configuration identifier actually used for the run; if execution never reached the worker, record them as `not-started` rather than inventing values;
 - prompt revision/base SHA;
 - start and end timestamps for the implementation attempt;
-- terminal result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, or `no-safe-slice`).
+- terminal result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, `no-safe-slice`, or `cancelled`).
+
+A `cancelled` result is valid only when the corresponding GitHub Actions run is observably cancelled. Preserve any already-pushed branch/PR state and commits; do not claim rollback. A retry is a new attempt: it requires a new trusted request and full precondition/GitHub-state validation rather than silently resuming or automatically retrying a cancelled run.
 
 Model choice, credentials, token limits, and API/cost budgets remain owner-controlled activation inputs. Recording execution evidence does not authorize or invent those values.
 
