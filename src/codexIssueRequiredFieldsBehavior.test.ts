@@ -35,7 +35,12 @@ async function run(body: string | null) {
     payload: { issue: { number: 37 }, comment: { id: 456, user: { login: 'owner' } } },
   };
   const core = { info: vi.fn() };
-  const process = { env: { CODEX_WORKER_ENABLED: 'true' } };
+  const process = {
+    env: {
+      CODEX_WORKER_ENABLED: 'true',
+      CODEX_PILOT_SUCCEEDED: 'true',
+    },
+  };
   const execute = new AsyncFunction('github', 'context', 'core', 'process', extractScript());
   await execute(github, context, core, process);
   return createComment;
