@@ -25,108 +25,47 @@ jobs:
       CODEX_PILOT_PR_NUMBER: ${{ vars.CODEX_PILOT_PR_NUMBER || '' }}
 
     steps:
+      - uses: actions/checkout@v4
+      - name: Validate runtime activation policy
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const policy = JSON.parse(fs.readFileSync('.github/codex/runtime-policy.json', 'utf8'));
+          const positive = (value) => typeof value === 'number' && Number.isFinite(value) && value > 0;
+          const approved = policy.status === 'approved'
+            && typeof policy.model === 'string' && policy.model.trim().length > 0
+            && positive(policy.maxTokensPerRun)
+            && positive(policy.maxCostUsdPerRun)
+            && positive(policy.downstreamTimeoutMinutes);
+          if (!approved) {
+            console.log('Codex runtime policy is not approved with complete positive limits; automatic remediation remains fail-closed.');
+            process.exit(1);
+          }
+          NODE
       - name: Ask Codex to fix failed CI
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
             const workflowRun = context.payload.workflow_run;
             const prs = workflowRun.pull_requests || [];
-
-            if (process.env.CODEX_WORKER_ENABLED !== 'true') {
-              core.info('Automatic Codex CI remediation is disabled by the repository worker enable switch.');
-              return;
-            }
-
-            if (prs.length !== 1) {
-              core.info(`Expected exactly one PR for this failed workflow run; found ${prs.length}. Skipping.`);
-              return;
-            }
-
+            if (process.env.CODEX_WORKER_ENABLED !== 'true') { core.info('Automatic Codex CI remediation is disabled by the repository worker enable switch.'); return; }
+            if (prs.length !== 1) { core.info(`Expected exactly one PR for this failed workflow run; found ${prs.length}. Skipping.`); return; }
             const prNumber = prs[0].number;
             const pilotSucceeded = process.env.CODEX_PILOT_SUCCEEDED === 'true';
             const pilotPrValue = process.env.CODEX_PILOT_PR_NUMBER ?? '';
             const pilotPrNumber = /^[1-9]\d*$/.test(pilotPrValue) ? Number(pilotPrValue) : null;
-            if (!pilotSucceeded && pilotPrNumber !== prNumber) {
-              core.info('Automatic Codex CI remediation is blocked until the configured pilot succeeds; before then, only the owner-configured pilot PR may run.');
-              return;
-            }
-
+            if (!pilotSucceeded && pilotPrNumber !== prNumber) { core.info('Automatic Codex CI remediation is blocked until the configured pilot succeeds; before then, only the owner-configured pilot PR may run.'); return; }
             const requestMarker = `<!-- codex-ci-fix-requested:${prNumber} -->`;
             const requestPrefix = '@codex fix the CI failures in this PR.';
-
-            const getCurrentPullRequest = async () => {
-              const { data } = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber,
-              });
-              return data;
-            };
-
-            const isEligible = (pullRequest) => {
-              const labels = pullRequest.labels.map((label) => label.name);
-              return pullRequest.state === 'open'
-                && pullRequest.head.sha === workflowRun.head_sha
-                && labels.includes('codex-auto-fix');
-            };
-
+            const getCurrentPullRequest = async () => { const { data } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber }); return data; };
+            const isEligible = (pullRequest) => { const labels = pullRequest.labels.map((label) => label.name); return pullRequest.state === 'open' && pullRequest.head.sha === workflowRun.head_sha && labels.includes('codex-auto-fix'); };
             const initialPullRequest = await getCurrentPullRequest();
-            if (!isEligible(initialPullRequest)) {
-              core.info('The pull request is closed, moved beyond the failed SHA, or is not opted in. Skipping.');
-              return;
-            }
-
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              per_page: 100,
-            });
-
-            const alreadyRequestedForPullRequest = comments.some((comment) => {
-              if (comment.user?.login !== 'github-actions[bot]' || comment.user?.type !== 'Bot') {
-                return false;
-              }
-
-              const body = comment.body ?? '';
-              return body.startsWith(`${requestMarker}\n${requestPrefix}`)
-                || body.startsWith(requestPrefix);
-            });
-
-            if (alreadyRequestedForPullRequest) {
-              core.info('A trusted automatic Codex CI-fix request already exists for this pull request. Skipping overlapping remediation.');
-              return;
-            }
-
+            if (!isEligible(initialPullRequest)) { core.info('The pull request is closed, moved beyond the failed SHA, or is not opted in. Skipping.'); return; }
+            const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, per_page: 100 });
+            const alreadyRequestedForPullRequest = comments.some((comment) => { if (comment.user?.login !== 'github-actions[bot]' || comment.user?.type !== 'Bot') return false; const body = comment.body ?? ''; return body.startsWith(`${requestMarker}\n${requestPrefix}`) || body.startsWith(requestPrefix); });
+            if (alreadyRequestedForPullRequest) { core.info('A trusted automatic Codex CI-fix request already exists for this pull request. Skipping overlapping remediation.'); return; }
             const currentPullRequest = await getCurrentPullRequest();
-            if (!isEligible(currentPullRequest)) {
-              core.info('The pull request changed state, head SHA, or opt-in while the request was being prepared. Skipping.');
-              return;
-            }
-
-            const requestBody = [
-              requestMarker,
-              requestPrefix,
-              '',
-              `Failed workflow run ${workflowRun.id}: ${workflowRun.html_url}`,
-              `Failed head SHA: ${workflowRun.head_sha}`,
-              '',
-              'This is the single automatic remediation request permitted for this PR. Further failures require an explicit human request.',
-              '',
-              'Please:',
-              '- inspect this exact failed GitHub Actions run;',
-              '- confirm the PR head still matches the failed SHA before editing;',
-              '- fix only CI, build, dependency, or test issues;',
-              '- run install, build, and tests;',
-              '- push the fix to the same PR branch;',
-              '- do not create a new PR;',
-              '- keep scope limited to making CI green;',
-              '- do not expose credentials or introduce unsupported product or architecture scope.',
-            ].join('\n');
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              body: requestBody,
-            });
+            if (!isEligible(currentPullRequest)) { core.info('The pull request changed state, head SHA, or opt-in while the request was being prepared. Skipping.'); return; }
+            const requestBody = [requestMarker, requestPrefix, '', `Failed workflow run ${workflowRun.id}: ${workflowRun.html_url}`, `Failed head SHA: ${workflowRun.head_sha}`, '', 'This is the single automatic remediation request permitted for this PR. Further failures require an explicit human request.', '', 'Please:', '- inspect this exact failed GitHub Actions run;', '- confirm the PR head still matches the failed SHA before editing;', '- fix only CI, build, dependency, or test issues;', '- run install, build, and tests;', '- push the fix to the same PR branch;', '- do not create a new PR;', '- keep scope limited to making CI green;', '- do not expose credentials or introduce unsupported product or architecture scope.'].join('\n');
+            await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: requestBody });
