@@ -174,12 +174,14 @@ jobs:
             }
 
             const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number, per_page: 100 });
-            const hasTrustedRequest = comments.some((comment) => {
+            const commandProvenance = `- command comment ID: \`${commandComment.id}\`;`;
+            const hasTrustedRequestForCommand = comments.some((comment) => {
               if (comment.user?.login !== 'github-actions[bot]' || comment.user?.type !== 'Bot') return false;
               const body = comment.body ?? '';
-              return body.startsWith(`${requestMarker}\n${implementationPrefix}`) || body.startsWith(implementationPrefix);
+              const trustedRequest = body.startsWith(`${requestMarker}\n${implementationPrefix}`) || body.startsWith(implementationPrefix);
+              return trustedRequest && body.includes(commandProvenance);
             });
-            if (hasTrustedRequest) { core.info('A trusted Codex implementation request already exists for this issue.'); return; }
+            if (hasTrustedRequestForCommand) { core.info('A trusted Codex implementation request already exists for this command comment.'); return; }
 
             const branchName = `codex/issue-${issue.number}`;
             const requestBody = [
