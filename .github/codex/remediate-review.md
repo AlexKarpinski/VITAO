@@ -51,6 +51,9 @@ Escalate with a precise reason when a finding requires:
 - Stop after three automated remediation cycles for one PR.
 - After the third cycle, new non-blocking `MINOR` findings become follow-up candidates instead of extending the PR.
 - Security/privacy exposure, proven data loss, broken primary flow, direct acceptance-criteria failures, active `REQUEST_CHANGES`, `BLOCKER`, and `MAJOR` findings remain blocking regardless of cycle count.
+- If the third automated remediation cycle does not leave the PR merge-ready, stop automatic mutation and emit one consolidated unresolved-findings report instead of starting a fourth automatic cycle.
+- The consolidated report must identify the exact current PR head SHA, each unresolved blocking finding and its source/reviewed SHA, the latest verification state, any follow-up candidates deferred after the cap, and the precise owner/developer/tooling action required next.
+- Do not claim an unresolved finding is cleared, deferred, or verified unless GitHub evidence for the current head supports that state.
 
 ## Response contract
 
