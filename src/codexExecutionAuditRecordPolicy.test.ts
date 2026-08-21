@@ -9,7 +9,8 @@ describe('Codex implementation execution audit record', () => {
     expect(contract).toContain('exact model identifier and repository-owned configuration identifier actually used for the run');
     expect(contract).toContain('record them as `not-started` rather than inventing values');
     expect(contract).toContain('start and end timestamps for the implementation attempt');
-    expect(contract).toContain('terminal result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, or `no-safe-slice`)');
+    expect(contract).toContain('terminal result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, `no-safe-slice`, or `cancelled`)');
+    expect(contract).toContain('A `cancelled` result is valid only when the corresponding GitHub Actions run is observably cancelled');
   });
 
   it('keeps owner-controlled activation inputs separate from execution evidence', () => {
