@@ -22,6 +22,8 @@ jobs:
       cancel-in-progress: false
     env:
       CODEX_WORKER_ENABLED: ${{ vars.CODEX_WORKER_ENABLED || 'false' }}
+      CODEX_PILOT_SUCCEEDED: ${{ vars.CODEX_PILOT_SUCCEEDED || 'false' }}
+      CODEX_PILOT_ISSUE_NUMBER: ${{ vars.CODEX_PILOT_ISSUE_NUMBER || '' }}
 
     steps:
       - name: Validate readiness and request implementation
@@ -36,6 +38,14 @@ jobs:
 
             if (process.env.CODEX_WORKER_ENABLED !== 'true') {
               await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: eventIssue.number, body: 'Implementation was not started: the repository Codex worker enable switch is off.' });
+              return;
+            }
+
+            const pilotSucceeded = process.env.CODEX_PILOT_SUCCEEDED === 'true';
+            const pilotIssueValue = process.env.CODEX_PILOT_ISSUE_NUMBER ?? '';
+            const pilotIssueNumber = /^[1-9]\d*$/.test(pilotIssueValue) ? Number(pilotIssueValue) : null;
+            if (!pilotSucceeded && pilotIssueNumber !== eventIssue.number) {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: eventIssue.number, body: 'Implementation was not started: general Codex admission is blocked until the configured pilot succeeds; before then, only the owner-configured pilot issue may run.' });
               return;
             }
 

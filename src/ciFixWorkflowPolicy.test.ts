@@ -31,6 +31,8 @@ async function runScript(options: {
   pullRequests?: PullRequest[];
   comments?: Array<{ user?: { login?: string; type?: string }; body?: string }>;
   workerEnabled?: boolean;
+  pilotSucceeded?: boolean;
+  pilotPrNumber?: string;
 }) {
   const workflowRun = {
     id: 123,
@@ -58,6 +60,8 @@ async function runScript(options: {
   const process = {
     env: {
       CODEX_WORKER_ENABLED: options.workerEnabled === false ? 'false' : 'true',
+      CODEX_PILOT_SUCCEEDED: options.pilotSucceeded === false ? 'false' : 'true',
+      CODEX_PILOT_PR_NUMBER: options.pilotPrNumber ?? '',
     },
   };
   const execute = new AsyncFunction('github', 'context', 'core', 'process', extractScript());
@@ -79,6 +83,26 @@ describe('Codex CI-fix trigger policy', () => {
     expect(result.core.info).toHaveBeenCalledWith(
       'Automatic Codex CI remediation is disabled by the repository worker enable switch.'
     );
+  });
+
+  it('admits only the configured pilot PR until pilot success is recorded', async () => {
+    const missing = await runScript({ pilotSucceeded: false });
+    expect(missing.github.rest.pulls.get).not.toHaveBeenCalled();
+    expect(missing.core.info).toHaveBeenCalledWith(expect.stringContaining('only the owner-configured pilot PR may run'));
+
+    const malformed = await runScript({ pilotSucceeded: false, pilotPrNumber: 'PR-52' });
+    expect(malformed.github.rest.pulls.get).not.toHaveBeenCalled();
+
+    const mismatched = await runScript({ pilotSucceeded: false, pilotPrNumber: '53' });
+    expect(mismatched.github.rest.pulls.get).not.toHaveBeenCalled();
+
+    const pilot = await runScript({ pilotSucceeded: false, pilotPrNumber: '52' });
+    expect(pilot.github.rest.pulls.get).toHaveBeenCalledTimes(2);
+    expect(pilot.createComment).toHaveBeenCalledOnce();
+
+    const generalAfterSuccess = await runScript({ pilotSucceeded: true, pilotPrNumber: '' });
+    expect(generalAfterSuccess.github.rest.pulls.get).toHaveBeenCalledTimes(2);
+    expect(generalAfterSuccess.createComment).toHaveBeenCalledOnce();
   });
 
   it('requires exactly one associated pull request', async () => {

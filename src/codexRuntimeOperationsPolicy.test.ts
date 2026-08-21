@@ -80,4 +80,12 @@ describe('Codex runtime operations policy', () => {
     expect(readme).toContain('they are not approval for an unbounded downstream implementation/remediation process');
     expect(readme).toContain('Model choice, token/cost limits, retry policy, and operator cancellation behavior must be explicitly documented before the worker is enabled.');
   });
+
+  it('requires one successful small non-critical pilot before general worker activation', () => {
+    expect(readme).toContain('a small, non-critical pilot issue and the evidence required to declare that pilot successful');
+    expect(readme).toContain('do not treat the worker as generally enabled until one small, non-critical pilot issue has completed the full implementation path');
+    expect(readme).toContain('GitHub-verifiable evidence for admission, deterministic branch/PR reuse, required validation, exact-SHA review, recoverable failure handling, and final Delivery Engine reconciliation');
+    expect(readme).toContain('A failed or incomplete pilot keeps general worker activation blocked');
+    expect(readme).toContain('an incomplete or failed pilot is not sufficient');
+  });
 });
