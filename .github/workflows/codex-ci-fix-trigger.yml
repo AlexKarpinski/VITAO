@@ -25,7 +25,7 @@ jobs:
       CODEX_PILOT_PR_NUMBER: ${{ vars.CODEX_PILOT_PR_NUMBER || '' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Validate runtime activation policy
         shell: bash
         run: |
