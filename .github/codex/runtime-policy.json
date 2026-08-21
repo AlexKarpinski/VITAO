@@ -1,0 +1,9 @@
+{
+  "status": "blocked-owner-input",
+  "policyVersion": 1,
+  "model": null,
+  "maxTokensPerRun": null,
+  "maxCostUsdPerRun": null,
+  "downstreamTimeoutMinutes": null,
+  "notes": "Owner-controlled activation inputs. Do not set status to approved until model, token, cost, and downstream timeout decisions are explicitly reviewed and recorded."
+}
