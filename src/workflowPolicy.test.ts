@@ -113,6 +113,7 @@ async function runScript(options: {
   workerEnabled?: boolean;
   pilotSucceeded?: boolean;
   pilotIssueNumber?: string;
+  commandCommentId?: number;
 }) {
   const createComment = vi.fn();
   const github = {
@@ -136,8 +137,10 @@ async function runScript(options: {
     repo: { owner: 'AlexKarpinski', repo: 'VITAO' },
     payload: {
       issue: { number: 37 },
-      comment: { user: { login: 'trusted-user' } },
+      comment: { id: options.commandCommentId ?? 12345, user: { login: 'trusted-user' } },
     },
+    runId: 67890,
+    workflow: 'Trigger Codex from issue',
   };
   const core = { info: vi.fn() };
   const process = {
@@ -242,16 +245,24 @@ describe('Codex issue trigger policy', () => {
     expect(ready.createComment.mock.calls[0][0].body).toContain('@codex implement this issue.');
   });
 
-  it('trusts duplicate requests only when they were posted by GitHub Actions', async () => {
+  it('trusts duplicate requests only when they were posted by GitHub Actions for the same command', async () => {
     const spoofed = await runScript({
-      comments: [{ user: { login: 'attacker', type: 'User' }, body: '<!-- codex-implementation-requested -->\n@codex implement this issue.' }],
+      comments: [{ user: { login: 'attacker', type: 'User' }, body: '<!-- codex-implementation-requested -->\n@codex implement this issue.\n- command comment ID: `12345`;' }],
     });
     expect(spoofed.createComment).toHaveBeenCalledOnce();
 
     const trusted = await runScript({
-      comments: [{ user: { login: 'github-actions[bot]', type: 'Bot' }, body: '<!-- codex-implementation-requested -->\n@codex implement this issue.' }],
+      commandCommentId: 12345,
+      comments: [{ user: { login: 'github-actions[bot]', type: 'Bot' }, body: '<!-- codex-implementation-requested -->\n@codex implement this issue.\n- command comment ID: `12345`;' }],
     });
     expect(trusted.createComment).not.toHaveBeenCalled();
+
+    const retry = await runScript({
+      commandCommentId: 12346,
+      comments: [{ user: { login: 'github-actions[bot]', type: 'Bot' }, body: '<!-- codex-implementation-requested -->\n@codex implement this issue.\n- command comment ID: `12345`;' }],
+    });
+    expect(retry.createComment).toHaveBeenCalledOnce();
+    expect(retry.createComment.mock.calls[0][0].body).toContain('- command comment ID: `12346`;');
   });
 
   it('keeps repository-owned safety constraints in generated requests', async () => {
