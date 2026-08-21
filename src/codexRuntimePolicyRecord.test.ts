@@ -14,6 +14,8 @@ type RuntimePolicy = {
 const policy = JSON.parse(
   readFileSync('.github/codex/runtime-policy.json', 'utf8')
 ) as RuntimePolicy;
+const issueTrigger = readFileSync('.github/workflows/codex-issue-trigger.yml', 'utf8');
+const ciFixTrigger = readFileSync('.github/workflows/codex-ci-fix-trigger.yml', 'utf8');
 
 describe('Codex runtime activation policy record', () => {
   it('keeps owner-controlled runtime limits explicit and versioned', () => {
@@ -41,5 +43,24 @@ describe('Codex runtime activation policy record', () => {
       expect(policy.maxCostUsdPerRun).toBeNull();
       expect(policy.downstreamTimeoutMinutes).toBeNull();
     }
+  });
+
+  it('keeps approval fail-closed until downstream execution actually consumes every recorded limit', () => {
+    if (policy.status !== 'approved') {
+      expect(policy.status).toBe('blocked-owner-input');
+      return;
+    }
+
+    const downstreamRequests = `${issueTrigger}\n${ciFixTrigger}`;
+    expect(downstreamRequests).toContain('policy.model');
+    expect(downstreamRequests).toContain('policy.maxTokensPerRun');
+    expect(downstreamRequests).toContain('policy.maxCostUsdPerRun');
+    expect(downstreamRequests).toContain('policy.downstreamTimeoutMinutes');
+
+    // Admission-time validation alone is not runtime enforcement. Approval is
+    // allowed only after the request path carries these values into the worker
+    // execution contract, so a plain status/value flip cannot activate an
+    // unbounded downstream run while this repository still lacks that wiring.
+    expect(downstreamRequests).toMatch(/Execution runtime policy|Downstream runtime policy/);
   });
 });
