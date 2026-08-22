@@ -5,11 +5,15 @@ const issueTrigger = readFileSync('.github/workflows/codex-issue-trigger.yml', '
 const remediationSchema = JSON.parse(readFileSync('.github/codex/remediation-record.schema.json', 'utf8'));
 
 describe('Codex cancellation and retry admission policy', () => {
-  it('keeps admission idempotent per command while allowing a new explicit retry command to receive fresh provenance', () => {
-    expect(issueTrigger).toContain('const commandProvenance = `- command comment ID: \\`${commandComment.id}\\`;`;');
-    expect(issueTrigger).toContain('hasTrustedRequestForCommand');
-    expect(issueTrigger).toContain("body.includes(commandProvenance)");
+  it('keeps admission idempotent per command while requiring terminal evidence before a new retry', () => {
+    expect(issueTrigger).toContain('const trustedRequestCommandIds = comments.flatMap((comment) => {');
+    expect(issueTrigger).toContain('const currentCommandId = String(commandComment.id);');
+    expect(issueTrigger).toContain('trustedRequestCommandIds.includes(currentCommandId)');
     expect(issueTrigger).toContain('A trusted Codex implementation request already exists for this command comment.');
+    expect(issueTrigger).toContain('const previousCommandId = trustedRequestCommandIds.at(-1);');
+    expect(issueTrigger).toContain('const hasTrustedTerminalResult = comments.some((comment) => {');
+    expect(issueTrigger).toContain('codex-implementation-result:${previousCommandId}:${result}');
+    expect(issueTrigger).toContain('no trusted terminal-result evidence yet');
     expect(issueTrigger).toContain('`- command comment ID: \\`${commandComment.id}\\`;`');
     expect(issueTrigger).toContain('`- workflow run ID: \\`${context.runId}\\`;`');
   });
