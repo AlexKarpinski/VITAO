@@ -45,7 +45,7 @@ async function runScript(commandCommentId: number, comments: Comment[]) {
     repo: { owner: 'AlexKarpinski', repo: 'VITAO' },
     payload: {
       issue: { number: 37 },
-      comment: { id: commandCommentId, user: { login: 'trusted-user' } },
+      comment: { id: commandCommentId, author_association: 'OWNER', user: { login: 'trusted-user' } },
     },
     runId: 67890,
     workflow: 'Trigger Codex from issue',
