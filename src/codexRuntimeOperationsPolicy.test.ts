@@ -6,17 +6,26 @@ const issueTrigger = readFileSync('.github/workflows/codex-issue-trigger.yml', '
 const ciFixTrigger = readFileSync('.github/workflows/codex-ci-fix-trigger.yml', 'utf8');
 const triggerWorkflows = [issueTrigger, ciFixTrigger];
 
+const checkoutAction = 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262';
 const githubScriptAction = 'actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea';
 
 function assertInactiveTrigger(workflow: string, exactPermissions: string[]) {
   expect(workflow).not.toMatch(/\$\{\{\s*secrets\./);
-  expect(workflow).not.toMatch(/^\s*(?:-\s*)?run:/m);
   expect(workflow).not.toContain('permissions: write-all');
 
   const uses = [...workflow.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)(?:\s+#.*)?$/gm)].map(
     (match) => match[1]
   );
-  expect(uses).toEqual([githubScriptAction]);
+  expect(uses).toEqual([checkoutAction, githubScriptAction]);
+
+  const runSteps = [...workflow.matchAll(/^\s*run:\s*\|\s*$/gm)];
+  expect(runSteps).toHaveLength(1);
+  expect(workflow).toContain("if: env.CODEX_WORKER_ENABLED == 'true'");
+  expect(workflow).toContain("JSON.parse(fs.readFileSync('.github/codex/runtime-policy.json', 'utf8'))");
+  expect(workflow).toContain("policy.status === 'approved'");
+  expect(workflow).toContain('positive(policy.maxTokensPerRun)');
+  expect(workflow).toContain('positive(policy.maxCostUsdPerRun)');
+  expect(workflow).toContain('positive(policy.downstreamTimeoutMinutes)');
 
   const permissionsBlock = workflow.match(/permissions:\n((?:\s{2}[^\n]+\n)+)/)?.[1] ?? '';
   const permissions = permissionsBlock
@@ -54,7 +63,6 @@ describe('Codex runtime operations policy', () => {
     ]);
 
     for (const workflow of triggerWorkflows) {
-      expect(workflow).not.toContain('actions/checkout@');
       expect(workflow).not.toContain('OPENAI_API_KEY');
       expect(workflow).not.toContain('CODEX_API_KEY');
       expect(workflow).not.toContain('openai/codex');
