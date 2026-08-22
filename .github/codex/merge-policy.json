@@ -1,0 +1,13 @@
+{
+  "policyVersion": 1,
+  "status": "blocked-owner-input",
+  "defaultBranch": "main",
+  "requiredMergeMethod": "squash",
+  "requireProtectedDefaultBranch": true,
+  "requireRequiredStatusChecks": true,
+  "requireCurrentShaReview": true,
+  "branchProtectionConfirmed": null,
+  "requiredStatusChecksConfirmed": null,
+  "requiredReviewPolicyConfirmed": null,
+  "notes": "Owner-controlled merge-policy inputs. Keep autonomous merge fail-closed until branch protection, required checks, and review policy are explicitly configured and verified in GitHub."
+}
