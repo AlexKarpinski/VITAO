@@ -37,7 +37,9 @@ describe('Codex collaborator authorization policy', () => {
   });
 
   it('enforces exact collaborator logins in the production admission workflow', () => {
-    expect(workflow).toContain("readFileSync('.github/codex/collaborator-policy.json', 'utf8')");
+    expect(workflow).toContain("path: '.github/codex/collaborator-policy.json'");
+    expect(workflow).toContain('ref: context.sha');
+    expect(workflow).toContain("Buffer.from(collaboratorPolicyFile.content, 'base64').toString('utf8')");
     expect(workflow).toContain("actorAssociation !== 'OWNER'");
     expect(workflow).toContain("collaboratorPolicy.status === 'approved'");
     expect(workflow).toContain("actorAssociation === 'MEMBER' || actorAssociation === 'COLLABORATOR'");
