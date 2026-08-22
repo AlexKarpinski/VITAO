@@ -35,14 +35,11 @@ describe('Codex collaborator authorization policy', () => {
     }
   });
 
-  it('requires an explicit approved allowlist before collaborators are considered authorized', () => {
-    const collaboratorAdmissionEnabled =
-      policy.status === 'approved' && policy.allowedCollaboratorLogins.length > 0;
-
-    if (policy.status === 'blocked-owner-input') {
-      expect(collaboratorAdmissionEnabled).toBe(false);
-    } else {
-      expect(collaboratorAdmissionEnabled).toBe(true);
-    }
+  it('keeps collaborator admission fail-closed until the workflow enforces exact logins', () => {
+    // The current admission workflow still trusts author_association for MEMBER/COLLABORATOR
+    // and does not consume this policy. Approval must therefore remain impossible until a
+    // separate implementation wires this allowlist into the production admission path.
+    expect(policy.status).toBe('blocked-owner-input');
+    expect(policy.allowedCollaboratorLogins).toEqual([]);
   });
 });
