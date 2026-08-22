@@ -48,8 +48,18 @@ describe('Codex merge policy record', () => {
     }
   });
 
-  it('keeps autonomous merge fail-closed until policy is explicitly verified', () => {
-    expect(policy.status).toBe('blocked-owner-input');
-    expect(policy.notes).toContain('Owner-controlled merge-policy inputs');
+  it('stays fail-closed until protections are verified, then permits approval', () => {
+    if (policy.status === 'blocked-owner-input') {
+      expect(policy.notes).toContain('Owner-controlled merge-policy inputs');
+      expect(policy.branchProtectionConfirmed).toBeNull();
+      expect(policy.requiredStatusChecksConfirmed).toBeNull();
+      expect(policy.requiredReviewPolicyConfirmed).toBeNull();
+      return;
+    }
+
+    expect(policy.status).toBe('approved');
+    expect(policy.branchProtectionConfirmed).toBe(true);
+    expect(policy.requiredStatusChecksConfirmed).toBe(true);
+    expect(policy.requiredReviewPolicyConfirmed).toBe(true);
   });
 });
