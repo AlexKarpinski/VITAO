@@ -50,7 +50,6 @@ jobs:
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
-            const fs = require('node:fs');
             const eventIssue = context.payload.issue;
             const commandComment = context.payload.comment;
             const readyLabel = 'ready-for-codex';
@@ -66,7 +65,16 @@ jobs:
             const actorAssociation = commandComment.author_association;
             const actorLogin = commandComment.user.login;
             if (actorAssociation !== 'OWNER') {
-              const collaboratorPolicy = JSON.parse(fs.readFileSync('.github/codex/collaborator-policy.json', 'utf8'));
+              const { data: collaboratorPolicyFile } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: '.github/codex/collaborator-policy.json',
+                ref: context.sha,
+              });
+              if (Array.isArray(collaboratorPolicyFile) || typeof collaboratorPolicyFile.content !== 'string') {
+                throw new Error('Repository collaborator policy could not be loaded from the exact workflow revision.');
+              }
+              const collaboratorPolicy = JSON.parse(Buffer.from(collaboratorPolicyFile.content, 'base64').toString('utf8'));
               const allowedCollaborators = Array.isArray(collaboratorPolicy.allowedCollaboratorLogins)
                 ? collaboratorPolicy.allowedCollaboratorLogins
                 : [];
