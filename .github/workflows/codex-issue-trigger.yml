@@ -177,7 +177,13 @@ jobs:
               const hasTrustedTerminalResult = comments.some((comment) => {
                 if (comment.user?.login !== 'github-actions[bot]' || comment.user?.type !== 'Bot') return false;
                 const body = comment.body ?? '';
-                return terminalResults.some((result) => body.includes(`<!-- codex-implementation-result:${previousCommandId}:${result} -->`));
+                const recordCommandId = body.match(/- command comment ID: `([1-9]\d*)`;/)?.[1];
+                const recordTerminalResult = body.match(/- terminal result: `(success|precondition-failed|validation-failed|blocked-owner|blocked-tooling|no-safe-slice|cancelled)`;/)?.[1];
+                return terminalResults.some((result) =>
+                  body.includes(`<!-- codex-implementation-result:${previousCommandId}:${result} -->`) &&
+                  recordCommandId === previousCommandId &&
+                  recordTerminalResult === result,
+                );
               });
               if (!hasTrustedTerminalResult) {
                 await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number, body: `Implementation retry was not started: the previous admitted command \`${previousCommandId}\` has no trusted terminal-result evidence yet.` });
