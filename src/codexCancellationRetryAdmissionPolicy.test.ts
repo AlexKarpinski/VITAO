@@ -14,10 +14,14 @@ describe('Codex cancellation and retry admission policy', () => {
     expect(issueTrigger).toContain('`- workflow run ID: \\`${context.runId}\\`;`');
   });
 
-  it('allows remediation cancellation records only with recoverable GitHub run, branch, head, and reason evidence', () => {
+  it('allows remediation cancellation records only with recoverable execution-run, branch, head, and reason evidence', () => {
     const statusValues = remediationSchema.properties.result.properties.status.enum;
     expect(statusValues).toContain('cancelled');
-    expect(remediationSchema.properties.result.properties.workflowRunId.minimum).toBe(1);
+    expect(remediationSchema.properties.result.properties.executionWorkflowRunId.minimum).toBe(1);
+    expect(remediationSchema.properties.result.properties.executionWorkflowRunId.description).toContain(
+      'execution attempt itself',
+    );
+    expect(remediationSchema.properties.result.properties.executionWorkflowName.minLength).toBe(1);
     expect(remediationSchema.properties.result.properties.headSha.pattern).toBe('^[0-9a-f]{40}$');
     expect(remediationSchema.properties.result.properties.branch.minLength).toBe(1);
     expect(remediationSchema.properties.result.properties.cancellationReason.minLength).toBe(1);
@@ -26,7 +30,8 @@ describe('Codex cancellation and retry admission policy', () => {
       (rule: { if?: { properties?: { status?: { const?: string } } } }) => rule.if?.properties?.status?.const === 'cancelled',
     );
     expect(cancelledRule?.then?.required).toEqual([
-      'workflowRunId',
+      'executionWorkflowRunId',
+      'executionWorkflowName',
       'headSha',
       'branch',
       'cancellationReason',
