@@ -129,7 +129,8 @@ type RemediationSchema = {
         status: { enum: string[] };
         commitSha: { pattern: string };
         escalation: { minLength: number };
-        workflowRunId: { type: string; minimum: number };
+        executionWorkflowRunId: { type: string; minimum: number; description: string };
+        executionWorkflowName: { type: string; minLength: number };
         headSha: { type: string; pattern: string };
         branch: { type: string; minLength: number };
         cancellationReason: { type: string; minLength: number };
@@ -208,7 +209,7 @@ describe('Codex remediation decision record contract', () => {
     expect(schema.properties.automation.required).toEqual(['eligible', 'reason']);
   });
 
-  it('requires traceable evidence for terminal fixed, escalated, and cancelled results', () => {
+  it('requires traceable execution evidence for terminal fixed, escalated, and cancelled results', () => {
     expect(schema.properties.result.required).toEqual(['status']);
     expect(schema.properties.result.properties.status.enum).toEqual([
       'pending',
@@ -219,10 +220,14 @@ describe('Codex remediation decision record contract', () => {
       'cancelled',
     ]);
     expect(schema.properties.result.properties.commitSha.pattern).toBe('^[0-9a-f]{40}$');
-    expect(schema.properties.result.properties.workflowRunId).toMatchObject({
+    expect(schema.properties.result.properties.executionWorkflowRunId).toMatchObject({
       type: 'integer',
       minimum: 1,
     });
+    expect(schema.properties.result.properties.executionWorkflowRunId.description).toContain(
+      'execution attempt itself',
+    );
+    expect(schema.properties.result.properties.executionWorkflowName.minLength).toBe(1);
     expect(schema.properties.result.properties.headSha.pattern).toBe('^[0-9a-f]{40}$');
     expect(schema.properties.result.properties.branch.minLength).toBe(1);
     expect(schema.properties.result.properties.cancellationReason.minLength).toBe(1);
@@ -246,7 +251,13 @@ describe('Codex remediation decision record contract', () => {
             properties: { status: { const: 'cancelled' } },
           }),
           then: {
-            required: ['workflowRunId', 'headSha', 'branch', 'cancellationReason'],
+            required: [
+              'executionWorkflowRunId',
+              'executionWorkflowName',
+              'headSha',
+              'branch',
+              'cancellationReason',
+            ],
           },
         }),
       ]),
