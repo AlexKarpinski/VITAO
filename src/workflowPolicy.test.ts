@@ -80,7 +80,7 @@ async function runScript(options: {
     get: vi.fn().mockResolvedValue({ data: { number: 37, state: options.issueState ?? 'open', body: options.issueBody ?? '## Goal\nScoped work\n\n## Acceptance criteria\n- [ ] Complete', labels: (options.labels ?? ['ready-for-codex']).map((name) => ({ name })) } }),
     createComment, listComments: vi.fn(),
   } }, paginate: vi.fn().mockResolvedValue(options.comments ?? []) };
-  const context = { repo: { owner: 'AlexKarpinski', repo: 'VITAO' }, payload: { issue: { number: 37 }, comment: { id: options.commandCommentId ?? 12345, user: { login: 'trusted-user' } } }, runId: 67890, workflow: 'Trigger Codex from issue' };
+  const context = { repo: { owner: 'AlexKarpinski', repo: 'VITAO' }, payload: { issue: { number: 37 }, comment: { id: options.commandCommentId ?? 12345, author_association: 'OWNER', user: { login: 'trusted-user' } } }, runId: 67890, workflow: 'Trigger Codex from issue' };
   const core = { info: vi.fn() };
   const process = { env: { CODEX_WORKER_ENABLED: options.workerEnabled === false ? 'false' : 'true', CODEX_PILOT_SUCCEEDED: options.pilotSucceeded === false ? 'false' : 'true', CODEX_PILOT_ISSUE_NUMBER: options.pilotIssueNumber ?? '' } };
   const execute = new AsyncFunction('github', 'context', 'core', 'process', scalar(workflow, 'script', 12));
