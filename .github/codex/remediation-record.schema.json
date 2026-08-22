@@ -120,7 +120,12 @@
         },
         "commitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "escalation": { "type": "string", "minLength": 1 },
-        "workflowRunId": { "type": "integer", "minimum": 1 },
+        "executionWorkflowRunId": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "GitHub Actions run ID for the remediation execution attempt itself, not the admission or trigger workflow."
+        },
+        "executionWorkflowName": { "type": "string", "minLength": 1 },
         "headSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "branch": { "type": "string", "minLength": 1 },
         "cancellationReason": { "type": "string", "minLength": 1 }
@@ -136,7 +141,15 @@
         },
         {
           "if": { "properties": { "status": { "const": "cancelled" } }, "required": ["status"] },
-          "then": { "required": ["workflowRunId", "headSha", "branch", "cancellationReason"] }
+          "then": {
+            "required": [
+              "executionWorkflowRunId",
+              "executionWorkflowName",
+              "headSha",
+              "branch",
+              "cancellationReason"
+            ]
+          }
         }
       ]
     }
