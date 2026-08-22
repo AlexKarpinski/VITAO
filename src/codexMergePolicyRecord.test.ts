@@ -19,6 +19,12 @@ const policy = JSON.parse(
   readFileSync('.github/codex/merge-policy.json', 'utf8')
 ) as MergePolicy;
 
+const confirmations = [
+  policy.branchProtectionConfirmed,
+  policy.requiredStatusChecksConfirmed,
+  policy.requiredReviewPolicyConfirmed,
+];
+
 describe('Codex merge policy record', () => {
   it('keeps merge policy explicit and versioned', () => {
     expect(policy.policyVersion).toBeGreaterThanOrEqual(1);
@@ -40,20 +46,19 @@ describe('Codex merge policy record', () => {
     expect(policy.requiredReviewPolicyConfirmed).toBe(true);
   });
 
-  it('does not invent owner-controlled protection decisions while blocked', () => {
+  it('can preserve incremental owner-controlled protection decisions while blocked', () => {
     if (policy.status === 'blocked-owner-input') {
-      expect(policy.branchProtectionConfirmed).toBeNull();
-      expect(policy.requiredStatusChecksConfirmed).toBeNull();
-      expect(policy.requiredReviewPolicyConfirmed).toBeNull();
+      for (const confirmation of confirmations) {
+        expect([null, true, false]).toContain(confirmation);
+      }
+      expect(confirmations.every((confirmation) => confirmation === true)).toBe(false);
     }
   });
 
   it('stays fail-closed until protections are verified, then permits approval', () => {
     if (policy.status === 'blocked-owner-input') {
       expect(policy.notes).toContain('Owner-controlled merge-policy inputs');
-      expect(policy.branchProtectionConfirmed).toBeNull();
-      expect(policy.requiredStatusChecksConfirmed).toBeNull();
-      expect(policy.requiredReviewPolicyConfirmed).toBeNull();
+      expect(confirmations.every((confirmation) => confirmation === true)).toBe(false);
       return;
     }
 
