@@ -64,6 +64,7 @@ Do not rely on local workspace state, unpushed commits, hidden runner files, or 
 A successful, failed, or cancelled run must report:
 
 - issue number;
+- exact triggering command comment ID from admission provenance;
 - trigger workflow run ID and trigger workflow name preserved from admission provenance;
 - execution workflow run ID and execution workflow name for the downstream worker attempt, or `not-started` when execution never reached the worker;
 - base SHA and resulting head SHA;
@@ -76,6 +77,10 @@ A successful, failed, or cancelled run must report:
 - start and end timestamps for the implementation attempt;
 - terminal result (`success`, `precondition-failed`, `validation-failed`, `blocked-owner`, `blocked-tooling`, `no-safe-slice`, or `cancelled`);
 - for `cancelled`, a concise secret-safe cancellation reason explaining why the run was stopped.
+
+Every terminal result must also publish one trusted GitHub issue comment containing the exact hidden marker `<!-- codex-implementation-result:<command-comment-id>:<terminal-result> -->`, where `<command-comment-id>` is the triggering command recorded in admission provenance and `<terminal-result>` is one of the allowed terminal results above. The marker is delivery evidence only when it is posted by the repository-owned GitHub Actions identity and the accompanying result record matches the same command ID and terminal state.
+
+A new `/codex implement` retry must not be admitted while the most recent earlier trusted implementation request lacks this terminal-result evidence. Reprocessing the same triggering command remains idempotent and must not create another request. A new trusted command may start a retry only after GitHub contains trusted terminal evidence for the previous admitted command; the retry then receives its own command-comment and trigger-workflow provenance and must rerun all current preconditions.
 
 A `cancelled` result is valid only when the execution workflow run is observably cancelled in GitHub Actions. It must preserve the trigger workflow identity as admission provenance and separately record the cancelled execution workflow identity, plus the exact branch/head SHA known at cancellation time and the cancellation reason. Preserve any already-pushed branch/PR state and commits; do not claim rollback. A retry is a new attempt: it requires a new trusted request and full precondition/GitHub-state validation rather than silently resuming or automatically retrying a cancelled run.
 
