@@ -32,7 +32,7 @@ async function run(body: string | null) {
   };
   const context = {
     repo: { owner: 'AlexKarpinski', repo: 'VITAO' }, runId: 123, workflow: 'Trigger Codex from issue',
-    payload: { issue: { number: 37 }, comment: { id: 456, user: { login: 'owner' } } },
+    payload: { issue: { number: 37 }, comment: { id: 456, author_association: 'OWNER', user: { login: 'owner' } } },
   };
   const core = { info: vi.fn() };
   const process = {
