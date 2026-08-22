@@ -89,7 +89,7 @@ async function runScript(options: {
 }
 
 const trustedRequest = (commandId: number) => ({ user: { login: 'github-actions[bot]', type: 'Bot' }, body: `<!-- codex-implementation-requested -->\n@codex implement this issue.\n- command comment ID: \`${commandId}\`;` });
-const trustedTerminal = (commandId: number) => ({ user: { login: 'github-actions[bot]', type: 'Bot' }, body: `<!-- codex-implementation-result:${commandId}:validation-failed -->` });
+const trustedTerminal = (commandId: number) => ({ user: { login: 'github-actions[bot]', type: 'Bot' }, body: [`<!-- codex-implementation-result:${commandId}:validation-failed -->`, 'Terminal implementation result.', `- command comment ID: \`${commandId}\`;`, '- terminal result: `validation-failed`;'].join('\n') });
 
 describe('Codex issue trigger policy', () => {
   it('runs only for newly created issue comments', () => {
