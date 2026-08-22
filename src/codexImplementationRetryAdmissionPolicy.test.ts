@@ -68,9 +68,19 @@ const requestFor = (commandId: number): Comment => ({
   body: `<!-- codex-implementation-requested -->\n@codex implement this issue.\n- command comment ID: \`${commandId}\`;`,
 });
 
-const terminalFor = (commandId: number, result = 'validation-failed'): Comment => ({
+const terminalFor = (
+  commandId: number,
+  result = 'validation-failed',
+  recordCommandId = commandId,
+  recordResult = result,
+): Comment => ({
   user: { login: 'github-actions[bot]', type: 'Bot' },
-  body: `<!-- codex-implementation-result:${commandId}:${result} -->\nTerminal implementation result.`,
+  body: [
+    `<!-- codex-implementation-result:${commandId}:${result} -->`,
+    'Terminal implementation result.',
+    `- command comment ID: \`${recordCommandId}\`;`,
+    `- terminal result: \`${recordResult}\`;`,
+  ].join('\n'),
 });
 
 describe('Codex implementation retry admission policy', () => {
@@ -95,6 +105,22 @@ describe('Codex implementation retry admission policy', () => {
     expect(blocked.createComment.mock.calls[0][0].body).toContain('no trusted terminal-result evidence');
   });
 
+  it('rejects trusted terminal markers without a matching result record', async () => {
+    const markerOnly: Comment = {
+      user: { login: 'github-actions[bot]', type: 'Bot' },
+      body: '<!-- codex-implementation-result:111:validation-failed -->',
+    };
+    const wrongCommand = terminalFor(111, 'validation-failed', 999, 'validation-failed');
+    const wrongResult = terminalFor(111, 'validation-failed', 111, 'blocked-tooling');
+
+    for (const terminal of [markerOnly, wrongCommand, wrongResult]) {
+      const blocked = await runScript(222, [requestFor(111), terminal]);
+      expect(blocked.createComment).toHaveBeenCalledOnce();
+      expect(blocked.createComment.mock.calls[0][0].body).toContain('no trusted terminal-result evidence');
+      expect(blocked.createComment.mock.calls[0][0].body).not.toContain('@codex implement this issue.');
+    }
+  });
+
   it('keeps the same command idempotent', async () => {
     const duplicate = await runScript(111, [requestFor(111)]);
     expect(duplicate.createComment).not.toHaveBeenCalled();
@@ -103,10 +129,12 @@ describe('Codex implementation retry admission policy', () => {
     );
   });
 
-  it('binds terminal evidence to the triggering command and allowed terminal states', () => {
+  it('binds terminal evidence to the triggering command, result record, and allowed terminal states', () => {
     expect(contract).toContain('<!-- codex-implementation-result:<command-comment-id>:<terminal-result> -->');
+    expect(contract).toContain('accompanying result record matches the same command ID and terminal state');
     expect(contract).toContain('most recent earlier trusted implementation request');
     expect(workflow).toContain("const terminalResults = ['success', 'precondition-failed', 'validation-failed', 'blocked-owner', 'blocked-tooling', 'no-safe-slice', 'cancelled'];");
-    expect(workflow).toContain('codex-implementation-result:${previousCommandId}:${result}');
+    expect(workflow).toContain('recordCommandId === previousCommandId');
+    expect(workflow).toContain('recordTerminalResult === result');
   });
 });
