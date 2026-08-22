@@ -1,0 +1,7 @@
+{
+  "policyVersion": 1,
+  "status": "blocked-owner-input",
+  "repositoryOwnerMayTrigger": true,
+  "allowedCollaboratorLogins": [],
+  "notes": "Owner-controlled collaborator authorization is not yet confirmed. Until this policy is approved and enforced by the admission workflow, no collaborator allowlist is considered active."
+}
