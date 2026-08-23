@@ -12,6 +12,7 @@ type CollaboratorPolicy = {
 const policy = JSON.parse(
   readFileSync('.github/codex/collaborator-policy.json', 'utf8')
 ) as CollaboratorPolicy;
+const workflow = readFileSync('.github/workflows/codex-issue-trigger.yml', 'utf8');
 
 describe('Codex collaborator authorization policy', () => {
   it('keeps collaborator authorization explicit and versioned', () => {
@@ -35,10 +36,17 @@ describe('Codex collaborator authorization policy', () => {
     }
   });
 
-  it('keeps collaborator admission fail-closed until the workflow enforces exact logins', () => {
-    // The current admission workflow still trusts author_association for MEMBER/COLLABORATOR
-    // and does not consume this policy. Approval must therefore remain impossible until a
-    // separate implementation wires this allowlist into the production admission path.
+  it('enforces exact collaborator logins in the production admission workflow', () => {
+    expect(workflow).toContain("path: '.github/codex/collaborator-policy.json'");
+    expect(workflow).toContain('ref: context.sha');
+    expect(workflow).toContain("Buffer.from(collaboratorPolicyFile.content, 'base64').toString('utf8')");
+    expect(workflow).toContain("actorAssociation !== 'OWNER'");
+    expect(workflow).toContain("collaboratorPolicy.status === 'approved'");
+    expect(workflow).toContain("actorAssociation === 'MEMBER' || actorAssociation === 'COLLABORATOR'");
+    expect(workflow).toContain('allowedCollaborators.includes(actorLogin)');
+  });
+
+  it('keeps the current empty owner-controlled policy fail-closed without inventing identities', () => {
     expect(policy.status).toBe('blocked-owner-input');
     expect(policy.allowedCollaboratorLogins).toEqual([]);
   });

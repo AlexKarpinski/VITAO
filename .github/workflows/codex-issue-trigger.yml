@@ -62,6 +62,31 @@ jobs:
               return;
             }
 
+            const actorAssociation = commandComment.author_association;
+            const actorLogin = commandComment.user.login;
+            if (actorAssociation !== 'OWNER') {
+              const { data: collaboratorPolicyFile } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: '.github/codex/collaborator-policy.json',
+                ref: context.sha,
+              });
+              if (Array.isArray(collaboratorPolicyFile) || typeof collaboratorPolicyFile.content !== 'string') {
+                throw new Error('Repository collaborator policy could not be loaded from the exact workflow revision.');
+              }
+              const collaboratorPolicy = JSON.parse(Buffer.from(collaboratorPolicyFile.content, 'base64').toString('utf8'));
+              const allowedCollaborators = Array.isArray(collaboratorPolicy.allowedCollaboratorLogins)
+                ? collaboratorPolicy.allowedCollaboratorLogins
+                : [];
+              const collaboratorApproved = collaboratorPolicy.status === 'approved'
+                && (actorAssociation === 'MEMBER' || actorAssociation === 'COLLABORATOR')
+                && allowedCollaborators.includes(actorLogin);
+              if (!collaboratorApproved) {
+                await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: eventIssue.number, body: 'Implementation was not started: this collaborator is not explicitly authorized by the approved repository collaborator policy.' });
+                return;
+              }
+            }
+
             const pilotSucceeded = process.env.CODEX_PILOT_SUCCEEDED === 'true';
             const pilotIssueValue = process.env.CODEX_PILOT_ISSUE_NUMBER ?? '';
             const pilotIssueNumber = /^[1-9]\d*$/.test(pilotIssueValue) ? Number(pilotIssueValue) : null;
