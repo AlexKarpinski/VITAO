@@ -108,9 +108,9 @@ const extractActionRefs = (workflow: string) => {
     }
     if (/^\s*-?\s*["']?run["']?\s*:/.test(withoutComment)) continue;
 
-    const flowUsesPattern = /(?:^|[{,])\s*["']?uses["']?\s*:\s*("[^"]+"|'[^']+'|[^,}\s]+)/g;
-    for (const flowUses of withoutComment.matchAll(flowUsesPattern)) {
-      refs.push(unquote(flowUses[1]));
+    const flowEntryPattern = /(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+))\s*:\s*("[^"]+"|'[^']+'|[^,}\s]+)/g;
+    for (const flowEntry of withoutComment.matchAll(flowEntryPattern)) {
+      if (decodeYamlKey(flowEntry[1]) === 'uses') refs.push(unquote(flowEntry[2]));
     }
   }
 
@@ -138,6 +138,7 @@ describe('GitHub workflow action pinning policy', () => {
     const workflow = [
       `- { name: Checkout, uses: actions/checkout@${sha} }`,
       `steps: [{uses: actions/cache@${sha}}, {uses: actions/setup-node@${sha}}]`,
+      `steps: [{"\\u0075ses": actions/upload-artifact@${sha}}]`,
       `- 'uses': 'actions/setup-node@${sha}'`,
       `- "uses": "actions/upload-artifact@${sha}"`,
       `- "\\u0075ses": actions/cache@${sha}`,
@@ -152,6 +153,7 @@ describe('GitHub workflow action pinning policy', () => {
       `actions/checkout@${sha}`,
       `actions/cache@${sha}`,
       `actions/setup-node@${sha}`,
+      `actions/upload-artifact@${sha}`,
       `actions/setup-node@${sha}`,
       `actions/upload-artifact@${sha}`,
       `actions/cache@${sha}`,
@@ -183,6 +185,7 @@ describe('GitHub workflow action pinning policy', () => {
     for (const workflow of [
       '- { name: Checkout, uses: actions/checkout@v4 }',
       'steps: [{uses: owner/safe@0123456789abcdef0123456789abcdef01234567}, {uses: owner/unsafe@v1}]',
+      'steps: [{"\\u0075ses": actions/checkout@v4}]',
       "- 'uses': actions/setup-node@v4",
       '- "uses": "actions/upload-artifact@v4"',
       '- "\\u0075ses": actions/cache@v4',
