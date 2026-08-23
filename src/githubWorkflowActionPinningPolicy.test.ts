@@ -108,7 +108,7 @@ const extractActionRefs = (workflow: string) => {
     }
     if (/^\s*-?\s*["']?run["']?\s*:/.test(withoutComment)) continue;
 
-    const flowEntryPattern = /(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+))\s*:\s*("[^"]+"|'[^']+'|[^,}\s]+)/g;
+    const flowEntryPattern = /(?=(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+))\s*:\s*("[^"]+"|'[^']+'|[^,}\s]+))/g;
     for (const flowEntry of withoutComment.matchAll(flowEntryPattern)) {
       if (decodeYamlKey(flowEntry[1]) === 'uses') refs.push(unquote(flowEntry[2]));
     }
