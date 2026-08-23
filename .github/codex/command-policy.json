@@ -1,0 +1,10 @@
+{
+  "policyVersion": 1,
+  "readinessLabel": "ready-for-codex",
+  "implementationCommand": "/codex implement",
+  "implementationEvent": "issue_comment.created",
+  "automaticRemediationOptInLabel": "codex-auto-fix",
+  "automaticRemediationEvent": "workflow_run.completed:CI:failure",
+  "manualRemediationCommand": null,
+  "notes": "Only repository-enforced commands and labels are listed. A manual /codex fix-review command is not implemented and must not be advertised as available."
+}
