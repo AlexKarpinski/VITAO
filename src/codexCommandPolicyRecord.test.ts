@@ -31,7 +31,7 @@ describe('Codex command and label policy', () => {
     expect(policy.implementationCommand).toBe('/codex implement');
     expect(policy.implementationEvent).toBe('issue_comment.created');
     expect(implementationWorkflow).toContain("types: [created]");
-    expect(implementationWorkflow).toContain("command !== '/codex implement'");
+    expect(implementationWorkflow).toContain("github.event.comment.body == '/codex implement'");
     expect(implementationWorkflow).toContain("labels.includes('ready-for-codex')");
   });
 
