@@ -73,15 +73,31 @@ const extractActionRefs = (workflow: string) => {
     );
     if (explicitKey && decodeYamlKey(explicitKey[1]) === 'uses') {
       for (let child = index + 1; child < lines.length; child += 1) {
-        const childWithoutComment = stripYamlComment(lines[child]);
+        const childRaw = lines[child];
+        const childWithoutComment = stripYamlComment(childRaw);
         const explicitValue = childWithoutComment.match(/^\s*:\s*(.*)$/);
         if (!explicitValue) {
           if (childWithoutComment.trim()) break;
           continue;
         }
         const value = explicitValue[1].trim();
-        if (value) refs.push(unquote(value));
-        index = child;
+        if (value) {
+          refs.push(unquote(value));
+          index = child;
+          break;
+        }
+        const valueIndent = childRaw.match(/^\s*/)?.[0].length ?? 0;
+        for (let valueChild = child + 1; valueChild < lines.length; valueChild += 1) {
+          const valueRaw = lines[valueChild];
+          const valueWithoutComment = stripYamlComment(valueRaw);
+          const valueTrimmed = valueWithoutComment.trim();
+          const valueChildIndent = valueRaw.match(/^\s*/)?.[0].length ?? 0;
+          if (!valueTrimmed) continue;
+          if (valueChildIndent <= valueIndent) break;
+          refs.push(unquote(valueTrimmed));
+          index = valueChild;
+          break;
+        }
         break;
       }
       continue;
@@ -163,6 +179,9 @@ describe('GitHub workflow action pinning policy', () => {
       `- "\\u0075ses": actions/cache@${sha}`,
       '- ? uses',
       `  : actions/checkout@${sha}`,
+      '- ? uses',
+      '  :',
+      `    actions/setup-node@${sha}`,
       'uses: >-',
       `  actions/cache@${sha}`,
       '- uses:',
@@ -179,6 +198,7 @@ describe('GitHub workflow action pinning policy', () => {
       `actions/upload-artifact@${sha}`,
       `actions/cache@${sha}`,
       `actions/checkout@${sha}`,
+      `actions/setup-node@${sha}`,
       `actions/cache@${sha}`,
       `actions/download-artifact@${sha}`,
       './local-action',
@@ -212,6 +232,7 @@ describe('GitHub workflow action pinning policy', () => {
       '- "uses": "actions/upload-artifact@v4"',
       '- "\\u0075ses": actions/cache@v4',
       '- ? uses\n  : actions/checkout@v4',
+      '- ? uses\n  :\n    actions/checkout@v4',
       'uses: >-\n  actions/cache@v4',
       '- uses:\n    actions/download-artifact@v4',
     ]) {
