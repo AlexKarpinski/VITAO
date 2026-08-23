@@ -22,9 +22,11 @@ function extractScript(): string {
 
 type PullRequest = {
   state: 'open' | 'closed';
-  head: { sha: string };
+  head: { sha: string; repo?: { full_name: string } };
   labels: Array<{ name: string }>;
 };
+
+const sameRepoHead = { sha: 'expected-sha', repo: { full_name: 'AlexKarpinski/VITAO' } };
 
 async function runScript(options: {
   prs?: Array<{ number: number }>;
@@ -41,8 +43,8 @@ async function runScript(options: {
     pull_requests: options.prs ?? [{ number: 52 }],
   };
   const pulls = options.pullRequests ?? [
-    { state: 'open', head: { sha: 'expected-sha' }, labels: [{ name: 'codex-auto-fix' }] },
-    { state: 'open', head: { sha: 'expected-sha' }, labels: [{ name: 'codex-auto-fix' }] },
+    { state: 'open', head: sameRepoHead, labels: [{ name: 'codex-auto-fix' }] },
+    { state: 'open', head: sameRepoHead, labels: [{ name: 'codex-auto-fix' }] },
   ];
   const createComment = vi.fn();
   const github = {
@@ -111,12 +113,23 @@ describe('Codex CI-fix trigger policy', () => {
   });
 
   it('rejects closed, stale, and non-opted-in pull requests', async () => {
-    const closed: PullRequest = { state: 'closed', head: { sha: 'expected-sha' }, labels: [{ name: 'codex-auto-fix' }] };
-    const stale: PullRequest = { state: 'open', head: { sha: 'new-sha' }, labels: [{ name: 'codex-auto-fix' }] };
-    const unlabelled: PullRequest = { state: 'open', head: { sha: 'expected-sha' }, labels: [] };
+    const closed: PullRequest = { state: 'closed', head: sameRepoHead, labels: [{ name: 'codex-auto-fix' }] };
+    const stale: PullRequest = { state: 'open', head: { ...sameRepoHead, sha: 'new-sha' }, labels: [{ name: 'codex-auto-fix' }] };
+    const unlabelled: PullRequest = { state: 'open', head: sameRepoHead, labels: [] };
     expect((await runScript({ pullRequests: [closed] })).createComment).not.toHaveBeenCalled();
     expect((await runScript({ pullRequests: [stale] })).createComment).not.toHaveBeenCalled();
     expect((await runScript({ pullRequests: [unlabelled] })).createComment).not.toHaveBeenCalled();
+  });
+
+  it('rejects fork pull requests before posting an automatic remediation request', async () => {
+    const fork: PullRequest = {
+      state: 'open',
+      head: { sha: 'expected-sha', repo: { full_name: 'untrusted-user/VITAO' } },
+      labels: [{ name: 'codex-auto-fix' }],
+    };
+    const result = await runScript({ pullRequests: [fork] });
+    expect(result.createComment).not.toHaveBeenCalled();
+    expect(result.core.info).toHaveBeenCalledWith(expect.stringContaining('comes from a fork'));
   });
 
   it('trusts only the GitHub Actions bot duplicate marker', async () => {
@@ -136,8 +149,8 @@ describe('Codex CI-fix trigger policy', () => {
   });
 
   it('revalidates eligibility after comment pagination', async () => {
-    const eligible: PullRequest = { state: 'open', head: { sha: 'expected-sha' }, labels: [{ name: 'codex-auto-fix' }] };
-    const advanced: PullRequest = { state: 'open', head: { sha: 'new-sha' }, labels: [{ name: 'codex-auto-fix' }] };
+    const eligible: PullRequest = { state: 'open', head: sameRepoHead, labels: [{ name: 'codex-auto-fix' }] };
+    const advanced: PullRequest = { state: 'open', head: { ...sameRepoHead, sha: 'new-sha' }, labels: [{ name: 'codex-auto-fix' }] };
     const result = await runScript({ pullRequests: [eligible, advanced] });
     expect(result.github.rest.pulls.get).toHaveBeenCalledTimes(2);
     expect(result.createComment).not.toHaveBeenCalled();
