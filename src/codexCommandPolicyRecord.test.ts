@@ -32,7 +32,8 @@ describe('Codex command and label policy', () => {
     expect(policy.implementationEvent).toBe('issue_comment.created');
     expect(implementationWorkflow).toContain("types: [created]");
     expect(implementationWorkflow).toContain("github.event.comment.body == '/codex implement'");
-    expect(implementationWorkflow).toContain("labels.includes('ready-for-codex')");
+    expect(implementationWorkflow).toContain("const readyLabel = 'ready-for-codex'");
+    expect(implementationWorkflow).toContain('labels.includes(readyLabel)');
   });
 
   it('records the implemented automatic remediation opt-in instead of inventing a manual command', () => {
