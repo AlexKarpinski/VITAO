@@ -60,13 +60,17 @@ jobs:
             const requestMarker = `<!-- codex-ci-fix-requested:${prNumber} -->`;
             const requestPrefix = '@codex fix the CI failures in this PR.';
             const getCurrentPullRequest = async () => { const { data } = await github.rest.pulls.get({ owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber }); return data; };
-            const isEligible = (pullRequest) => { const labels = pullRequest.labels.map((label) => label.name); return pullRequest.state === 'open' && pullRequest.head.sha === workflowRun.head_sha && labels.includes('codex-auto-fix'); };
+            const isEligible = (pullRequest) => {
+              const labels = pullRequest.labels.map((label) => label.name);
+              const sameRepositoryHead = pullRequest.head?.repo?.full_name === `${context.repo.owner}/${context.repo.repo}`;
+              return pullRequest.state === 'open' && pullRequest.head.sha === workflowRun.head_sha && sameRepositoryHead && labels.includes('codex-auto-fix');
+            };
             const initialPullRequest = await getCurrentPullRequest();
-            if (!isEligible(initialPullRequest)) { core.info('The pull request is closed, moved beyond the failed SHA, or is not opted in. Skipping.'); return; }
+            if (!isEligible(initialPullRequest)) { core.info('The pull request is closed, moved beyond the failed SHA, comes from a fork, or is not opted in. Skipping.'); return; }
             const comments = await github.paginate(github.rest.issues.listComments, { owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, per_page: 100 });
             const alreadyRequestedForPullRequest = comments.some((comment) => { if (comment.user?.login !== 'github-actions[bot]' || comment.user?.type !== 'Bot') return false; const body = comment.body ?? ''; return body.startsWith(`${requestMarker}\n${requestPrefix}`) || body.startsWith(requestPrefix); });
             if (alreadyRequestedForPullRequest) { core.info('A trusted automatic Codex CI-fix request already exists for this pull request. Skipping overlapping remediation.'); return; }
             const currentPullRequest = await getCurrentPullRequest();
-            if (!isEligible(currentPullRequest)) { core.info('The pull request changed state, head SHA, or opt-in while the request was being prepared. Skipping.'); return; }
+            if (!isEligible(currentPullRequest)) { core.info('The pull request changed state, head SHA, repository origin, or opt-in while the request was being prepared. Skipping.'); return; }
             const requestBody = [requestMarker, requestPrefix, '', `Failed workflow run ${workflowRun.id}: ${workflowRun.html_url}`, `Failed head SHA: ${workflowRun.head_sha}`, '', 'This is the single automatic remediation request permitted for this PR. Further failures require an explicit human request.', '', 'Please:', '- inspect this exact failed GitHub Actions run;', '- confirm the PR head still matches the failed SHA before editing;', '- fix only CI, build, dependency, or test issues;', '- run install, build, and tests;', '- push the fix to the same PR branch;', '- do not create a new PR;', '- keep scope limited to making CI green;', '- do not expose credentials or introduce unsupported product or architecture scope.'].join('\n');
             await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, body: requestBody });
