@@ -69,6 +69,18 @@ const extractActionRefs = (workflow: string) => {
         if (folded.length) refs.push(unquote(folded.join(' ')));
       } else if (value) {
         refs.push(unquote(value));
+      } else {
+        for (let child = index + 1; child < lines.length; child += 1) {
+          const childRaw = lines[child];
+          const childWithoutComment = stripYamlComment(childRaw);
+          const childTrimmed = childWithoutComment.trim();
+          const childIndent = childRaw.match(/^\s*/)?.[0].length ?? 0;
+          if (!childTrimmed) continue;
+          if (childIndent <= indent) break;
+          refs.push(unquote(childTrimmed));
+          index = child;
+          break;
+        }
       }
       continue;
     }
@@ -102,7 +114,7 @@ describe('GitHub workflow action pinning policy', () => {
     }
   });
 
-  it('accounts for quoted, flow-style, and block-scalar YAML uses keys', () => {
+  it('accounts for quoted, flow-style, block-scalar, and indented plain-scalar YAML uses keys', () => {
     const sha = '0123456789abcdef0123456789abcdef01234567';
     const workflow = [
       `- { name: Checkout, uses: actions/checkout@${sha} }`,
@@ -110,6 +122,8 @@ describe('GitHub workflow action pinning policy', () => {
       `- "uses": "actions/upload-artifact@${sha}"`,
       'uses: >-',
       `  actions/cache@${sha}`,
+      '- uses:',
+      `    actions/download-artifact@${sha}`,
       '- uses: ./local-action',
     ].join('\n');
 
@@ -118,6 +132,7 @@ describe('GitHub workflow action pinning policy', () => {
       `actions/setup-node@${sha}`,
       `actions/upload-artifact@${sha}`,
       `actions/cache@${sha}`,
+      `actions/download-artifact@${sha}`,
       './local-action',
     ]);
     expectImmutableExternalActions(workflow, 'synthetic-workflow.yml');
@@ -146,6 +161,7 @@ describe('GitHub workflow action pinning policy', () => {
       "- 'uses': actions/setup-node@v4",
       '- "uses": "actions/upload-artifact@v4"',
       'uses: >-\n  actions/cache@v4',
+      '- uses:\n    actions/download-artifact@v4',
     ]) {
       expect(() => expectImmutableExternalActions(workflow, 'synthetic-workflow.yml')).toThrow();
     }
