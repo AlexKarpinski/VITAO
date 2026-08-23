@@ -8,9 +8,6 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
-const usesKeyPattern =
-  /(?:^|[\s{,])(?:-\s*)?["']?uses["']?\s*:\s*(?:"([^"]+)"|'([^']+)'|([^\s,}\]#]+))/gm;
-
 const stripYamlComment = (line: string) => {
   let quote: '"' | "'" | null = null;
   for (let index = 0; index < line.length; index += 1) {
@@ -28,37 +25,66 @@ const stripYamlComment = (line: string) => {
   return line;
 };
 
-const executableYaml = (workflow: string) => {
-  const lines: string[] = [];
-  let blockScalarIndent: number | null = null;
+const unquote = (value: string) => {
+  const trimmed = value.trim().replace(/[,}]\s*$/, '').trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+};
 
-  for (const rawLine of workflow.split('\n')) {
+const extractActionRefs = (workflow: string) => {
+  const refs: string[] = [];
+  const lines = workflow.split('\n');
+  let ignoredBlockIndent: number | null = null;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
     const indent = rawLine.match(/^\s*/)?.[0].length ?? 0;
     const withoutComment = stripYamlComment(rawLine);
     const trimmed = withoutComment.trim();
 
-    if (blockScalarIndent !== null) {
-      if (!trimmed || indent > blockScalarIndent) continue;
-      blockScalarIndent = null;
+    if (ignoredBlockIndent !== null) {
+      if (!trimmed || indent > ignoredBlockIndent) continue;
+      ignoredBlockIndent = null;
+    }
+    if (!trimmed) continue;
+
+    const canonical = withoutComment.match(/^\s*(?:-\s*)?["']?uses["']?\s*:\s*(.*)$/);
+    if (canonical) {
+      const value = canonical[1].trim();
+      if (/^[|>][+-]?\d*\s*$/.test(value)) {
+        const folded: string[] = [];
+        for (let child = index + 1; child < lines.length; child += 1) {
+          const childRaw = lines[child];
+          const childTrimmed = stripYamlComment(childRaw).trim();
+          const childIndent = childRaw.match(/^\s*/)?.[0].length ?? 0;
+          if (childTrimmed && childIndent <= indent) break;
+          if (childTrimmed) folded.push(childTrimmed);
+          index = child;
+        }
+        if (folded.length) refs.push(unquote(folded.join(' ')));
+      } else if (value) {
+        refs.push(unquote(value));
+      }
+      continue;
     }
 
-    if (!trimmed) continue;
     if (/:\s*[|>][+-]?\d*\s*$/.test(withoutComment)) {
-      blockScalarIndent = indent;
+      ignoredBlockIndent = indent;
       continue;
     }
     if (/^\s*-?\s*["']?run["']?\s*:/.test(withoutComment)) continue;
 
-    lines.push(withoutComment);
+    const flowUses = withoutComment.match(/(?:^|[{,])\s*["']?uses["']?\s*:\s*("[^"]+"|'[^']+'|[^,}\s]+)/);
+    if (flowUses) refs.push(unquote(flowUses[1]));
   }
 
-  return lines.join('\n');
+  return refs;
 };
-
-const extractActionRefs = (workflow: string) =>
-  [...executableYaml(workflow).matchAll(usesKeyPattern)].map(
-    (match) => match[1] ?? match[2] ?? match[3],
-  );
 
 const expectImmutableExternalActions = (workflow: string, source: string) => {
   for (const actionRef of extractActionRefs(workflow)) {
@@ -70,19 +96,20 @@ const expectImmutableExternalActions = (workflow: string, source: string) => {
 describe('GitHub workflow action pinning policy', () => {
   it('pins every external action in every workflow to an immutable full commit SHA', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
-
     for (const workflowFile of workflowFiles) {
       const workflow = readFileSync(join(workflowsDir, workflowFile), 'utf8');
       expectImmutableExternalActions(workflow, workflowFile);
     }
   });
 
-  it('accounts for quoted and flow-style YAML uses keys', () => {
+  it('accounts for quoted, flow-style, and block-scalar YAML uses keys', () => {
     const sha = '0123456789abcdef0123456789abcdef01234567';
     const workflow = [
       `- { name: Checkout, uses: actions/checkout@${sha} }`,
       `- 'uses': 'actions/setup-node@${sha}'`,
       `- "uses": "actions/upload-artifact@${sha}"`,
+      'uses: >-',
+      `  actions/cache@${sha}`,
       '- uses: ./local-action',
     ].join('\n');
 
@@ -90,12 +117,13 @@ describe('GitHub workflow action pinning policy', () => {
       `actions/checkout@${sha}`,
       `actions/setup-node@${sha}`,
       `actions/upload-artifact@${sha}`,
+      `actions/cache@${sha}`,
       './local-action',
     ]);
     expectImmutableExternalActions(workflow, 'synthetic-workflow.yml');
   });
 
-  it('ignores uses-like text in comments, run scalars, and block scalars', () => {
+  it('ignores uses-like text in comments, run scalars, block scalars, and ordinary values', () => {
     const workflow = [
       '# uses: actions/checkout@v4',
       'name: demo # uses: actions/setup-node@v4',
@@ -104,6 +132,8 @@ describe('GitHub workflow action pinning policy', () => {
       '  echo "uses: actions/setup-node@v4"',
       'env: |',
       '  uses: actions/upload-artifact@v4',
+      'env:',
+      '  NOTE: "uses: actions/cache@v4"',
     ].join('\n');
 
     expect(extractActionRefs(workflow)).toEqual([]);
@@ -115,6 +145,7 @@ describe('GitHub workflow action pinning policy', () => {
       '- { name: Checkout, uses: actions/checkout@v4 }',
       "- 'uses': actions/setup-node@v4",
       '- "uses": "actions/upload-artifact@v4"',
+      'uses: >-\n  actions/cache@v4',
     ]) {
       expect(() => expectImmutableExternalActions(workflow, 'synthetic-workflow.yml')).toThrow();
     }
