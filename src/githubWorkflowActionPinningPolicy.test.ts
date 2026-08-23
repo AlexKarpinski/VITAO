@@ -54,7 +54,14 @@ const decodeYamlKey = (rawKey: string) => {
 const extractActionRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
+  const scalarAnchors = new Map<string, string>();
   let ignoredBlockIndent: number | null = null;
+
+  const resolveYamlKey = (rawKey: string) => {
+    const decoded = decodeYamlKey(rawKey);
+    if (!decoded.startsWith('*')) return decoded;
+    return scalarAnchors.get(decoded.slice(1)) ?? decoded;
+  };
 
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index];
@@ -68,10 +75,15 @@ const extractActionRefs = (workflow: string) => {
     }
     if (!trimmed) continue;
 
-    const explicitKey = withoutComment.match(
-      /^\s*(?:-\s*)?\?\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+))\s*$/,
+    const scalarAnchor = withoutComment.match(
+      /:\s*&([A-Za-z0-9_-]+)\s+("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+)\s*$/,
     );
-    if (explicitKey && decodeYamlKey(explicitKey[1]) === 'uses') {
+    if (scalarAnchor) scalarAnchors.set(scalarAnchor[1], unquote(scalarAnchor[2]));
+
+    const explicitKey = withoutComment.match(
+      /^\s*(?:-\s*)?\?\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*$/,
+    );
+    if (explicitKey && resolveYamlKey(explicitKey[1]) === 'uses') {
       for (let child = index + 1; child < lines.length; child += 1) {
         const childRaw = lines[child];
         const childWithoutComment = stripYamlComment(childRaw);
@@ -104,9 +116,9 @@ const extractActionRefs = (workflow: string) => {
     }
 
     const canonical = withoutComment.match(
-      /^\s*(?:-\s*)?((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+))\s*:\s*(.*)$/,
+      /^\s*(?:-\s*)?((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*:\s*(.*)$/,
     );
-    if (canonical && decodeYamlKey(canonical[1]) === 'uses') {
+    if (canonical && resolveYamlKey(canonical[1]) === 'uses') {
       const value = canonical[2].trim();
       if (/^[|>][+-]?\d*\s*$/.test(value)) {
         const folded: string[] = [];
@@ -143,9 +155,9 @@ const extractActionRefs = (workflow: string) => {
     }
     if (/^\s*-?\s*["']?run["']?\s*:/.test(withoutComment)) continue;
 
-    const flowEntryPattern = /(?=(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+))\s*:\s*("[^"]+"|'[^']+'|[^,}\s]+))/g;
+    const flowEntryPattern = /(?=(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*:\s*("[^"]+"|'[^']+'|[^,}\s]+))/g;
     for (const flowEntry of withoutComment.matchAll(flowEntryPattern)) {
-      if (decodeYamlKey(flowEntry[1]) === 'uses') refs.push(unquote(flowEntry[2]));
+      if (resolveYamlKey(flowEntry[1]) === 'uses') refs.push(unquote(flowEntry[2]));
     }
   }
 
@@ -168,12 +180,14 @@ describe('GitHub workflow action pinning policy', () => {
     }
   });
 
-  it('accounts for quoted, escaped, flow-style, explicit-key, block-scalar, and indented plain-scalar YAML uses keys', () => {
+  it('accounts for quoted, escaped, aliased, flow-style, explicit-key, block-scalar, and indented plain-scalar YAML uses keys', () => {
     const sha = '0123456789abcdef0123456789abcdef01234567';
     const workflow = [
       `- { name: Checkout, uses: actions/checkout@${sha} }`,
       `steps: [{uses: actions/cache@${sha}}, {uses: actions/setup-node@${sha}}]`,
       `steps: [{"\\u0075ses": actions/upload-artifact@${sha}}]`,
+      `name: &uses uses`,
+      `- *uses: actions/download-artifact@${sha}`,
       `- 'uses': 'actions/setup-node@${sha}'`,
       `- "uses": "actions/upload-artifact@${sha}"`,
       `- "\\u0075ses": actions/cache@${sha}`,
@@ -194,6 +208,7 @@ describe('GitHub workflow action pinning policy', () => {
       `actions/cache@${sha}`,
       `actions/setup-node@${sha}`,
       `actions/upload-artifact@${sha}`,
+      `actions/download-artifact@${sha}`,
       `actions/setup-node@${sha}`,
       `actions/upload-artifact@${sha}`,
       `actions/cache@${sha}`,
@@ -228,6 +243,7 @@ describe('GitHub workflow action pinning policy', () => {
       '- { name: Checkout, uses: actions/checkout@v4 }',
       'steps: [{uses: owner/safe@0123456789abcdef0123456789abcdef01234567}, {uses: owner/unsafe@v1}]',
       'steps: [{"\\u0075ses": actions/checkout@v4}]',
+      'name: &uses uses\n- *uses: actions/checkout@v4',
       "- 'uses': actions/setup-node@v4",
       '- "uses": "actions/upload-artifact@v4"',
       '- "\\u0075ses": actions/cache@v4',
