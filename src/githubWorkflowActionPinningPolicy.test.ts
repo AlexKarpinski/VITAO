@@ -11,8 +11,54 @@ const workflowFiles = readdirSync(workflowsDir)
 const usesKeyPattern =
   /(?:^|[\s{,])(?:-\s*)?["']?uses["']?\s*:\s*(?:"([^"]+)"|'([^']+)'|([^\s,}\]#]+))/gm;
 
+const stripYamlComment = (line: string) => {
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (char === quote && line[index - 1] !== '\\') quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /\s/.test(line[index - 1]))) return line.slice(0, index);
+  }
+  return line;
+};
+
+const executableYaml = (workflow: string) => {
+  const lines: string[] = [];
+  let blockScalarIndent: number | null = null;
+
+  for (const rawLine of workflow.split('\n')) {
+    const indent = rawLine.match(/^\s*/)?.[0].length ?? 0;
+    const withoutComment = stripYamlComment(rawLine);
+    const trimmed = withoutComment.trim();
+
+    if (blockScalarIndent !== null) {
+      if (!trimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+
+    if (!trimmed) continue;
+    if (/:\s*[|>][+-]?\d*\s*$/.test(withoutComment)) {
+      blockScalarIndent = indent;
+      continue;
+    }
+    if (/^\s*-?\s*["']?run["']?\s*:/.test(withoutComment)) continue;
+
+    lines.push(withoutComment);
+  }
+
+  return lines.join('\n');
+};
+
 const extractActionRefs = (workflow: string) =>
-  [...workflow.matchAll(usesKeyPattern)].map((match) => match[1] ?? match[2] ?? match[3]);
+  [...executableYaml(workflow).matchAll(usesKeyPattern)].map(
+    (match) => match[1] ?? match[2] ?? match[3],
+  );
 
 const expectImmutableExternalActions = (workflow: string, source: string) => {
   for (const actionRef of extractActionRefs(workflow)) {
@@ -46,6 +92,21 @@ describe('GitHub workflow action pinning policy', () => {
       `actions/upload-artifact@${sha}`,
       './local-action',
     ]);
+    expectImmutableExternalActions(workflow, 'synthetic-workflow.yml');
+  });
+
+  it('ignores uses-like text in comments, run scalars, and block scalars', () => {
+    const workflow = [
+      '# uses: actions/checkout@v4',
+      'name: demo # uses: actions/setup-node@v4',
+      'run: echo "uses: actions/checkout@v4"',
+      'run: |',
+      '  echo "uses: actions/setup-node@v4"',
+      'env: |',
+      '  uses: actions/upload-artifact@v4',
+    ].join('\n');
+
+    expect(extractActionRefs(workflow)).toEqual([]);
     expectImmutableExternalActions(workflow, 'synthetic-workflow.yml');
   });
 
