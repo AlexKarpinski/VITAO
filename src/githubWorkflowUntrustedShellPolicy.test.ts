@@ -13,32 +13,56 @@ const normalizeGitHubExpressionAccess = (value: string) =>
 
 const stripYamlInlineComment = (value: string) => value.replace(/\s+#.*$/, '').trim();
 
+const decodeYamlKey = (raw: string) => {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return trimmed.slice(1, -1);
+    }
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/''/g, "'");
+  }
+  return trimmed;
+};
+
+const isBlockScalarHeader = (value: string) => /^[|>](?:[+-]?\d|\d[+-]?)?$/.test(value);
+
+const collectIndentedScalar = (lines: string[], startIndex: number, parentIndent: number) => {
+  const values: string[] = [];
+  let endIndex = startIndex;
+  for (let child = startIndex + 1; child < lines.length; child += 1) {
+    const childLine = lines[child];
+    const childTrimmed = childLine.trim();
+    const childIndent = childLine.match(/^\s*/)?.[0].length ?? 0;
+    if (childTrimmed && childIndent <= parentIndent) break;
+    if (childTrimmed) values.push(childTrimmed);
+    endIndex = child;
+  }
+  return { value: values.join('\n'), endIndex };
+};
+
 const extractRunScripts = (workflow: string) => {
   const scripts: string[] = [];
   const lines = workflow.split('\n');
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const match = line.match(/^(\s*)(?:-\s*)?run\s*:\s*(.*)$/);
-    if (!match) continue;
+    const match = line.match(/^(\s*)(?:-\s*)?((?:run)|(?:["']run["']))\s*:\s*(.*)$/);
+    if (!match || decodeYamlKey(match[2]) !== 'run') continue;
 
     const indent = match[1].length;
-    const value = stripYamlInlineComment(match[2]);
-    if (value && !/^[|>](?:[+-]?\d|\d[+-]?)?$/.test(value)) {
+    const value = stripYamlInlineComment(match[3]);
+    if (value && !isBlockScalarHeader(value)) {
       scripts.push(value);
       continue;
     }
 
-    const block: string[] = [];
-    for (let child = index + 1; child < lines.length; child += 1) {
-      const childLine = lines[child];
-      const childTrimmed = childLine.trim();
-      const childIndent = childLine.match(/^\s*/)?.[0].length ?? 0;
-      if (childTrimmed && childIndent <= indent) break;
-      if (childTrimmed) block.push(childTrimmed);
-      index = child;
-    }
-    scripts.push(block.join('\n'));
+    const block = collectIndentedScalar(lines, index, indent);
+    scripts.push(block.value);
+    index = block.endIndex;
   }
 
   return scripts;
@@ -54,24 +78,56 @@ const untrustedTextExpressions = [
   'github.event.review_comment.body',
 ];
 
+const untrustedParentExpressions = [
+  'github.event.issue',
+  'github.event.comment',
+  'github.event.pull_request',
+  'github.event.review',
+  'github.event.review_comment',
+];
+
 const containsUntrustedExpression = (value: string) => {
   const normalized = normalizeGitHubExpressionAccess(value);
-  return untrustedTextExpressions.some((expression) => normalized.includes(expression));
+  if (untrustedTextExpressions.some((expression) => normalized.includes(expression))) return true;
+
+  return untrustedParentExpressions.some((expression) => {
+    const escaped = expression.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:toJSON|toJson)\\s*\\(\\s*${escaped}\\s*\\)`).test(normalized);
+  });
 };
 
 const extractUntrustedEnvVars = (workflow: string) => {
   const vars = new Set<string>();
-  for (const line of workflow.split('\n')) {
-    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/);
+  const lines = workflow.split('\n');
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const match = line.match(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/);
     if (!match) continue;
-    if (containsUntrustedExpression(match[2])) vars.add(match[1]);
+
+    const indent = match[1].length;
+    const value = stripYamlInlineComment(match[3]);
+    if (value && !isBlockScalarHeader(value)) {
+      if (containsUntrustedExpression(value)) vars.add(match[2]);
+      continue;
+    }
+
+    if (isBlockScalarHeader(value)) {
+      const block = collectIndentedScalar(lines, index, indent);
+      if (containsUntrustedExpression(block.value)) vars.add(match[2]);
+      index = block.endIndex;
+    }
   }
+
   return vars;
 };
 
 const scriptReferencesVariable = (script: string, name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?:\\$${escaped}\\b|\\$\\{${escaped}(?::[-+?=][^}]*)?\\})`).test(script);
+  return new RegExp(
+    `(?:\\$${escaped}\\b|\\$\\{${escaped}(?::[-+?=][^}]*)?\\}|\\$env:${escaped}\\b)`,
+    'i',
+  ).test(script);
 };
 
 const expectNoUntrustedTextInShell = (workflow: string, source: string) => {
@@ -124,6 +180,18 @@ describe('GitHub workflow untrusted shell policy', () => {
     }
   });
 
+  it('rejects serialized parent event contexts', () => {
+    const unsafeWorkflows = [
+      'steps:\n  - run: echo "${{ toJSON(github.event.issue) }}"',
+      'steps:\n  - run: echo "${{ toJSON(github.event.comment) }}"',
+      'steps:\n  - run: echo "${{ toJSON(github.event.pull_request) }}"',
+    ];
+
+    for (const workflow of unsafeWorkflows) {
+      expect(() => expectNoUntrustedTextInShell(workflow, 'serialized-parent.yml')).toThrow();
+    }
+  });
+
   it('rejects untrusted text routed through environment variables into shell commands', () => {
     const unsafe = [
       'env:',
@@ -135,14 +203,38 @@ describe('GitHub workflow untrusted shell policy', () => {
     expect(() => expectNoUntrustedTextInShell(unsafe, 'env-unsafe.yml')).toThrow();
   });
 
-  it('parses commented YAML block-scalar run headers', () => {
+  it('rejects block-scalar environment values routed into shell commands', () => {
+    const unsafe = [
+      'env:',
+      '  CMD: >-',
+      '    ${{ github.event.comment.body }}',
+      'steps:',
+      '  - run: bash -c "$CMD"',
+    ].join('\n');
+
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'block-env-unsafe.yml')).toThrow();
+  });
+
+  it('recognizes PowerShell environment-variable access', () => {
+    const unsafe = [
+      'env:',
+      '  CMD: ${{ github.event.issue.body }}',
+      'steps:',
+      '  - shell: pwsh',
+      '    run: Invoke-Expression $env:CMD',
+    ].join('\n');
+
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'pwsh-env-unsafe.yml')).toThrow();
+  });
+
+  it('parses quoted and commented YAML run keys and block-scalar headers', () => {
     const unsafe = [
       'steps:',
-      '  - run: | # execute validation',
+      '  - "run": | # execute validation',
       '      printf "%s" "${{ github.event.issue.body }}"',
     ].join('\n');
 
     expect(extractRunScripts(unsafe)).toEqual(['printf "%s" "${{ github.event.issue.body }}"']);
-    expect(() => expectNoUntrustedTextInShell(unsafe, 'commented-block.yml')).toThrow();
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'quoted-run.yml')).toThrow();
   });
 });
