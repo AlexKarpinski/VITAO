@@ -8,6 +8,11 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
+const normalizeGitHubExpressionAccess = (value: string) =>
+  value.replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
+
+const stripYamlInlineComment = (value: string) => value.replace(/\s+#.*$/, '').trim();
+
 const extractRunScripts = (workflow: string) => {
   const scripts: string[] = [];
   const lines = workflow.split('\n');
@@ -18,8 +23,8 @@ const extractRunScripts = (workflow: string) => {
     if (!match) continue;
 
     const indent = match[1].length;
-    const value = match[2].trim();
-    if (value && !/^[|>][+-]?\d*$/.test(value)) {
+    const value = stripYamlInlineComment(match[2]);
+    if (value && !/^[|>](?:[+-]?\d|\d[+-]?)?$/.test(value)) {
       scripts.push(value);
       continue;
     }
@@ -49,10 +54,37 @@ const untrustedTextExpressions = [
   'github.event.review_comment.body',
 ];
 
+const containsUntrustedExpression = (value: string) => {
+  const normalized = normalizeGitHubExpressionAccess(value);
+  return untrustedTextExpressions.some((expression) => normalized.includes(expression));
+};
+
+const extractUntrustedEnvVars = (workflow: string) => {
+  const vars = new Set<string>();
+  for (const line of workflow.split('\n')) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/);
+    if (!match) continue;
+    if (containsUntrustedExpression(match[2])) vars.add(match[1]);
+  }
+  return vars;
+};
+
+const scriptReferencesVariable = (script: string, name: string) => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:\\$${escaped}\\b|\\$\\{${escaped}(?::[-+?=][^}]*)?\\})`).test(script);
+};
+
 const expectNoUntrustedTextInShell = (workflow: string, source: string) => {
+  const untrustedEnvVars = extractUntrustedEnvVars(workflow);
+
   for (const script of extractRunScripts(workflow)) {
-    for (const expression of untrustedTextExpressions) {
-      expect(script, `${source}: run step references untrusted ${expression}`).not.toContain(expression);
+    expect(containsUntrustedExpression(script), `${source}: run step directly references untrusted event text`).toBe(false);
+
+    for (const envVar of untrustedEnvVars) {
+      expect(
+        scriptReferencesVariable(script, envVar),
+        `${source}: run step executes untrusted event text through env ${envVar}`,
+      ).toBe(false);
     }
   }
 };
@@ -80,15 +112,37 @@ describe('GitHub workflow untrusted shell policy', () => {
     expect(extractRunScripts(safe)).toEqual(['npm test -- --run']);
   });
 
-  it('rejects untrusted event text in inline and block shell commands', () => {
+  it('rejects direct dot and bracket access to untrusted event text', () => {
     const unsafeWorkflows = [
       'steps:\n  - run: echo "${{ github.event.comment.body }}"',
-      'steps:\n  - run: |\n      printf "%s" "${{ github.event.issue.body }}"',
-      'steps:\n  - run: >-\n      echo "${{ github.event.pull_request.title }}"',
+      'steps:\n  - run: echo "${{ github.event.comment[\'body\'] }}"',
+      'steps:\n  - run: echo "${{ github[\'event\'][\'issue\'][\'body\'] }}"',
     ];
 
     for (const workflow of unsafeWorkflows) {
       expect(() => expectNoUntrustedTextInShell(workflow, 'unsafe.yml')).toThrow();
     }
+  });
+
+  it('rejects untrusted text routed through environment variables into shell commands', () => {
+    const unsafe = [
+      'env:',
+      '  CMD: ${{ github.event.comment.body }}',
+      'steps:',
+      '  - run: bash -c "$CMD"',
+    ].join('\n');
+
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'env-unsafe.yml')).toThrow();
+  });
+
+  it('parses commented YAML block-scalar run headers', () => {
+    const unsafe = [
+      'steps:',
+      '  - run: | # execute validation',
+      '      printf "%s" "${{ github.event.issue.body }}"',
+    ].join('\n');
+
+    expect(extractRunScripts(unsafe)).toEqual(['printf "%s" "${{ github.event.issue.body }}"']);
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'commented-block.yml')).toThrow();
   });
 });
