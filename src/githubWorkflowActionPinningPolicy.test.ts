@@ -35,10 +35,11 @@ const decodeYamlKey = (rawKey: string) => {
 const blockScalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*$/;
 
 const extractActionRefs = (workflow: string) => {
-  const refs: string[] = []; const lines = workflow.split('\n'); const scalarAnchors = new Map<string, string>(); let ignoredBlockIndent: number | null = null;
+  const refs: string[] = []; const lines = workflow.split('\n'); const scalarAnchors = new Map<string, string>(); let ignoredBlockIndent: number | null = null; let inFlowSteps = false;
   const resolveYamlKey = (rawKey: string) => { const decoded = decodeYamlKey(rawKey); return decoded.startsWith('*') ? scalarAnchors.get(decoded.slice(1)) ?? decoded : decoded; };
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index]; const indent = rawLine.match(/^\s*/)?.[0].length ?? 0; const withoutComment = stripYamlComment(rawLine); const trimmed = withoutComment.trim();
+    if (/^\s*steps\s*:\s*\[/.test(withoutComment)) inFlowSteps = true;
     if (ignoredBlockIndent !== null) { if (!trimmed || indent > ignoredBlockIndent) continue; ignoredBlockIndent = null; }
     if (!trimmed) continue;
     const scalarAnchor = withoutComment.match(/:\s*&([A-Za-z0-9_-]+)\s+("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+)\s*$/); if (scalarAnchor) scalarAnchors.set(scalarAnchor[1], unquote(scalarAnchor[2]));
@@ -58,14 +59,15 @@ const extractActionRefs = (workflow: string) => {
     }
     if (/:\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*$/.test(withoutComment)) { ignoredBlockIndent = indent; continue; }
     if (/^\s*-?\s*["']?run["']?\s*:/.test(withoutComment)) continue;
-    // Only treat flow entries as actions when the line is structurally a step/sequence item; arbitrary env/with/metadata maps are data.
-    const flowContext = /^\s*(?:-\s*\{|steps\s*:\s*\[)/.test(withoutComment);
+    // Track flow-style steps sequences across physical lines so action entries remain structural steps until the closing bracket.
+    const flowContext = inFlowSteps || /^\s*-\s*\{/.test(withoutComment);
     if (flowContext) {
       const flowEntryPattern = /(?=(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*:\s*("[^"]+"|'[^']+'|[^,}\s]+))/g;
       for (const entry of withoutComment.matchAll(flowEntryPattern)) if (resolveYamlKey(entry[1]) === 'uses') refs.push(unquote(entry[2]));
       const multiline = withoutComment.match(/(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*:\s*$/);
       if (multiline && resolveYamlKey(multiline[1]) === 'uses') for (let child = index + 1; child < lines.length; child += 1) { const v = stripYamlComment(lines[child]).trim(); if (!v) continue; refs.push(unquote(v.replace(/[}\],]+\s*$/, ''))); index = child; break; }
     }
+    if (inFlowSteps && /\]/.test(withoutComment)) inFlowSteps = false;
   }
   return refs;
 };
@@ -75,4 +77,5 @@ describe('GitHub workflow action pinning policy', () => {
   it('pins every external action in every workflow to an immutable full commit SHA', () => { expect(workflowFiles.length).toBeGreaterThan(0); for (const file of workflowFiles) expectImmutableExternalActions(readFileSync(join(workflowsDir, file), 'utf8'), file); });
   it('accepts both valid block-scalar indicator orders while enforcing immutable refs', () => { const sha='0123456789abcdef0123456789abcdef01234567'; for (const header of ['>2+','>+2','|2-','|-2']) { expectImmutableExternalActions(`uses: ${header}\n  actions/checkout@${sha}`, 'block.yml'); expect(() => expectImmutableExternalActions(`uses: ${header}\n  actions/checkout@v4`, 'block.yml')).toThrow(); } });
   it('ignores uses-like flow keys in unrelated mappings but enforces actual flow steps', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const safe=[`env: { uses: actions/checkout@v4 }`,`with: { uses: actions/cache@v4 }`,`metadata: { uses: actions/setup-node@v4 }`,`steps: [{uses: actions/checkout@${sha}}]`].join('\n'); expect(extractActionRefs(safe)).toEqual([`actions/checkout@${sha}`]); expectImmutableExternalActions(safe,'flow.yml'); expect(() => expectImmutableExternalActions('steps: [{uses: actions/checkout@v4}]','flow.yml')).toThrow(); });
+  it('preserves flow-step context across multiple physical lines', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=[`steps: [`,`  { uses: actions/checkout@${sha} },`,`  { uses: actions/setup-node@${sha} }`,`]`].join('\n'); expect(extractActionRefs(pinned)).toEqual([`actions/checkout@${sha}`,`actions/setup-node@${sha}`]); expectImmutableExternalActions(pinned,'multiline-flow.yml'); const mutable=['steps: [','  { uses: actions/checkout@v4 },',']'].join('\n'); expect(() => expectImmutableExternalActions(mutable,'multiline-flow.yml')).toThrow(); });
 });
