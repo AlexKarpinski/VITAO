@@ -16,7 +16,7 @@ const normalizeKey = (raw: string) => {
 };
 
 const untrusted = (value: string) =>
-  /github\.event\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/.test(value);
+  /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/.test(value);
 
 const extractTaintedEnv = (workflow: string) => {
   const tainted = new Set<string>();
