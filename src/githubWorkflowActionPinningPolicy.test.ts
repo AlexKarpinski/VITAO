@@ -172,6 +172,18 @@ const extractActionRefs = (workflow: string) => {
     for (const flowEntry of withoutComment.matchAll(flowEntryPattern)) {
       if (resolveYamlKey(flowEntry[1]) === 'uses') refs.push(unquote(flowEntry[2]));
     }
+
+    const multilineFlowKeyPattern = /(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*:\s*$/;
+    const multilineFlowKey = withoutComment.match(multilineFlowKeyPattern);
+    if (multilineFlowKey && resolveYamlKey(multilineFlowKey[1]) === 'uses') {
+      for (let child = index + 1; child < lines.length; child += 1) {
+        const childValue = stripYamlComment(lines[child]).trim();
+        if (!childValue) continue;
+        refs.push(unquote(childValue.replace(/[}\],]+\s*$/, '')));
+        index = child;
+        break;
+      }
+    }
   }
 
   return refs;
@@ -198,6 +210,8 @@ describe('GitHub workflow action pinning policy', () => {
     const workflow = [
       `- { name: Checkout, uses: actions/checkout@${sha} }`,
       `steps: [{uses: actions/cache@${sha}}, {uses: actions/setup-node@${sha}}]`,
+      `steps: [{uses:`,
+      `  actions/cache@${sha}}]`,
       `steps: [{"\\u0075ses": actions/upload-artifact@${sha}}]`,
       `name: &uses uses`,
       `- *uses: actions/download-artifact@${sha}`,
@@ -222,6 +236,7 @@ describe('GitHub workflow action pinning policy', () => {
       `actions/checkout@${sha}`,
       `actions/cache@${sha}`,
       `actions/setup-node@${sha}`,
+      `actions/cache@${sha}`,
       `actions/upload-artifact@${sha}`,
       `actions/download-artifact@${sha}`,
       `actions/setup-node@${sha}`,
@@ -259,6 +274,7 @@ describe('GitHub workflow action pinning policy', () => {
     for (const workflow of [
       '- { name: Checkout, uses: actions/checkout@v4 }',
       'steps: [{uses: owner/safe@0123456789abcdef0123456789abcdef01234567}, {uses: owner/unsafe@v1}]',
+      'steps: [{uses:\n  actions/checkout@v4}]',
       'steps: [{"\\u0075ses": actions/checkout@v4}]',
       'name: &uses uses\n- *uses: actions/checkout@v4',
       "- 'uses': actions/setup-node@v4",
