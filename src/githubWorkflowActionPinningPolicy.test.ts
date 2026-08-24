@@ -36,11 +36,24 @@ const unquote = (value: string) => {
   return trimmed;
 };
 
+const yamlDoubleQuotedToJson = (key: string) =>
+  key
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_match, hex: string) => `\\u00${hex}`)
+    .replace(/\\U([0-9a-fA-F]{8})/g, (_match, hex: string) => {
+      const codePoint = Number.parseInt(hex, 16);
+      if (!Number.isFinite(codePoint) || codePoint > 0x10ffff) return _match;
+      if (codePoint <= 0xffff) return `\\u${codePoint.toString(16).padStart(4, '0')}`;
+      const adjusted = codePoint - 0x10000;
+      const high = 0xd800 + (adjusted >> 10);
+      const low = 0xdc00 + (adjusted & 0x3ff);
+      return `\\u${high.toString(16)}\\u${low.toString(16)}`;
+    });
+
 const decodeYamlKey = (rawKey: string) => {
   const key = rawKey.trim();
   if (key.startsWith('"') && key.endsWith('"')) {
     try {
-      return JSON.parse(key);
+      return JSON.parse(yamlDoubleQuotedToJson(key));
     } catch {
       return key.slice(1, -1);
     }
@@ -191,6 +204,8 @@ describe('GitHub workflow action pinning policy', () => {
       `- 'uses': 'actions/setup-node@${sha}'`,
       `- "uses": "actions/upload-artifact@${sha}"`,
       `- "\\u0075ses": actions/cache@${sha}`,
+      `- "\\x75ses": actions/cache@${sha}`,
+      `- "\\U00000075ses": actions/cache@${sha}`,
       '- ? uses',
       `  : actions/checkout@${sha}`,
       '- ? uses',
@@ -211,6 +226,8 @@ describe('GitHub workflow action pinning policy', () => {
       `actions/download-artifact@${sha}`,
       `actions/setup-node@${sha}`,
       `actions/upload-artifact@${sha}`,
+      `actions/cache@${sha}`,
+      `actions/cache@${sha}`,
       `actions/cache@${sha}`,
       `actions/checkout@${sha}`,
       `actions/setup-node@${sha}`,
@@ -247,6 +264,8 @@ describe('GitHub workflow action pinning policy', () => {
       "- 'uses': actions/setup-node@v4",
       '- "uses": "actions/upload-artifact@v4"',
       '- "\\u0075ses": actions/cache@v4',
+      '- "\\x75ses": actions/cache@v4',
+      '- "\\U00000075ses": actions/cache@v4',
       '- ? uses\n  : actions/checkout@v4',
       '- ? uses\n  :\n    actions/checkout@v4',
       'uses: >-\n  actions/cache@v4',
