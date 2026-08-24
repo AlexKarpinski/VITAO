@@ -12,24 +12,33 @@ const normalizeAccess = (value: string) =>
     .replace(/\?\./g, '.')
     .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
+const untrustedParents = [
+  'github.event.issue',
+  'github.event.comment',
+  'github.event.pull_request',
+  'github.event.review',
+  'github.event.review_comment',
+  'context.payload.issue',
+  'context.payload.comment',
+  'context.payload.pull_request',
+  'context.payload.review',
+  'context.payload.review_comment',
+];
+
 const containsUntrustedPayload = (value: string) => {
   const normalized = normalizeAccess(value);
-  return [
-    'github.event.issue.title',
-    'github.event.issue.body',
-    'github.event.comment.body',
-    'github.event.pull_request.title',
-    'github.event.pull_request.body',
-    'github.event.review.body',
-    'github.event.review_comment.body',
-    'context.payload.issue.title',
-    'context.payload.issue.body',
-    'context.payload.comment.body',
-    'context.payload.pull_request.title',
-    'context.payload.pull_request.body',
-    'context.payload.review.body',
-    'context.payload.review_comment.body',
-  ].some((expression) => normalized.includes(expression));
+  const leaves = [
+    'github.event.issue.title', 'github.event.issue.body', 'github.event.comment.body',
+    'github.event.pull_request.title', 'github.event.pull_request.body', 'github.event.review.body',
+    'github.event.review_comment.body', 'context.payload.issue.title', 'context.payload.issue.body',
+    'context.payload.comment.body', 'context.payload.pull_request.title', 'context.payload.pull_request.body',
+    'context.payload.review.body', 'context.payload.review_comment.body',
+  ];
+  if (leaves.some((expression) => normalized.includes(expression))) return true;
+  return untrustedParents.some((parent) => {
+    const escaped = parent.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:const\\s*\\{[^}]+\\}\\s*=\\s*${escaped}\\b|(?:toJSON|toJson)\\s*\\(\\s*${escaped}\\s*\\))`).test(normalized);
+  });
 };
 
 const isBlockScalarHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(value.trim());
@@ -84,12 +93,16 @@ const stepOutputPattern = (stepId: string) => {
   return new RegExp(`steps\\.${escaped}\\.outputs(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[['"][^'"]+['"]\\])`, 'i');
 };
 
+const envReferencePattern = (name: string) => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:\\$${escaped}\\b|\\$\\{${escaped}\\}|\\$env:${escaped}\\b|env\\.${escaped}\\b)`, 'i');
+};
+
 const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>) => {
-  const vars = new Set<string>();
+  const entries: Array<{ name: string; value: string }> = [];
   const lines = workflow.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const match = line.match(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/);
+    const match = lines[index].match(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/);
     if (!match) continue;
     const indent = match[1].length;
     let value = normalizeAccess(match[3]);
@@ -98,8 +111,23 @@ const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>) =>
       value = normalizeAccess(block.value);
       index = block.endIndex;
     }
-    if (containsUntrustedPayload(value)) vars.add(match[2]);
-    if ([...taintedStepIds].some((id) => stepOutputPattern(id).test(value))) vars.add(match[2]);
+    entries.push({ name: match[2], value });
+  }
+
+  const vars = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const { name, value } of entries) {
+      if (vars.has(name)) continue;
+      const tainted = containsUntrustedPayload(value)
+        || [...taintedStepIds].some((id) => stepOutputPattern(id).test(value))
+        || [...vars].some((other) => envReferencePattern(other).test(value));
+      if (tainted) {
+        vars.add(name);
+        changed = true;
+      }
+    }
   }
   return vars;
 };
@@ -108,8 +136,7 @@ const extractRunValues = (workflow: string) => {
   const values: string[] = [];
   const lines = workflow.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const match = line.match(/^(\s*)(?:-\s*)?["']?run["']?\s*:\s*(.*)$/);
+    const match = lines[index].match(/^(\s*)(?:-\s*)?["']?run["']?\s*:\s*(.*)$/);
     if (!match) continue;
     const indent = match[1].length;
     let value = match[2];
@@ -126,91 +153,55 @@ const extractRunValues = (workflow: string) => {
 const assertNoTransitiveUntrustedShell = (workflow: string, source: string) => {
   const taintedStepIds = extractTaintedStepIds(workflow);
   const taintedEnvVars = extractTaintedEnvVars(workflow, taintedStepIds);
-
   for (const run of extractRunValues(workflow)) {
     expect(containsUntrustedPayload(run), `${source}: direct untrusted payload in run`).toBe(false);
     for (const id of taintedStepIds) {
       expect(stepOutputPattern(id).test(normalizeAccess(run)), `${source}: tainted output from ${id} reaches run`).toBe(false);
     }
     for (const name of taintedEnvVars) {
-      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const usesEnv = new RegExp(`(?:\\$${escaped}\\b|\\$\\{${escaped}\\}|\\$env:${escaped}\\b|env\\.${escaped}\\b)`, 'i').test(normalizeAccess(run));
-      expect(usesEnv, `${source}: tainted env ${name} reaches run`).toBe(false);
+      expect(envReferencePattern(name).test(normalizeAccess(run)), `${source}: tainted env ${name} reaches run`).toBe(false);
     }
   }
 };
 
 describe('GitHub workflow transitive untrusted shell policy', () => {
   it('recognizes optional-chained context payload text', () => {
-    const unsafe = [
-      'steps:',
-      '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '    id: capture',
-      '    with:',
-      '      script: return context.payload.comment?.body',
-      '  - run: bash -c "${{ steps.capture.outputs.result }}"',
-    ].join('\n');
+    const unsafe = ['steps:', '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    id: capture', '    with:', '      script: return context.payload.comment?.body', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'optional-chain.yml')).toThrow();
   });
 
   it('tracks a tainted step id regardless of mapping-key order', () => {
-    const unsafe = [
-      'steps:',
-      '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '    with:',
-      '      script: return context.payload.comment.body',
-      '    id: capture',
-      '  - run: bash -c "${{ steps.capture.outputs.result }}"',
-    ].join('\n');
+    const unsafe = ['steps:', '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '    id: capture', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'id-order.yml')).toThrow();
   });
 
   it('propagates tainted step outputs through env before shell execution', () => {
-    const unsafe = [
-      'steps:',
-      '  - id: capture',
-      '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '    with:',
-      '      script: return context.payload.comment.body',
-      '  - env:',
-      '      CMD: ${{ steps.capture.outputs.result }}',
-      '    run: bash -c "$CMD"',
-    ].join('\n');
+    const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'output-env.yml')).toThrow();
   });
 
   it('propagates tainted step outputs through block-scalar env values', () => {
-    const unsafe = [
-      'steps:',
-      '  - id: capture',
-      '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '    with:',
-      '      script: return context.payload.comment.body',
-      '  - env:',
-      '      CMD: >-',
-      '        ${{ steps.capture.outputs.result }}',
-      '    run: bash -c "$CMD"',
-    ].join('\n');
+    const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: >-', '        ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'block-output-env.yml')).toThrow();
   });
 
   it('inspects block-scalar run bodies for tainted step outputs', () => {
-    const unsafe = [
-      'steps:',
-      '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '    id: capture',
-      '    with:',
-      '      script: return context.payload.comment?.body',
-      '  - run: |',
-      '      bash -c "${{ steps.capture.outputs.result }}"',
-    ].join('\n');
+    const unsafe = ['steps:', '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    id: capture', '    with:', '      script: return context.payload.comment?.body', '  - run: |', '      bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'block-run.yml')).toThrow();
+  });
+
+  it('propagates taint across environment-variable aliases', () => {
+    const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  CMD: $RAW', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'env-alias.yml')).toThrow();
+  });
+
+  it('taints github-script outputs derived by destructuring untrusted parent payloads', () => {
+    const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: |', '        const { body } = context.payload.comment;', '        return body;', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'destructure.yml')).toThrow();
   });
 
   it('checks every repository workflow for these transitive paths', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
-    for (const workflowFile of workflowFiles) {
-      assertNoTransitiveUntrustedShell(readFileSync(join(workflowsDir, workflowFile), 'utf8'), workflowFile);
-    }
+    for (const workflowFile of workflowFiles) assertNoTransitiveUntrustedShell(readFileSync(join(workflowsDir, workflowFile), 'utf8'), workflowFile);
   });
 });
