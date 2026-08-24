@@ -11,7 +11,46 @@ const workflowFiles = readdirSync(workflowsDir)
 const normalizeGitHubExpressionAccess = (value: string) =>
   value.replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
-const stripYamlInlineComment = (value: string) => value.replace(/\s+#.*$/, '').trim();
+const stripYamlInlineComment = (value: string) => {
+  let singleQuoted = false;
+  let doubleQuoted = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+
+    if (singleQuoted) {
+      if (char === "'" && value[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      if (char === "'") singleQuoted = false;
+      continue;
+    }
+
+    if (doubleQuoted) {
+      if (char === '\\') {
+        index += 1;
+        continue;
+      }
+      if (char === '"') doubleQuoted = false;
+      continue;
+    }
+
+    if (char === "'") {
+      singleQuoted = true;
+      continue;
+    }
+    if (char === '"') {
+      doubleQuoted = true;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /\s/.test(value[index - 1]))) {
+      return value.slice(0, index).trim();
+    }
+  }
+
+  return value.trim();
+};
 
 const decodeYamlKey = (raw: string) => {
   const trimmed = raw.trim();
@@ -28,7 +67,8 @@ const decodeYamlKey = (raw: string) => {
   return trimmed;
 };
 
-const isBlockScalarHeader = (value: string) => /^[|>](?:[+-]?\d|\d[+-]?)?$/.test(value);
+const isBlockScalarHeader = (value: string) =>
+  /^[|>](?:(?:[+-])?(?:[1-9])?|(?:[1-9])(?:[+-])?)$/.test(value);
 
 const collectIndentedScalar = (lines: string[], startIndex: number, parentIndent: number) => {
   const values: string[] = [];
@@ -124,10 +164,11 @@ const extractUntrustedEnvVars = (workflow: string) => {
 
 const scriptReferencesVariable = (script: string, name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const normalized = normalizeGitHubExpressionAccess(script);
   return new RegExp(
-    `(?:\\$${escaped}\\b|\\$\\{${escaped}(?::[-+?=][^}]*)?\\}|\\$env:${escaped}\\b)`,
+    `(?:\\$${escaped}\\b|\\$\\{${escaped}(?::[-+?=][^}]*)?\\}|\\$env:${escaped}\\b|\\$\\{\\{\\s*env\\.${escaped}\\s*\\}\\})`,
     'i',
-  ).test(script);
+  ).test(normalized);
 };
 
 const expectNoUntrustedTextInShell = (workflow: string, source: string) => {
@@ -203,6 +244,17 @@ describe('GitHub workflow untrusted shell policy', () => {
     expect(() => expectNoUntrustedTextInShell(unsafe, 'env-unsafe.yml')).toThrow();
   });
 
+  it('rejects GitHub env-context interpolation of tainted variables', () => {
+    const unsafe = [
+      'env:',
+      '  CMD: ${{ github.event.comment.body }}',
+      'steps:',
+      '  - run: bash -c "${{ env.CMD }}"',
+    ].join('\n');
+
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'github-env-unsafe.yml')).toThrow();
+  });
+
   it('rejects block-scalar environment values routed into shell commands', () => {
     const unsafe = [
       'env:',
@@ -236,5 +288,23 @@ describe('GitHub workflow untrusted shell policy', () => {
 
     expect(extractRunScripts(unsafe)).toEqual(['printf "%s" "${{ github.event.issue.body }}"']);
     expect(() => expectNoUntrustedTextInShell(unsafe, 'quoted-run.yml')).toThrow();
+  });
+
+  it('accepts chomping-only YAML block scalar headers', () => {
+    const unsafe = [
+      'steps:',
+      '  - run: >-',
+      '      printf "%s" "${{ github.event.issue.body }}"',
+    ].join('\n');
+
+    expect(extractRunScripts(unsafe)).toEqual(['printf "%s" "${{ github.event.issue.body }}"']);
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'chomping-run.yml')).toThrow();
+  });
+
+  it('preserves hashes inside quoted YAML run scalars', () => {
+    const unsafe = 'steps:\n  - run: \'echo " # ${{ github.event.comment.body }}"\'';
+
+    expect(extractRunScripts(unsafe)).toEqual(['\'echo " # ${{ github.event.comment.body }}"\'']);
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'quoted-hash-run.yml')).toThrow();
   });
 });
