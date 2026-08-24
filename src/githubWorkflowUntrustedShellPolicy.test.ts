@@ -84,6 +84,24 @@ const collectIndentedScalar = (lines: string[], startIndex: number, parentIndent
   return { value: values.join('\n'), endIndex };
 };
 
+const collectPlainScalarContinuation = (lines: string[], startIndex: number, parentIndent: number) => {
+  const values: string[] = [];
+  let endIndex = startIndex;
+
+  for (let child = startIndex + 1; child < lines.length; child += 1) {
+    const childLine = lines[child];
+    const childTrimmed = childLine.trim();
+    const childIndent = childLine.match(/^\s*/)?.[0].length ?? 0;
+    if (!childTrimmed) break;
+    if (childIndent < parentIndent + 2) break;
+    if (childIndent === parentIndent + 2 && /^(?:["']?[A-Za-z_][A-Za-z0-9_-]*["']?)\s*:/.test(childTrimmed)) break;
+    values.push(childTrimmed);
+    endIndex = child;
+  }
+
+  return { value: values.join('\n'), endIndex };
+};
+
 const extractRunScripts = (workflow: string) => {
   const scripts: string[] = [];
   const lines = workflow.split('\n');
@@ -96,7 +114,9 @@ const extractRunScripts = (workflow: string) => {
     const indent = match[1].length;
     const value = stripYamlInlineComment(match[3]);
     if (value && !isBlockScalarHeader(value)) {
-      scripts.push(value);
+      const continuation = collectPlainScalarContinuation(lines, index, indent);
+      scripts.push([value, continuation.value].filter(Boolean).join('\n'));
+      index = continuation.endIndex;
       continue;
     }
 
@@ -162,6 +182,30 @@ const extractUntrustedEnvVars = (workflow: string) => {
   return vars;
 };
 
+const extractUntrustedStepIds = (workflow: string) => {
+  const ids = new Set<string>();
+  const lines = workflow.split('\n');
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(/^(\s*)-\s+id\s*:\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$/);
+    if (!match) continue;
+
+    const stepIndent = match[1].length;
+    const stepLines = [lines[index]];
+    for (let child = index + 1; child < lines.length; child += 1) {
+      const childLine = lines[child];
+      const childTrimmed = childLine.trim();
+      const childIndent = childLine.match(/^\s*/)?.[0].length ?? 0;
+      if (childTrimmed && childIndent <= stepIndent && /^\s*-\s+/.test(childLine)) break;
+      stepLines.push(childLine);
+    }
+
+    if (containsUntrustedExpression(stepLines.join('\n'))) ids.add(match[2]);
+  }
+
+  return ids;
+};
+
 const scriptReferencesVariable = (script: string, name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const normalized = normalizeGitHubExpressionAccess(script);
@@ -171,8 +215,15 @@ const scriptReferencesVariable = (script: string, name: string) => {
   ).test(normalized);
 };
 
+const scriptReferencesStepOutput = (script: string, stepId: string) => {
+  const escaped = stepId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const normalized = normalizeGitHubExpressionAccess(script);
+  return new RegExp(`\\$\\{\\{\\s*steps\\.${escaped}\\.outputs(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[['"][^'"]+['"]\\])\\s*\\}\\}`, 'i').test(normalized);
+};
+
 const expectNoUntrustedTextInShell = (workflow: string, source: string) => {
   const untrustedEnvVars = extractUntrustedEnvVars(workflow);
+  const untrustedStepIds = extractUntrustedStepIds(workflow);
 
   for (const script of extractRunScripts(workflow)) {
     expect(containsUntrustedExpression(script), `${source}: run step directly references untrusted event text`).toBe(false);
@@ -181,6 +232,13 @@ const expectNoUntrustedTextInShell = (workflow: string, source: string) => {
       expect(
         scriptReferencesVariable(script, envVar),
         `${source}: run step executes untrusted event text through env ${envVar}`,
+      ).toBe(false);
+    }
+
+    for (const stepId of untrustedStepIds) {
+      expect(
+        scriptReferencesStepOutput(script, stepId),
+        `${source}: run step executes untrusted event text through outputs of step ${stepId}`,
       ).toBe(false);
     }
   }
@@ -306,5 +364,30 @@ describe('GitHub workflow untrusted shell policy', () => {
 
     expect(extractRunScripts(unsafe)).toEqual(['\'echo " # ${{ github.event.comment.body }}"\'']);
     expect(() => expectNoUntrustedTextInShell(unsafe, 'quoted-hash-run.yml')).toThrow();
+  });
+
+  it('rejects untrusted text routed through action step outputs', () => {
+    const unsafe = [
+      'steps:',
+      '  - id: capture',
+      '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '    with:',
+      '      result-encoding: string',
+      '      script: return context.payload.comment.body;',
+      '  - run: bash -c "${{ steps.capture.outputs.result }}"',
+    ].join('\n');
+
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'step-output-unsafe.yml')).toThrow();
+  });
+
+  it('parses multiline plain run scalars', () => {
+    const unsafe = [
+      'steps:',
+      '  - run: echo safe',
+      '      ${{ github.event.comment.body }}',
+    ].join('\n');
+
+    expect(extractRunScripts(unsafe)).toEqual(['echo safe\n${{ github.event.comment.body }}']);
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'multiline-plain-run.yml')).toThrow();
   });
 });
