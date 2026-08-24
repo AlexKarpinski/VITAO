@@ -1,4 +1,11 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+
+const workflowsDir = '.github/workflows';
+const workflowFiles = readdirSync(workflowsDir)
+  .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
+  .sort();
 
 const normalizeKey = (raw: string) => {
   const value = raw.trim();
@@ -90,7 +97,29 @@ const expectNoReusableWorkflowInputBypass = (caller: string, callee: string) => 
   }
 };
 
+const readCheckedInWorkflows = () =>
+  new Map(workflowFiles.map((name) => [name, readFileSync(join(workflowsDir, name), 'utf8')]));
+
 describe('GitHub workflow untrusted shell boundary policy', () => {
+  it('enforces boundary checks across every checked-in workflow and local reusable-workflow edge', () => {
+    const workflows = readCheckedInWorkflows();
+    expect(workflows.size).toBeGreaterThan(0);
+
+    for (const workflow of workflows.values()) {
+      expectNoQuotedEnvOrCmdBypass(workflow);
+      expectNoCrossJobOutputBypass(workflow);
+    }
+
+    for (const [callerName, caller] of workflows) {
+      for (const match of caller.matchAll(/uses\s*:\s*\.\/\.github\/workflows\/([^\s#"']+)/g)) {
+        const calleeName = match[1];
+        const callee = workflows.get(calleeName);
+        expect(callee, `${callerName} references missing local reusable workflow ${calleeName}`).toBeDefined();
+        expectNoReusableWorkflowInputBypass(caller, callee!);
+      }
+    }
+  });
+
   it('rejects quoted tainted env keys executed by cmd.exe percent expansion', () => {
     const unsafe = [
       'env:',
