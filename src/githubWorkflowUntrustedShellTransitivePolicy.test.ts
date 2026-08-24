@@ -12,17 +12,19 @@ const normalizeAccess = (value: string) =>
     .replace(/\?\./g, '.')
     .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
+const decodeYamlScalar = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try { return JSON.parse(trimmed) as string; } catch { return trimmed; }
+  }
+  return trimmed;
+};
+
 const untrustedParents = [
-  'github.event.issue',
-  'github.event.comment',
-  'github.event.pull_request',
-  'github.event.review',
-  'github.event.review_comment',
-  'context.payload.issue',
-  'context.payload.comment',
-  'context.payload.pull_request',
-  'context.payload.review',
-  'context.payload.review_comment',
+  'github.event.issue', 'github.event.comment', 'github.event.pull_request', 'github.event.review',
+  'github.event.review_comment', 'context.payload.issue', 'context.payload.comment',
+  'context.payload.pull_request', 'context.payload.review', 'context.payload.review_comment',
 ];
 
 const containsUntrustedPayload = (value: string) => {
@@ -82,8 +84,9 @@ const collectStepBlocks = (workflow: string) => {
 const extractTaintedStepIds = (workflow: string) => {
   const ids = new Set<string>();
   for (const block of collectStepBlocks(workflow)) {
-    const id = block.match(/^\s*(?:-\s+)?id\s*:\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$/m)?.[1];
-    if (id && containsUntrustedPayload(block)) ids.add(id);
+    const rawId = block.match(/^\s*(?:-\s+)?id\s*:\s*(.+?)\s*$/m)?.[1];
+    const id = rawId ? decodeYamlScalar(rawId) : undefined;
+    if (id && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(id) && containsUntrustedPayload(block)) ids.add(id);
   }
   return ids;
 };
@@ -102,18 +105,19 @@ const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>) =>
   const entries: Array<{ name: string; value: string }> = [];
   const lines = workflow.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/);
+    const match = lines[index].match(/^(\s*)((?:[A-Za-z_][A-Za-z0-9_]*|'(?:[^']|'')+'|"(?:[^"\\]|\\.)+"))\s*:\s*(.*)$/);
     if (!match) continue;
     const indent = match[1].length;
+    const name = decodeYamlScalar(match[2]);
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
     let value = normalizeAccess(match[3]);
     if (isBlockScalarHeader(value)) {
       const block = collectIndentedValue(lines, index, indent);
       value = normalizeAccess(block.value);
       index = block.endIndex;
     }
-    entries.push({ name: match[2], value });
+    entries.push({ name, value });
   }
-
   const vars = new Set<string>();
   let changed = true;
   while (changed) {
@@ -123,10 +127,7 @@ const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>) =>
       const tainted = containsUntrustedPayload(value)
         || [...taintedStepIds].some((id) => stepOutputPattern(id).test(value))
         || [...vars].some((other) => envReferencePattern(other).test(value));
-      if (tainted) {
-        vars.add(name);
-        changed = true;
-      }
+      if (tainted) { vars.add(name); changed = true; }
     }
   }
   return vars;
@@ -155,12 +156,8 @@ const assertNoTransitiveUntrustedShell = (workflow: string, source: string) => {
   const taintedEnvVars = extractTaintedEnvVars(workflow, taintedStepIds);
   for (const run of extractRunValues(workflow)) {
     expect(containsUntrustedPayload(run), `${source}: direct untrusted payload in run`).toBe(false);
-    for (const id of taintedStepIds) {
-      expect(stepOutputPattern(id).test(normalizeAccess(run)), `${source}: tainted output from ${id} reaches run`).toBe(false);
-    }
-    for (const name of taintedEnvVars) {
-      expect(envReferencePattern(name).test(normalizeAccess(run)), `${source}: tainted env ${name} reaches run`).toBe(false);
-    }
+    for (const id of taintedStepIds) expect(stepOutputPattern(id).test(normalizeAccess(run)), `${source}: tainted output from ${id} reaches run`).toBe(false);
+    for (const name of taintedEnvVars) expect(envReferencePattern(name).test(normalizeAccess(run)), `${source}: tainted env ${name} reaches run`).toBe(false);
   }
 };
 
@@ -169,37 +166,38 @@ describe('GitHub workflow transitive untrusted shell policy', () => {
     const unsafe = ['steps:', '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    id: capture', '    with:', '      script: return context.payload.comment?.body', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'optional-chain.yml')).toThrow();
   });
-
   it('tracks a tainted step id regardless of mapping-key order', () => {
     const unsafe = ['steps:', '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '    id: capture', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'id-order.yml')).toThrow();
   });
-
   it('propagates tainted step outputs through env before shell execution', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'output-env.yml')).toThrow();
   });
-
   it('propagates tainted step outputs through block-scalar env values', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: >-', '        ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'block-output-env.yml')).toThrow();
   });
-
   it('inspects block-scalar run bodies for tainted step outputs', () => {
     const unsafe = ['steps:', '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    id: capture', '    with:', '      script: return context.payload.comment?.body', '  - run: |', '      bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'block-run.yml')).toThrow();
   });
-
   it('propagates taint across environment-variable aliases', () => {
     const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  CMD: $RAW', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'env-alias.yml')).toThrow();
   });
-
   it('taints github-script outputs derived by destructuring untrusted parent payloads', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: |', '        const { body } = context.payload.comment;', '        return body;', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'destructure.yml')).toThrow();
   });
-
+  it('decodes quoted environment keys before tracing taint', () => {
+    const unsafe = ['env:', '  "CMD": ${{ github.event.comment.body }}', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'quoted-env.yml')).toThrow();
+  });
+  it('decodes quoted step ids before tracking outputs', () => {
+    const unsafe = ['steps:', '  - id: "capture"', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'quoted-id.yml')).toThrow();
+  });
   it('checks every repository workflow for these transitive paths', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
     for (const workflowFile of workflowFiles) assertNoTransitiveUntrustedShell(readFileSync(join(workflowsDir, workflowFile), 'utf8'), workflowFile);
