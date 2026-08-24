@@ -136,6 +136,13 @@ const untrustedTextExpressions = [
   'github.event.pull_request.body',
   'github.event.review.body',
   'github.event.review_comment.body',
+  'context.payload.issue.title',
+  'context.payload.issue.body',
+  'context.payload.comment.body',
+  'context.payload.pull_request.title',
+  'context.payload.pull_request.body',
+  'context.payload.review.body',
+  'context.payload.review_comment.body',
 ];
 
 const untrustedParentExpressions = [
