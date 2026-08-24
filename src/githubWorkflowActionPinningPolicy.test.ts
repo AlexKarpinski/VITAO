@@ -70,7 +70,7 @@ const extractActionRefs = (workflow: string) => {
     if (/^\s*-?\s*["']?run["']?\s*:/.test(withoutComment)) continue;
     const flowContext = flowStepsDepth > 0 || /^\s*-\s*\{/.test(withoutComment);
     if (flowContext) {
-      const topLevel = withoutComment.replace(/\{[^{}]*\}/g, (mapping) => mapping.replace(/\b(?:with|env|metadata)\s*:\s*\{[^{}]*\}/g, ''));
+      const topLevel = withoutComment.replace(/\b(?:with|env|metadata)\s*:\s*\{[^{}]*\}/g, '');
       const flowEntryPattern = /(?=(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*:\s*("[^"]+"|'[^']+'|[^,}\s]+))/g;
       for (const entry of topLevel.matchAll(flowEntryPattern)) if (resolveYamlKey(entry[1]) === 'uses') refs.push(unquote(entry[2]));
       const multiline = topLevel.match(/(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*:\s*$/);
