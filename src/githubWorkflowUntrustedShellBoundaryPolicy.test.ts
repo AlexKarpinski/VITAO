@@ -72,11 +72,20 @@ const expectNoCrossJobOutputBypass = (workflow: string) => {
     if (output && taintedStepIds.has(output[2])) taintedJobOutputs.add(output[1]);
   }
 
+  const taintedConsumerEnv = new Set<string>();
+  for (const line of lines) {
+    const env = line.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_]*))\s*:\s*\$\{\{\s*needs\.[A-Za-z_][A-Za-z0-9_-]*\.outputs\.([A-Za-z_][A-Za-z0-9_-]*)\s*\}\}\s*$/);
+    if (env && taintedJobOutputs.has(env[2])) taintedConsumerEnv.add(normalizeKey(env[1]));
+  }
+
   for (const line of lines) {
     const run = line.match(/^\s*(?:-\s*)?["']?run["']?\s*:\s*(.+)$/)?.[1];
     if (!run) continue;
     for (const outputName of taintedJobOutputs) {
       expect(new RegExp(`\\$\\{\\{\\s*needs\\.[A-Za-z_][A-Za-z0-9_-]*\\.outputs\\.${outputName}\\s*\\}\\}`).test(run)).toBe(false);
+    }
+    for (const envName of taintedConsumerEnv) {
+      expect(shellReferencesEnv(run, envName), `run executes env ${envName} tainted by a job output`).toBe(false);
     }
   }
 };
@@ -88,11 +97,20 @@ const expectNoReusableWorkflowInputBypass = (caller: string, callee: string) => 
     if (match && untrusted(match[2])) taintedInputs.add(match[1]);
   }
 
+  const taintedCalleeEnv = new Set<string>();
+  for (const line of callee.split('\n')) {
+    const env = line.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_]*))\s*:\s*\$\{\{\s*inputs\.([A-Za-z_][A-Za-z0-9_-]*)\s*\}\}\s*$/);
+    if (env && taintedInputs.has(env[2])) taintedCalleeEnv.add(normalizeKey(env[1]));
+  }
+
   for (const line of callee.split('\n')) {
     const run = line.match(/^\s*(?:-\s*)?["']?run["']?\s*:\s*(.+)$/)?.[1];
     if (!run) continue;
     for (const input of taintedInputs) {
       expect(new RegExp(`\\$\\{\\{\\s*inputs\\.${input}\\s*\\}\\}`).test(run)).toBe(false);
+    }
+    for (const envName of taintedCalleeEnv) {
+      expect(shellReferencesEnv(run, envName), `run executes env ${envName} tainted by reusable-workflow input`).toBe(false);
     }
   }
 };
@@ -111,7 +129,7 @@ describe('GitHub workflow untrusted shell boundary policy', () => {
     }
 
     for (const [callerName, caller] of workflows) {
-      for (const match of caller.matchAll(/uses\s*:\s*\.\/\.github\/workflows\/([^\s#"']+)/g)) {
+      for (const match of caller.matchAll(/uses\s*:\s*["']?\.\/\.github\/workflows\/([^\s#"']+)["']?/g)) {
         const calleeName = match[1];
         const callee = workflows.get(calleeName);
         expect(callee, `${callerName} references missing local reusable workflow ${calleeName}`).toBeDefined();
@@ -152,6 +170,28 @@ describe('GitHub workflow untrusted shell boundary policy', () => {
     expect(() => expectNoCrossJobOutputBypass(unsafe)).toThrow();
   });
 
+  it('rejects job-output taint routed through consumer env', () => {
+    const unsafe = [
+      'jobs:',
+      '  producer:',
+      '    outputs:',
+      '      command: ${{ steps.capture.outputs.result }}',
+      '    steps:',
+      '      - id: capture',
+      '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: return context.payload.comment.body',
+      '  consumer:',
+      '    needs: producer',
+      '    env:',
+      '      CMD: ${{ needs.producer.outputs.command }}',
+      '    steps:',
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+
+    expect(() => expectNoCrossJobOutputBypass(unsafe)).toThrow();
+  });
+
   it('rejects untrusted caller values executed through reusable-workflow inputs', () => {
     const caller = [
       'jobs:',
@@ -172,6 +212,32 @@ describe('GitHub workflow untrusted shell boundary policy', () => {
       '      - run: bash -c "${{ inputs.command }}"',
     ].join('\n');
 
+    expect(() => expectNoReusableWorkflowInputBypass(caller, callee)).toThrow();
+  });
+
+  it('rejects quoted reusable-workflow references and input taint routed through callee env', () => {
+    const caller = [
+      'jobs:',
+      '  delegate:',
+      '    uses: "./.github/workflows/reusable.yml"',
+      '    with:',
+      '      command: ${{ github.event.comment.body }}',
+    ].join('\n');
+    const callee = [
+      'on:',
+      '  workflow_call:',
+      '    inputs:',
+      '      command:',
+      '        type: string',
+      'jobs:',
+      '  execute:',
+      '    env:',
+      '      CMD: ${{ inputs.command }}',
+      '    steps:',
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+
+    expect(caller).toMatch(/uses\s*:\s*["']?\.\/\.github\/workflows\/([^\s#"']+)["']?/);
     expect(() => expectNoReusableWorkflowInputBypass(caller, callee)).toThrow();
   });
 
