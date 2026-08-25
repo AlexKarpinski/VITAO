@@ -71,14 +71,15 @@ const extractActionRefs = (workflow: string) => {
   const resolveYamlKey = (rawKey: string) => { const decoded = decodeYamlKey(rawKey); return decoded.startsWith('*') ? scalarAnchors.get(decoded.slice(1)) ?? decoded : decoded; };
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index]; const indent = rawLine.match(/^\s*/)?.[0].length ?? 0; const withoutComment = stripYamlComment(rawLine); const trimmed = withoutComment.trim();
-    const flowStartMatches = Array.from(withoutComment.matchAll(/(?=(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(?:&[A-Za-z0-9_-]+\s+)*\[)/g));
-    const flowStepsMatch = flowStartMatches.find((match) => resolveYamlKey(match[1]) === 'steps'); const startsFlowSteps = Boolean(flowStepsMatch); if (startsFlowSteps && flowStepsDepth === 0) flowStepsDepth = 1;
     if (ignoredBlockIndent !== null) { if (!trimmed || indent > ignoredBlockIndent) continue; ignoredBlockIndent = null; }
     if (!trimmed) continue;
-    if (/^jobs\s*:\s*$/.test(trimmed)) { jobsIndent = indent; jobIndent = null; continue; }
+    const scalarAnchor = withoutComment.match(/:\s*&([A-Za-z0-9_-]+)\s+("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+)\s*$/); if (scalarAnchor) scalarAnchors.set(scalarAnchor[1], unquote(scalarAnchor[2]));
+    const flowStartMatches = Array.from(withoutComment.matchAll(/(?=(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(?:&[A-Za-z0-9_-]+\s+)*\[)/g));
+    const flowStepsMatch = flowStartMatches.find((match) => resolveYamlKey(match[1]) === 'steps'); const startsFlowSteps = Boolean(flowStepsMatch); if (startsFlowSteps && flowStepsDepth === 0) flowStepsDepth = 1;
+    const section = trimmed.match(/^((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*$/);
+    if (section && resolveYamlKey(section[1]) === 'jobs') { jobsIndent = indent; jobIndent = null; continue; }
     if (jobsIndent !== null && indent <= jobsIndent) { jobsIndent = null; jobIndent = null; }
     if (jobsIndent !== null && indent > jobsIndent && jobIndent === null) jobIndent = indent;
-    const scalarAnchor = withoutComment.match(/:\s*&([A-Za-z0-9_-]+)\s+("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+)\s*$/); if (scalarAnchor) scalarAnchors.set(scalarAnchor[1], unquote(scalarAnchor[2]));
     const explicitKey = withoutComment.match(/^\s*(?:-\s*)?\?\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*$/);
     if (explicitKey && resolveYamlKey(explicitKey[1]) === 'uses') {
       for (let child = index + 1; child < lines.length; child += 1) { const childRaw = lines[child]; const explicitValue = stripYamlComment(childRaw).match(/^\s*:\s*(.*)$/); if (!explicitValue) { if (stripYamlComment(childRaw).trim()) break; continue; }
@@ -133,4 +134,7 @@ describe('GitHub workflow action pinning policy', () => {
   it('enforces immutable refs for flow-style reusable workflow jobs', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`jobs:\n  call: { uses: owner/repo/.github/workflows/build.yml@${sha} }`; expect(extractActionRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]); expectImmutableExternalActions(pinned,'reusable-job.yml'); expect(() => expectImmutableExternalActions('jobs:\n  call: { uses: owner/repo/.github/workflows/build.yml@main }','reusable-job.yml')).toThrow(); });
   it('recognizes implicit flow step mappings after an opening sequence bracket', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`demo: { runs-on: ubuntu-latest, steps: [ uses: actions/checkout@${sha} ] }`; expect(extractActionRefs(pinned)).toEqual([`actions/checkout@${sha}`]); expectImmutableExternalActions(pinned,'implicit-flow-step.yml'); expect(() => expectImmutableExternalActions('demo: { runs-on: ubuntu-latest, steps: [ uses: actions/checkout@v4 ] }','implicit-flow-step.yml')).toThrow(); });
   it('recognizes anchored flow-style steps sequences', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`steps: &common [{ uses: actions/checkout@${sha} }]`; expect(extractActionRefs(pinned)).toEqual([`actions/checkout@${sha}`]); expectImmutableExternalActions(pinned,'anchored-steps.yml'); expect(() => expectImmutableExternalActions('steps: &common [{ uses: actions/checkout@v4 }]','anchored-steps.yml')).toThrow(); });
+  it('ignores block-scalar content before flow-step detection', () => { const unsafe='note: |\n  steps: [{ uses: actions/checkout@v4 }]'; expect(extractActionRefs(unsafe)).toEqual([]); });
+  it('recognizes quoted jobs sections for reusable workflow scope', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`"jobs":\n  call: { uses: owner/repo/.github/workflows/build.yml@${sha} }`; expectImmutableExternalActions(pinned,'quoted-jobs.yml'); expect(() => expectImmutableExternalActions('"jobs":\n  call: { uses: owner/repo/.github/workflows/build.yml@main }','quoted-jobs.yml')).toThrow(); });
+  it('resolves aliased steps mapping keys before flow-step detection', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`label: &step-key steps\n*step-key: [{ uses: actions/checkout@${sha} }]`; expectImmutableExternalActions(pinned,'aliased-steps.yml'); expect(() => expectImmutableExternalActions('label: &step-key steps\n*step-key: [{ uses: actions/checkout@v4 }]','aliased-steps.yml')).toThrow(); });
 });
