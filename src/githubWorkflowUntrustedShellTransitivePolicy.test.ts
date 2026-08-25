@@ -7,10 +7,9 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
-const normalizeAccess = (value: string) =>
-  value
-    .replace(/\?\./g, '.')
-    .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
+const normalizeAccess = (value: string) => value
+  .replace(/\?\./g, '.')
+  .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
 const decodeYamlScalar = (value: string) => {
   const trimmed = value.trim();
@@ -84,7 +83,7 @@ const collectStepBlocks = (workflow: string) => {
 const extractTaintedStepIds = (workflow: string) => {
   const ids = new Set<string>();
   for (const block of collectStepBlocks(workflow)) {
-    const rawId = block.match(/^\s*(?:-\s+)?id\s*:\s*(.+?)\s*$/m)?.[1];
+    const rawId = block.match(/^\s*(?:-\s+)?["']?id["']?\s*:\s*(.+?)\s*$/m)?.[1];
     const id = rawId ? decodeYamlScalar(rawId) : undefined;
     if (id && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(id) && containsUntrustedPayload(block)) ids.add(id);
   }
@@ -98,16 +97,19 @@ const stepOutputPattern = (stepId: string) => {
 
 const envReferencePattern = (name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?:\\$${escaped}\\b|\\$\\{${escaped}\\}|\\$env:${escaped}\\b|env\\.${escaped}\\b)`, 'i');
+  return new RegExp(`(?:\\$${escaped}\\b|\\$\\{${escaped}\\}|\\$env:${escaped}\\b|%${escaped}%|env\\.${escaped}\\b)`, 'i');
 };
 
-const indirectEnvReferencePattern = (name: string) => {
+const indirectPointerPattern = (name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?:\\$\\{!${escaped}\\}|\\$\\{!\\$?${escaped}\\})`, 'i');
+  return new RegExp(`\\$\\{!${escaped}\\}`, 'i');
 };
 
-const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>) => {
+type EnvTaint = { tainted: Set<string>; indirectPointers: Set<string> };
+
+const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>): EnvTaint => {
   const entries: Array<{ name: string; value: string }> = [];
+  const anchors = new Map<string, string>();
   const lines = workflow.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
     const match = lines[index].match(/^(\s*)((?:[A-Za-z_][A-Za-z0-9_]*|'(?:[^']|'')+'|"(?:[^"\\]|\\.)+"))\s*:\s*(.*)$/);
@@ -121,21 +123,36 @@ const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>) =>
       value = normalizeAccess(block.value);
       index = block.endIndex;
     }
+    const anchor = value.match(/^&([A-Za-z0-9_-]+)\s+([\s\S]+)$/);
+    if (anchor) {
+      value = anchor[2];
+      anchors.set(anchor[1], value);
+    } else {
+      const alias = value.match(/^\*([A-Za-z0-9_-]+)$/);
+      if (alias && anchors.has(alias[1])) value = anchors.get(alias[1])!;
+    }
     entries.push({ name, value });
   }
-  const vars = new Set<string>();
+
+  const tainted = new Set<string>();
   let changed = true;
   while (changed) {
     changed = false;
     for (const { name, value } of entries) {
-      if (vars.has(name)) continue;
-      const tainted = containsUntrustedPayload(value)
+      if (tainted.has(name)) continue;
+      const isTainted = containsUntrustedPayload(value)
         || [...taintedStepIds].some((id) => stepOutputPattern(id).test(value))
-        || [...vars].some((other) => envReferencePattern(other).test(value));
-      if (tainted) { vars.add(name); changed = true; }
+        || [...tainted].some((other) => envReferencePattern(other).test(value));
+      if (isTainted) { tainted.add(name); changed = true; }
     }
   }
-  return vars;
+
+  const indirectPointers = new Set<string>();
+  for (const { name, value } of entries) {
+    const pointedAt = decodeYamlScalar(value).replace(/^\$/, '');
+    if (tainted.has(pointedAt)) indirectPointers.add(name);
+  }
+  return { tainted, indirectPointers };
 };
 
 const extractRunValues = (workflow: string) => {
@@ -158,14 +175,13 @@ const extractRunValues = (workflow: string) => {
 
 const assertNoTransitiveUntrustedShell = (workflow: string, source: string) => {
   const taintedStepIds = extractTaintedStepIds(workflow);
-  const taintedEnvVars = extractTaintedEnvVars(workflow, taintedStepIds);
+  const { tainted, indirectPointers } = extractTaintedEnvVars(workflow, taintedStepIds);
   for (const run of extractRunValues(workflow)) {
-    expect(containsUntrustedPayload(run), `${source}: direct untrusted payload in run`).toBe(false);
-    for (const id of taintedStepIds) expect(stepOutputPattern(id).test(normalizeAccess(run)), `${source}: tainted output from ${id} reaches run`).toBe(false);
-    for (const name of taintedEnvVars) {
-      expect(envReferencePattern(name).test(normalizeAccess(run)), `${source}: tainted env ${name} reaches run`).toBe(false);
-      expect(indirectEnvReferencePattern(name).test(normalizeAccess(run)), `${source}: tainted env ${name} reaches run through indirect expansion`).toBe(false);
-    }
+    const normalizedRun = normalizeAccess(run);
+    expect(containsUntrustedPayload(normalizedRun), `${source}: direct untrusted payload in run`).toBe(false);
+    for (const id of taintedStepIds) expect(stepOutputPattern(id).test(normalizedRun), `${source}: tainted output from ${id} reaches run`).toBe(false);
+    for (const name of tainted) expect(envReferencePattern(name).test(normalizedRun), `${source}: tainted env ${name} reaches run`).toBe(false);
+    for (const pointer of indirectPointers) expect(indirectPointerPattern(pointer).test(normalizedRun), `${source}: ${pointer} indirectly expands a tainted env`).toBe(false);
   }
 };
 
@@ -182,6 +198,14 @@ describe('GitHub workflow transitive untrusted shell policy', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'output-env.yml')).toThrow();
   });
+  it('propagates taint through YAML scalar aliases', () => {
+    const unsafe = ['env:', '  RAW: &payload ${{ github.event.comment.body }}', '  CMD: *payload', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'yaml-alias.yml')).toThrow();
+  });
+  it('rejects Bash indirect expansion through a pointer variable', () => {
+    const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  NAME: RAW', 'steps:', '  - run: bash -c "${!NAME}"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'indirect-pointer.yml')).toThrow();
+  });
   it('propagates tainted step outputs through block-scalar env values', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: >-', '        ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'block-output-env.yml')).toThrow();
@@ -193,10 +217,6 @@ describe('GitHub workflow transitive untrusted shell policy', () => {
   it('propagates taint across environment-variable aliases', () => {
     const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  CMD: $RAW', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'env-alias.yml')).toThrow();
-  });
-  it('rejects indirect Bash expansion of tainted variables', () => {
-    const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  NAME: RAW', 'steps:', '  - run: bash -c "${!RAW}"'].join('\n');
-    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'indirect-env.yml')).toThrow();
   });
   it('taints github-script outputs derived by destructuring untrusted parent payloads', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: |', '        const { body } = context.payload.comment;', '        return body;', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
