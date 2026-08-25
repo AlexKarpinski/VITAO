@@ -11,8 +11,22 @@ const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
+const stripYamlComment = (value: string) => {
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (char === quote && (quote === "'" || value[index - 1] !== '\\')) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; continue; }
+    if (char === '#' && (index === 0 || /\s/.test(value[index - 1]))) return value.slice(0, index).trimEnd();
+  }
+  return value;
+};
+
 const decodeYamlScalar = (value: string) => {
-  const trimmed = value.trim();
+  const trimmed = stripYamlComment(value).trim();
   if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
     try { return JSON.parse(trimmed) as string; } catch { return trimmed; }
@@ -102,7 +116,7 @@ const envReferencePattern = (name: string) => {
 
 const indirectPointerPattern = (name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`\\$\\{!${escaped}\\}`, 'i');
+  return new RegExp(`\\$\\{!${escaped}(?:[^}]*)\\}`, 'i');
 };
 
 type EnvTaint = { tainted: Set<string>; indirectPointers: Set<string> };
@@ -117,7 +131,7 @@ const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>): E
     const indent = match[1].length;
     const name = decodeYamlScalar(match[2]);
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
-    let value = normalizeAccess(match[3]);
+    let value = normalizeAccess(stripYamlComment(match[3]));
     if (isBlockScalarHeader(value)) {
       const block = collectIndentedValue(lines, index, indent);
       value = normalizeAccess(block.value);
@@ -125,10 +139,10 @@ const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>): E
     }
     const anchor = value.match(/^&([A-Za-z0-9_-]+)\s+([\s\S]+)$/);
     if (anchor) {
-      value = anchor[2];
+      value = stripYamlComment(anchor[2]).trim();
       anchors.set(anchor[1], value);
     } else {
-      const alias = value.match(/^\*([A-Za-z0-9_-]+)$/);
+      const alias = stripYamlComment(value).trim().match(/^\*([A-Za-z0-9_-]+)$/);
       if (alias && anchors.has(alias[1])) value = anchors.get(alias[1])!;
     }
     entries.push({ name, value });
@@ -198,13 +212,17 @@ describe('GitHub workflow transitive untrusted shell policy', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'output-env.yml')).toThrow();
   });
-  it('propagates taint through YAML scalar aliases', () => {
-    const unsafe = ['env:', '  RAW: &payload ${{ github.event.comment.body }}', '  CMD: *payload', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
-    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'yaml-alias.yml')).toThrow();
+  it('propagates taint through YAML scalar aliases with trailing comments', () => {
+    const unsafe = ['env:', '  RAW: &payload ${{ github.event.comment.body }}', '  CMD: *payload # downstream command', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'yaml-alias-comment.yml')).toThrow();
   });
   it('rejects Bash indirect expansion through a pointer variable', () => {
     const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  NAME: RAW', 'steps:', '  - run: bash -c "${!NAME}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'indirect-pointer.yml')).toThrow();
+  });
+  it('rejects Bash indirect expansion with parameter modifiers', () => {
+    const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  NAME: RAW', 'steps:', '  - run: bash -c "${!NAME:0}"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'indirect-pointer-modifier.yml')).toThrow();
   });
   it('propagates tainted step outputs through block-scalar env values', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: >-', '        ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
