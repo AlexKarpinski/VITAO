@@ -101,6 +101,11 @@ const envReferencePattern = (name: string) => {
   return new RegExp(`(?:\\$${escaped}\\b|\\$\\{${escaped}\\}|\\$env:${escaped}\\b|env\\.${escaped}\\b)`, 'i');
 };
 
+const indirectEnvReferencePattern = (name: string) => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:\\$\\{!${escaped}\\}|\\$\\{!\\$?${escaped}\\})`, 'i');
+};
+
 const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>) => {
   const entries: Array<{ name: string; value: string }> = [];
   const lines = workflow.split('\n');
@@ -157,7 +162,10 @@ const assertNoTransitiveUntrustedShell = (workflow: string, source: string) => {
   for (const run of extractRunValues(workflow)) {
     expect(containsUntrustedPayload(run), `${source}: direct untrusted payload in run`).toBe(false);
     for (const id of taintedStepIds) expect(stepOutputPattern(id).test(normalizeAccess(run)), `${source}: tainted output from ${id} reaches run`).toBe(false);
-    for (const name of taintedEnvVars) expect(envReferencePattern(name).test(normalizeAccess(run)), `${source}: tainted env ${name} reaches run`).toBe(false);
+    for (const name of taintedEnvVars) {
+      expect(envReferencePattern(name).test(normalizeAccess(run)), `${source}: tainted env ${name} reaches run`).toBe(false);
+      expect(indirectEnvReferencePattern(name).test(normalizeAccess(run)), `${source}: tainted env ${name} reaches run through indirect expansion`).toBe(false);
+    }
   }
 };
 
@@ -185,6 +193,10 @@ describe('GitHub workflow transitive untrusted shell policy', () => {
   it('propagates taint across environment-variable aliases', () => {
     const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  CMD: $RAW', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'env-alias.yml')).toThrow();
+  });
+  it('rejects indirect Bash expansion of tainted variables', () => {
+    const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  NAME: RAW', 'steps:', '  - run: bash -c "${!RAW}"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'indirect-env.yml')).toThrow();
   });
   it('taints github-script outputs derived by destructuring untrusted parent payloads', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: |', '        const { body } = context.payload.comment;', '        return body;', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
