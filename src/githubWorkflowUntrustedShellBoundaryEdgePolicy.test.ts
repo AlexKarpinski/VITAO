@@ -44,19 +44,18 @@ const collectScalar = (lines: string[], start: number, parentIndent: number) => 
   return { value: body.join('\n'), end };
 };
 
-const normalizeNeeds = (value: string) => normalizeAccess(value);
-
 const expectNoBracketedNeedsRun = (workflow: string) => {
-  const normalized = normalizeNeeds(workflow);
+  const normalized = normalizeAccess(workflow);
   const taintedOutputs = new Set<string>();
-  for (const match of normalized.matchAll(/outputs\.([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\$\{\{\s*steps\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\.[A-Za-z_][A-Za-z0-9_-]*\s*\}\}/g)) {
+  for (const match of normalized.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\$\{\{\s*steps\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\.[A-Za-z_][A-Za-z0-9_-]*\s*\}\}\s*$/gm)) {
+    const outputName = match[1];
     const stepId = match[2];
-    const stepPattern = new RegExp(`(?:^|\\n)\\s*-?[\\s\\S]{0,800}?id:\\s*["']?${stepId}["']?[\\s\\S]{0,1200}?(?:github\\.event|context\\.payload)`, 'm');
-    if (stepPattern.test(normalized)) taintedOutputs.add(match[1]);
+    const stepPattern = new RegExp(`id:\\s*["']?${stepId}["']?[\\s\\S]{0,1600}?(?:github\\.event|context\\.payload)`);
+    if (stepPattern.test(normalized)) taintedOutputs.add(outputName);
   }
   for (const output of taintedOutputs) {
     const escaped = output.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const run = new RegExp(`run:[^\\n]*(?:needs\\.[A-Za-z_][A-Za-z0-9_-]*\\.outputs\\.${escaped})`);
+    const run = new RegExp(`run:[^\\n]*needs\\.[A-Za-z_][A-Za-z0-9_-]*\\.outputs\\.${escaped}\\b`);
     expect(run.test(normalized), `tainted job output ${output} reaches run`).toBe(false);
   }
 };
