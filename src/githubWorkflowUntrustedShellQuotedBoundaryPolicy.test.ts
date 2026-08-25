@@ -7,8 +7,37 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
+const stripYamlInlineComment = (raw: string) => {
+  let singleQuoted = false;
+  let doubleQuoted = false;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+
+    if (char === '"' && !singleQuoted && raw[index - 1] !== '\\') {
+      doubleQuoted = !doubleQuoted;
+      continue;
+    }
+
+    if (char === "'" && !doubleQuoted) {
+      if (singleQuoted && raw[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      singleQuoted = !singleQuoted;
+      continue;
+    }
+
+    if (char === '#' && !singleQuoted && !doubleQuoted && (index === 0 || /\s/.test(raw[index - 1]))) {
+      return raw.slice(0, index).trimEnd();
+    }
+  }
+
+  return raw.trimEnd();
+};
+
 const unwrapQuotedScalar = (raw: string) => {
-  const value = raw.trim();
+  const value = stripYamlInlineComment(raw).trim();
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
     return value.slice(1, -1);
   }
@@ -47,8 +76,11 @@ const expectNoQuotedJobOutputEnvBypass = (workflow: string) => {
 
   const taintedOutputs = new Set<string>();
   for (const line of lines) {
-    const output = line.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\$\{\{\s*steps\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\.[A-Za-z_][A-Za-z0-9_-]*\s*\}\}\s*$/);
-    if (output && taintedStepIds.has(output[2])) taintedOutputs.add(output[1]);
+    const outputEntry = line.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.+)$/);
+    if (!outputEntry) continue;
+    const outputValue = unwrapQuotedScalar(outputEntry[2]);
+    const output = outputValue.match(/^\$\{\{\s*steps\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\.[A-Za-z_][A-Za-z0-9_-]*\s*\}\}$/);
+    if (output && taintedStepIds.has(output[1])) taintedOutputs.add(outputEntry[1]);
   }
 
   const taintedEnv = new Set<string>();
@@ -127,9 +159,57 @@ describe('GitHub workflow quoted boundary taint policy', () => {
     expect(() => expectNoQuotedJobOutputEnvBypass(unsafe)).toThrow();
   });
 
+  it('rejects quoted consumer env values with trailing YAML comments', () => {
+    const unsafe = [
+      'jobs:',
+      '  producer:',
+      '    outputs:',
+      '      command: "${{ steps.capture.outputs.result }}" # producer output',
+      '    steps:',
+      '      - id: capture',
+      '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: return context.payload.comment.body',
+      '  consumer:',
+      '    needs: producer',
+      '    env:',
+      '      CMD: "${{ needs.producer.outputs.command }}" # downstream command',
+      '    steps:',
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => expectNoQuotedJobOutputEnvBypass(unsafe)).toThrow();
+  });
+
+  it('rejects quoted producer output values carrying tainted step outputs', () => {
+    const unsafe = [
+      'jobs:',
+      '  producer:',
+      '    outputs:',
+      '      command: "${{ steps.capture.outputs.result }}"',
+      '    steps:',
+      '      - id: capture',
+      '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: return context.payload.comment.body',
+      '  consumer:',
+      '    needs: producer',
+      '    env:',
+      '      CMD: "${{ needs.producer.outputs.command }}"',
+      '    steps:',
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => expectNoQuotedJobOutputEnvBypass(unsafe)).toThrow();
+  });
+
   it('rejects quoted callee env values carrying tainted reusable inputs', () => {
     const caller = 'jobs:\n  delegate:\n    uses: "./.github/workflows/reusable.yml"\n    with:\n      command: ${{ github.event.comment.body }}';
     const callee = 'jobs:\n  execute:\n    env:\n      CMD: "${{ inputs.command }}"\n    steps:\n      - run: bash -c "$CMD"';
+    expect(() => expectNoQuotedReusableEnvBypass(caller, callee)).toThrow();
+  });
+
+  it('rejects quoted callee env values with trailing YAML comments', () => {
+    const caller = 'jobs:\n  delegate:\n    uses: "./.github/workflows/reusable.yml"\n    with:\n      command: ${{ github.event.comment.body }}';
+    const callee = 'jobs:\n  execute:\n    env:\n      CMD: "${{ inputs.command }}" # command input\n    steps:\n      - run: bash -c "$CMD"';
     expect(() => expectNoQuotedReusableEnvBypass(caller, callee)).toThrow();
   });
 });
