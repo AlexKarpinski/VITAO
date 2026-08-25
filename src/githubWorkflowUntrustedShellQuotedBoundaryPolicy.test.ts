@@ -57,6 +57,8 @@ const normalizeKey = (raw: string) => {
   return value;
 };
 
+const yamlKeyPattern = `(?:"(?:\\\\.|[^"\\\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)`;
+
 const untrusted = (value: string) =>
   /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/.test(value);
 
@@ -75,12 +77,13 @@ const expectNoQuotedJobOutputEnvBypass = (workflow: string) => {
   }
 
   const taintedOutputs = new Set<string>();
+  const outputEntryPattern = new RegExp(`^\\s*(${yamlKeyPattern})\\s*:\\s*(.+)$`);
   for (const line of lines) {
-    const outputEntry = line.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.+)$/);
+    const outputEntry = line.match(outputEntryPattern);
     if (!outputEntry) continue;
     const outputValue = unwrapQuotedScalar(outputEntry[2]);
     const output = outputValue.match(/^\$\{\{\s*steps\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\.[A-Za-z_][A-Za-z0-9_-]*\s*\}\}$/);
-    if (output && taintedStepIds.has(output[1])) taintedOutputs.add(outputEntry[1]);
+    if (output && taintedStepIds.has(output[1])) taintedOutputs.add(normalizeKey(outputEntry[1]));
   }
 
   const taintedEnv = new Set<string>();
@@ -139,65 +142,22 @@ describe('GitHub workflow quoted boundary taint policy', () => {
   });
 
   it('rejects quoted consumer env values carrying tainted job outputs', () => {
-    const unsafe = [
-      'jobs:',
-      '  producer:',
-      '    outputs:',
-      '      command: ${{ steps.capture.outputs.result }}',
-      '    steps:',
-      '      - id: capture',
-      '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: return context.payload.comment.body',
-      '  consumer:',
-      '    needs: producer',
-      '    env:',
-      '      CMD: "${{ needs.producer.outputs.command }}"',
-      '    steps:',
-      '      - run: bash -c "$CMD"',
-    ].join('\n');
+    const unsafe = ['jobs:', '  producer:', '    outputs:', '      command: ${{ steps.capture.outputs.result }}', '    steps:', '      - id: capture', '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: return context.payload.comment.body', '  consumer:', '    needs: producer', '    env:', '      CMD: "${{ needs.producer.outputs.command }}"', '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoQuotedJobOutputEnvBypass(unsafe)).toThrow();
   });
 
   it('rejects quoted consumer env values with trailing YAML comments', () => {
-    const unsafe = [
-      'jobs:',
-      '  producer:',
-      '    outputs:',
-      '      command: "${{ steps.capture.outputs.result }}" # producer output',
-      '    steps:',
-      '      - id: capture',
-      '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: return context.payload.comment.body',
-      '  consumer:',
-      '    needs: producer',
-      '    env:',
-      '      CMD: "${{ needs.producer.outputs.command }}" # downstream command',
-      '    steps:',
-      '      - run: bash -c "$CMD"',
-    ].join('\n');
+    const unsafe = ['jobs:', '  producer:', '    outputs:', '      command: "${{ steps.capture.outputs.result }}" # producer output', '    steps:', '      - id: capture', '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: return context.payload.comment.body', '  consumer:', '    needs: producer', '    env:', '      CMD: "${{ needs.producer.outputs.command }}" # downstream command', '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoQuotedJobOutputEnvBypass(unsafe)).toThrow();
   });
 
   it('rejects quoted producer output values carrying tainted step outputs', () => {
-    const unsafe = [
-      'jobs:',
-      '  producer:',
-      '    outputs:',
-      '      command: "${{ steps.capture.outputs.result }}"',
-      '    steps:',
-      '      - id: capture',
-      '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: return context.payload.comment.body',
-      '  consumer:',
-      '    needs: producer',
-      '    env:',
-      '      CMD: "${{ needs.producer.outputs.command }}"',
-      '    steps:',
-      '      - run: bash -c "$CMD"',
-    ].join('\n');
+    const unsafe = ['jobs:', '  producer:', '    outputs:', '      command: "${{ steps.capture.outputs.result }}"', '    steps:', '      - id: capture', '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: return context.payload.comment.body', '  consumer:', '    needs: producer', '    env:', '      CMD: "${{ needs.producer.outputs.command }}"', '    steps:', '      - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoQuotedJobOutputEnvBypass(unsafe)).toThrow();
+  });
+
+  it('rejects quoted producer output keys carrying tainted step outputs', () => {
+    const unsafe = ['jobs:', '  producer:', '    outputs:', '      "command": "${{ steps.capture.outputs.result }}"', '    steps:', '      - id: capture', '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: return context.payload.comment.body', '  consumer:', '    needs: producer', '    env:', '      CMD: "${{ needs.producer.outputs.command }}"', '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoQuotedJobOutputEnvBypass(unsafe)).toThrow();
   });
 
