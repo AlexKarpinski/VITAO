@@ -41,8 +41,11 @@ const containsUntrustedText = (value: string) => {
 const extractDirectRunValues = (workflow: string) => {
   const values: string[] = [];
   const key = '(?:"(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[A-Za-z_][A-Za-z0-9_-]*)';
-  // Include '[' because flow-style step sequences begin with `[{ run: ... }]`.
-  const mapping = new RegExp(`(?:^|[\\[,{])\\s*(${key})\\s*:\\s*("(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[^,}]+)`, 'g');
+  const value = '("(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[^,}]+)';
+  // Use a zero-width lookahead so an outer flow mapping (for example `steps:`)
+  // cannot consume and hide a nested step-level `run:` entry. A block sequence
+  // marker is also a structural mapping boundary for `- "r\\u0075n": ...`.
+  const mapping = new RegExp(`(?=(?:^|[\\[,{]|-\\s+)\\s*(${key})\\s*:\\s*${value})`, 'g');
 
   for (const line of workflow.split('\n')) {
     for (const match of line.matchAll(mapping)) {
