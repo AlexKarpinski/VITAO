@@ -18,6 +18,15 @@ const stripQuoted = (value: string) => {
   return trimmed;
 };
 
+const decodeYamlKey = (raw: string) => {
+  const key = raw.trim();
+  if (key.startsWith('"') && key.endsWith('"')) {
+    try { return JSON.parse(key) as string; } catch { return key.slice(1, -1); }
+  }
+  if (key.startsWith("'") && key.endsWith("'")) return key.slice(1, -1).replace(/''/g, "'");
+  return key;
+};
+
 const extractMultilineFlowJobRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
@@ -50,8 +59,8 @@ const extractMultilineFlowJobRefs = (workflow: string) => {
     }
 
     if (jobsFlowDepth <= 0) { jobsFlowDepth = 0; continue; }
-    const directJob = line.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\{\s*uses\s*:\s*([^,}]+)[,}]?/);
-    if (directJob) refs.push(stripQuoted(directJob[1]));
+    const directJob = line.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\{\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*([^,}]+)[,}]?/);
+    if (directJob && decodeYamlKey(directJob[1]) === 'uses') refs.push(stripQuoted(directJob[2]));
   }
   return refs;
 };
@@ -88,8 +97,49 @@ const extractBareSequenceStepRefs = (workflow: string) => {
         bareDashIndent = null;
         continue;
       }
-      const uses = line.match(/^\s*\{?\s*["']?uses["']?\s*:\s*([^,}]+)[,}]?/);
-      if (uses) refs.push(stripQuoted(uses[1]));
+      const uses = line.match(/^\s*\{?\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*([^,}]+)[,}]?/);
+      if (uses && decodeYamlKey(uses[1]) === 'uses') refs.push(stripQuoted(uses[2]));
+    }
+  }
+  return refs;
+};
+
+const extractExplicitStepsRefs = (workflow: string) => {
+  const refs: string[] = [];
+  const lines = workflow.split('\n');
+  let pendingSteps = false;
+  let flowDepth = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^\?\s*["']?steps["']?\s*$/.test(trimmed)) {
+      pendingSteps = true;
+      continue;
+    }
+    if (pendingSteps) {
+      const value = trimmed.match(/^:\s*(.*)$/);
+      if (!value) {
+        if (trimmed) pendingSteps = false;
+        continue;
+      }
+      const opening = value[1].indexOf('[');
+      if (opening >= 0) {
+        flowDepth = 1;
+        const remainder = value[1].slice(opening + 1);
+        for (const match of remainder.matchAll(/(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*([^,}\]]+)/g)) {
+          if (decodeYamlKey(match[1]) === 'uses') refs.push(stripQuoted(match[2]));
+        }
+        flowDepth += (remainder.match(/\[/g) ?? []).length - (remainder.match(/\]/g) ?? []).length;
+      }
+      pendingSteps = false;
+      continue;
+    }
+    if (flowDepth > 0) {
+      for (const match of line.matchAll(/(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*([^,}\]]+)/g)) {
+        if (decodeYamlKey(match[1]) === 'uses') refs.push(stripQuoted(match[2]));
+      }
+      flowDepth += (line.match(/\[/g) ?? []).length - (line.match(/\]/g) ?? []).length;
+      if (flowDepth < 0) flowDepth = 0;
     }
   }
   return refs;
@@ -105,6 +155,7 @@ describe('GitHub workflow structural action-pinning edge policy', () => {
       const workflow = readFileSync(join(workflowsDir, name), 'utf8');
       expectPinned(extractMultilineFlowJobRefs(workflow));
       expectPinned(extractBareSequenceStepRefs(workflow));
+      expectPinned(extractExplicitStepsRefs(workflow));
     }
   });
 
@@ -128,19 +179,47 @@ describe('GitHub workflow structural action-pinning edge policy', () => {
     expect(() => expectPinned(extractBareSequenceStepRefs(unsafe))).toThrow();
   });
 
+  it('rejects escaped uses keys after a bare steps sequence marker', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      -',
+      '        { "\\u0075ses": actions/checkout@v4 }',
+    ].join('\n');
+    expect(() => expectPinned(extractBareSequenceStepRefs(unsafe))).toThrow();
+  });
+
+  it('rejects mutable refs in multiline explicit-key steps sequences', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    ? steps',
+      '    : [',
+      '      { uses: actions/checkout@v4 },',
+      '    ]',
+    ].join('\n');
+    expect(() => expectPinned(extractExplicitStepsRefs(unsafe))).toThrow();
+  });
+
   it('accepts immutable refs for the same structural forms', () => {
     const sha = '0123456789abcdef0123456789abcdef01234567';
     const safe = [
       'jobs: {',
-      `  call: { uses: owner/repo/.github/workflows/build.yml@${sha} },`,
+      `  call: { "uses": owner/repo/.github/workflows/build.yml@${sha} },`,
       '}',
       'jobs:',
       '  build:',
       '    steps:',
       '      -',
-      `        { uses: actions/checkout@${sha} }`,
+      `        { "\\u0075ses": actions/checkout@${sha} }`,
+      '    ? steps',
+      '    : [',
+      `      { uses: actions/setup-node@${sha} },`,
+      '    ]',
     ].join('\n');
     expectPinned(extractMultilineFlowJobRefs(safe));
     expectPinned(extractBareSequenceStepRefs(safe));
+    expectPinned(extractExplicitStepsRefs(safe));
   });
 });
