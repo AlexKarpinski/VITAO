@@ -29,6 +29,12 @@ const stripYamlComment = (value: string) => {
   return value;
 };
 
+const unwrapScalar = (value: string) => {
+  const clean = stripYamlComment(value).trim();
+  if ((clean.startsWith('"') && clean.endsWith('"')) || (clean.startsWith("'") && clean.endsWith("'"))) return clean.slice(1, -1);
+  return clean;
+};
+
 const scalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 
@@ -60,56 +66,102 @@ const expectNoBracketedNeedsRun = (workflow: string) => {
   }
 };
 
-const collectReusableArgs = (workflow: string) => {
-  const args: string[] = [];
+type ReusableCall = { path: string; args: Array<{ name: string; value: string }> };
+
+const collectReusableCalls = (workflow: string): ReusableCall[] => {
+  const calls: ReusableCall[] = [];
   const lines = workflow.split('\n');
-  let inLocalReusableJob = false;
+  let call: ReusableCall | null = null;
+  let jobIndent: number | null = null;
   let withIndent: number | null = null;
+
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
     const line = stripYamlComment(raw);
     const indent = indentOf(raw);
-    if (/^\s*uses:\s*["']?\.\/\.github\/workflows\//.test(line)) {
-      inLocalReusableJob = true;
+    const uses = line.match(/^\s*uses:\s*(.+?)\s*$/);
+    const path = uses ? unwrapScalar(uses[1]) : '';
+    if (path.startsWith('./.github/workflows/')) {
+      call = { path: path.slice('./.github/workflows/'.length), args: [] };
+      calls.push(call);
+      jobIndent = indent;
       withIndent = null;
       continue;
     }
-    if (!inLocalReusableJob) continue;
+    if (!call) continue;
+    if (line.trim() && jobIndent !== null && indent <= jobIndent && !/^\s*with:\s*$/.test(line)) {
+      call = null;
+      jobIndent = null;
+      withIndent = null;
+      continue;
+    }
     if (withIndent === null) {
       if (/^\s*with:\s*$/.test(line)) withIndent = indent;
       continue;
     }
     if (line.trim() && indent <= withIndent) {
-      inLocalReusableJob = false;
       withIndent = null;
       continue;
     }
-    const entry = line.match(/^\s*["']?[A-Za-z_][A-Za-z0-9_-]*["']?\s*:\s*(.*)$/);
+    const entry = line.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*:\s*(.*)$/);
     if (!entry) continue;
-    const value = entry[1].trim();
+    const name = entry[1];
+    const value = entry[2].trim();
     if (scalarHeader.test(value)) {
       const scalar = collectScalar(lines, index, indent);
-      args.push(scalar.value);
+      call.args.push({ name, value: scalar.value });
       index = scalar.end;
     } else {
-      args.push(value);
+      call.args.push({ name, value: unwrapScalar(value) });
     }
   }
-  return args;
+  return calls;
 };
 
-const expectNoUntrustedReusableArgs = (workflow: string) => {
-  for (const value of collectReusableArgs(workflow)) {
-    expect(untrusted(value), `untrusted text reaches reusable-workflow input: ${value}`).toBe(false);
+const collectRunScripts = (workflow: string) => {
+  const scripts: string[] = [];
+  const lines = workflow.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    const line = stripYamlComment(raw);
+    const match = line.match(/^\s*(?:-\s*)?["']?run["']?\s*:\s*(.*)$/);
+    if (!match) continue;
+    const value = match[1].trim();
+    if (scalarHeader.test(value)) {
+      const scalar = collectScalar(lines, index, indentOf(raw));
+      scripts.push(scalar.value);
+      index = scalar.end;
+    } else {
+      scripts.push(unwrapScalar(value));
+    }
+  }
+  return scripts;
+};
+
+const calleeRunsInput = (callee: string, inputName: string) => {
+  const escaped = inputName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const inputPattern = new RegExp(`inputs\\.${escaped}\\b`);
+  return collectRunScripts(normalizeAccess(callee)).some((script) => inputPattern.test(script));
+};
+
+const expectNoUntrustedReusableShellArgs = (workflow: string, callees: Map<string, string>) => {
+  for (const call of collectReusableCalls(workflow)) {
+    const callee = callees.get(call.path);
+    if (!callee) continue;
+    for (const arg of call.args) {
+      if (!untrusted(arg.value)) continue;
+      expect(calleeRunsInput(callee, arg.name), `untrusted ${arg.name} reaches shell in ${call.path}`).toBe(false);
+    }
   }
 };
 
 describe('GitHub workflow boundary edge policy', () => {
-  it('enforces bracketed needs and reusable block-scalar boundaries across checked-in workflows', () => {
+  it('enforces bracketed needs and reusable shell boundaries across checked-in workflows', () => {
+    const callees = new Map(workflowFiles.map((name) => [name, readFileSync(join(workflowsDir, name), 'utf8')]));
     for (const name of workflowFiles) {
-      const workflow = readFileSync(join(workflowsDir, name), 'utf8');
+      const workflow = callees.get(name)!;
       expectNoBracketedNeedsRun(workflow);
-      expectNoUntrustedReusableArgs(workflow);
+      expectNoUntrustedReusableShellArgs(workflow, callees);
     }
   });
 
@@ -132,8 +184,8 @@ describe('GitHub workflow boundary edge policy', () => {
     expect(() => expectNoBracketedNeedsRun(unsafe)).toThrow();
   });
 
-  it('rejects untrusted block-scalar arguments passed to a local reusable workflow', () => {
-    const unsafe = [
+  it('rejects an untrusted reusable argument only when the callee executes that input in shell', () => {
+    const caller = [
       'jobs:',
       '  call:',
       '    uses: ./.github/workflows/reusable.yml',
@@ -141,6 +193,18 @@ describe('GitHub workflow boundary edge policy', () => {
       '      command: >-',
       '        ${{ github.event.comment.body }}',
     ].join('\n');
-    expect(() => expectNoUntrustedReusableArgs(unsafe)).toThrow();
+    const unsafeCallee = ['on: workflow_call', 'jobs:', '  work:', '    steps:', '      - run: bash -c "${{ inputs.command }}"'].join('\n');
+    expect(() => expectNoUntrustedReusableShellArgs(caller, new Map([['reusable.yml', unsafeCallee]]))).toThrow();
+
+    const safeCallee = [
+      'on: workflow_call',
+      'jobs:',
+      '  work:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: console.log(context.payload)',
+    ].join('\n');
+    expectNoUntrustedReusableShellArgs(caller, new Map([['reusable.yml', safeCallee]]));
   });
 });
