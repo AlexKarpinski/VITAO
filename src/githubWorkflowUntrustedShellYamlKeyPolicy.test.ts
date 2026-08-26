@@ -24,7 +24,7 @@ const isUntrusted = (value: string) => {
   const normalized = normalizeAccess(value);
   return /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/
     .test(normalized)
-    || /toJSON\(\s*github\.event\s*\)/.test(normalized);
+    || /tojson\(\s*github\.event\s*\)/i.test(normalized);
 };
 
 const shellReferences = (script: string, name: string) => {
@@ -136,12 +136,14 @@ describe('GitHub workflow YAML key shell policy', () => {
   });
 
   it('rejects serialization of the complete GitHub event into shell', () => {
-    const unsafe = [
-      'jobs:',
-      '  test:',
-      '    steps:',
-      '      - run: bash -c \'${{ toJSON(github.event) }}\'',
-    ].join('\n');
-    expect(() => expectNoYamlKeyShellBypass(unsafe)).toThrow();
+    for (const functionName of ['toJSON', 'toJson', 'TOJSON']) {
+      const unsafe = [
+        'jobs:',
+        '  test:',
+        '    steps:',
+        `      - run: bash -c '\${{ ${functionName}(github.event) }}'`,
+      ].join('\n');
+      expect(() => expectNoYamlKeyShellBypass(unsafe)).toThrow();
+    }
   });
 });
