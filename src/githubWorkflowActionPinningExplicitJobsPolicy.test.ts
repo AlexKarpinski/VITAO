@@ -15,6 +15,50 @@ const unquote = (value: string) => {
   return trimmed;
 };
 
+const splitTopLevelFlowEntries = (body: string) => {
+  const entries: string[] = [];
+  let start = 0;
+  let quote: '"' | "'" | null = null;
+  let squareDepth = 0;
+  let curlyDepth = 0;
+
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (quote) {
+      if (char === quote && (quote === "'" || body[index - 1] !== '\\')) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '[') squareDepth += 1;
+    else if (char === ']') squareDepth -= 1;
+    else if (char === '{') curlyDepth += 1;
+    else if (char === '}') curlyDepth -= 1;
+    else if (char === ',' && squareDepth === 0 && curlyDepth === 0) {
+      entries.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+
+  entries.push(body.slice(start));
+  return entries;
+};
+
+const decodeMappingKey = (rawKey: string) => {
+  const key = rawKey.trim();
+  if (key.startsWith('"') && key.endsWith('"')) {
+    try {
+      return JSON.parse(key);
+    } catch {
+      return key.slice(1, -1);
+    }
+  }
+  if (key.startsWith("'") && key.endsWith("'")) return key.slice(1, -1).replace(/''/g, "'");
+  return key;
+};
+
 const collectExplicitJobsWorkflowRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
@@ -52,8 +96,11 @@ const collectExplicitJobsWorkflowRefs = (workflow: string) => {
 
     const flowJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\{([\s\S]*)\}\s*$/);
     if (!flowJob) continue;
-    const uses = flowJob[1].match(/(?:^|,)\s*(?:uses|["']uses["'])\s*:\s*([^,}]+)/);
-    if (uses) refs.push(unquote(uses[1]));
+
+    for (const entry of splitTopLevelFlowEntries(flowJob[1])) {
+      const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
+      if (mapping && decodeMappingKey(mapping[1]) === 'uses') refs.push(unquote(mapping[2]));
+    }
   }
 
   return refs;
@@ -85,8 +132,23 @@ describe('explicit top-level jobs immutable-pinning policy', () => {
   });
 
   it('does not treat nested uses-like metadata as a reusable-workflow ref', () => {
-    const safe = ['? jobs', ':', '  build: { runs-on: ubuntu-latest, env: { uses: actions/checkout@v4 } }'].join('\n');
+    const safe = [
+      '? jobs',
+      ':',
+      '  build: { runs-on: ubuntu-latest, env: { NOTE: ok, uses: actions/checkout@v4 }, with: { uses: actions/cache@v4 } }',
+    ].join('\n');
     expect(collectExplicitJobsWorkflowRefs(safe)).toEqual([]);
     expectImmutableExplicitJobsRefs(safe, 'explicit-jobs-metadata.yml');
+  });
+
+  it('checks only a direct job-level uses key when nested mappings also contain uses-like keys', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = [
+      '? jobs',
+      ':',
+      `  call: { env: { NOTE: ok, uses: actions/checkout@v4 }, uses: owner/repo/.github/workflows/build.yml@${sha} }`,
+    ].join('\n');
+    expect(collectExplicitJobsWorkflowRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]);
+    expectImmutableExplicitJobsRefs(pinned, 'explicit-jobs-direct.yml');
   });
 });
