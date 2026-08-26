@@ -15,6 +15,12 @@ const unquote = (value: string) => {
   return trimmed;
 };
 
+const isEscaped = (body: string, index: number) => {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && body[cursor] === '\\'; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+};
+
 const splitTopLevelFlowEntries = (body: string) => {
   const entries: string[] = [];
   let start = 0;
@@ -25,7 +31,7 @@ const splitTopLevelFlowEntries = (body: string) => {
   for (let index = 0; index < body.length; index += 1) {
     const char = body[index];
     if (quote) {
-      if (char === quote && (quote === "'" || body[index - 1] !== '\\')) quote = null;
+      if (char === quote && (quote === "'" || !isEscaped(body, index))) quote = null;
       continue;
     }
     if (char === '"' || char === "'") {
@@ -150,5 +156,15 @@ describe('explicit top-level jobs immutable-pinning policy', () => {
     ].join('\n');
     expect(collectExplicitJobsWorkflowRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]);
     expectImmutableExplicitJobsRefs(pinned, 'explicit-jobs-direct.yml');
+  });
+
+  it('keeps parsing direct uses after a quoted scalar ending in an escaped backslash', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = ['? jobs', ':', `  call: { with: { note: "foo\\\\" }, uses: owner/repo/.github/workflows/build.yml@${sha} }`].join('\n');
+    expect(collectExplicitJobsWorkflowRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]);
+    expectImmutableExplicitJobsRefs(pinned, 'explicit-jobs-backslash.yml');
+
+    const mutable = ['? jobs', ':', '  call: { with: { note: "foo\\\\" }, uses: owner/repo/.github/workflows/build.yml@main }'].join('\n');
+    expect(() => expectImmutableExplicitJobsRefs(mutable, 'explicit-jobs-backslash.yml')).toThrow();
   });
 });
