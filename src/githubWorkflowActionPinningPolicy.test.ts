@@ -67,12 +67,26 @@ const splitTopLevelFlowEntries = (body: string) => {
 };
 
 const extractActionRefs = (workflow: string) => {
-  const refs: string[] = []; const lines = workflow.split('\n'); const scalarAnchors = new Map<string, string>(); let ignoredBlockIndent: number | null = null; let flowStepsDepth = 0; let jobsIndent: number | null = null; let jobIndent: number | null = null;
+  const refs: string[] = []; const lines = workflow.split('\n'); const scalarAnchors = new Map<string, string>(); let ignoredBlockIndent: number | null = null; let flowStepsDepth = 0; let jobsIndent: number | null = null; let jobIndent: number | null = null; let blockStepsIndent: number | null = null; let pendingBareStepIndent: number | null = null;
   const resolveYamlKey = (rawKey: string) => { const decoded = decodeYamlKey(rawKey); return decoded.startsWith('*') ? scalarAnchors.get(decoded.slice(1)) ?? decoded : decoded; };
   const collectFlowUses = (source: string) => {
     const topLevel = source.replace(/\b(?:with|env|metadata)\s*:\s*\{[^{}]*\}/g, '');
     const flowEntryPattern = /(?=(?:^|[\[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*("[^"]+"|'[^']+'|[^,}\]\s]+))/g;
     for (const entry of topLevel.matchAll(flowEntryPattern)) if (resolveYamlKey(entry[1]) === 'uses') refs.push(unquote(entry[2]));
+  };
+  const collectInlineJobs = (body: string) => {
+    for (const jobEntry of splitTopLevelFlowEntries(body)) {
+      const job = jobEntry.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\{([\s\S]*)\}\s*$/);
+      if (!job) continue;
+      for (const entry of splitTopLevelFlowEntries(job[1])) {
+        const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
+        if (mapping && resolveYamlKey(mapping[1]) === 'uses') refs.push(unquote(mapping[2]));
+        if (mapping && resolveYamlKey(mapping[1]) === 'steps') {
+          const opening = entry.indexOf('[');
+          if (opening >= 0) collectFlowUses(sliceStructuralFlowSequence(entry, opening));
+        }
+      }
+    }
   };
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index]; const indent = rawLine.match(/^\s*/)?.[0].length ?? 0; const withoutComment = stripYamlComment(rawLine); const trimmed = withoutComment.trim();
@@ -81,26 +95,27 @@ const extractActionRefs = (workflow: string) => {
     const scalarAnchor = withoutComment.match(/:\s*&([A-Za-z0-9_-]+)\s+("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z0-9_-]+)\s*$/); if (scalarAnchor) scalarAnchors.set(scalarAnchor[1], unquote(scalarAnchor[2]));
 
     const inlineJobs = withoutComment.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*\{(.*)\}\s*$/);
-    if (inlineJobs && resolveYamlKey(inlineJobs[1]) === 'jobs') {
-      for (const jobEntry of splitTopLevelFlowEntries(inlineJobs[2])) {
-        const job = jobEntry.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\{([\s\S]*)\}\s*$/);
-        if (!job) continue;
-        for (const entry of splitTopLevelFlowEntries(job[1])) {
-          const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
-          if (mapping && resolveYamlKey(mapping[1]) === 'uses') refs.push(unquote(mapping[2]));
-          if (mapping && resolveYamlKey(mapping[1]) === 'steps') {
-            const opening = entry.indexOf('[');
-            if (opening >= 0) collectFlowUses(sliceStructuralFlowSequence(entry, opening));
-          }
-        }
+    if (inlineJobs && resolveYamlKey(inlineJobs[1]) === 'jobs') { collectInlineJobs(inlineJobs[2]); continue; }
+    const multilineJobs = withoutComment.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*\{\s*$/);
+    if (multilineJobs && resolveYamlKey(multilineJobs[1]) === 'jobs') {
+      const collected: string[] = []; let depth = 1;
+      for (let child = index + 1; child < lines.length; child += 1) {
+        const childLine = stripYamlComment(lines[child]); const structure = flowStructure(childLine); depth += structure.curly;
+        if (depth <= 0) { index = child; break; }
+        collected.push(childLine.trim()); index = child;
       }
+      collectInlineJobs(collected.join(' '));
       continue;
     }
 
     const flowStartMatches = Array.from(withoutComment.matchAll(/(?=(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(?:&[A-Za-z0-9_-]+\s+)*\[)/g));
     const flowStepsMatch = flowStartMatches.find((match) => resolveYamlKey(match[1]) === 'steps'); const startsFlowSteps = Boolean(flowStepsMatch); if (startsFlowSteps && flowStepsDepth === 0) flowStepsDepth = 1;
     const section = trimmed.match(/^((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*$/);
-    if (section && resolveYamlKey(section[1]) === 'jobs') { jobsIndent = indent; jobIndent = null; continue; }
+    if (section && resolveYamlKey(section[1]) === 'jobs') { jobsIndent = indent; jobIndent = null; blockStepsIndent = null; pendingBareStepIndent = null; continue; }
+    if (section && resolveYamlKey(section[1]) === 'steps') { blockStepsIndent = indent; pendingBareStepIndent = null; continue; }
+    if (blockStepsIndent !== null && indent <= blockStepsIndent) { blockStepsIndent = null; pendingBareStepIndent = null; }
+    if (blockStepsIndent !== null && /^-\s*$/.test(trimmed)) { pendingBareStepIndent = indent; continue; }
+    if (pendingBareStepIndent !== null && indent > pendingBareStepIndent && trimmed.startsWith('{')) { collectFlowUses(trimmed); pendingBareStepIndent = null; continue; }
     if (jobsIndent !== null && indent <= jobsIndent) { jobsIndent = null; jobIndent = null; }
     if (jobsIndent !== null && indent > jobsIndent && jobIndent === null) jobIndent = indent;
     const explicitKey = withoutComment.match(/^\s*(?:-\s*)?\?\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*$/);
@@ -109,11 +124,7 @@ const extractActionRefs = (workflow: string) => {
         const explicitValue = stripYamlComment(lines[child]).match(/^\s*:\s*(.*)$/);
         if (!explicitValue) { if (stripYamlComment(lines[child]).trim()) break; continue; }
         const value = explicitValue[1].trim();
-        if (value) {
-          const opening = value.indexOf('[');
-          if (opening >= 0) collectFlowUses(sliceStructuralFlowSequence(value, opening));
-          index = child;
-        }
+        if (value) { const opening = value.indexOf('['); if (opening >= 0) collectFlowUses(sliceStructuralFlowSequence(value, opening)); index = child; }
         break;
       }
       continue;
@@ -174,5 +185,7 @@ describe('GitHub workflow action pinning policy', () => {
   it('recognizes quoted jobs sections for reusable workflow scope', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`"jobs":\n  call: { uses: owner/repo/.github/workflows/build.yml@${sha} }`; expectImmutableExternalActions(pinned,'quoted-jobs.yml'); expect(() => expectImmutableExternalActions('"jobs":\n  call: { uses: owner/repo/.github/workflows/build.yml@main }','quoted-jobs.yml')).toThrow(); });
   it('resolves aliased steps mapping keys before flow-step detection', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`label: &step-key steps\n*step-key: [{ uses: actions/checkout@${sha} }]`; expectImmutableExternalActions(pinned,'aliased-steps.yml'); expect(() => expectImmutableExternalActions('label: &step-key steps\n*step-key: [{ uses: actions/checkout@v4 }]','aliased-steps.yml')).toThrow(); });
   it('enforces reusable-workflow refs inside inline jobs mappings', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`jobs: { call: { uses: owner/repo/.github/workflows/build.yml@${sha} } }`; expect(extractActionRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]); expect(() => expectImmutableExternalActions('jobs: { call: { uses: owner/repo/.github/workflows/build.yml@main } }','inline-jobs.yml')).toThrow(); });
+  it('recognizes multiline outer jobs mappings and quoted reusable-workflow uses keys', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=['jobs: {',`  call: { "uses": owner/repo/.github/workflows/build.yml@${sha} }`,'}'].join('\n'); expect(extractActionRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]); expect(() => expectImmutableExternalActions(['jobs: {','  call: { "uses": owner/repo/.github/workflows/build.yml@main }','}'].join('\n'),'multiline-jobs.yml')).toThrow(); });
   it('recognizes explicit-key steps collections', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`jobs:\n  build:\n    ? steps\n    : [{ uses: actions/checkout@${sha} }]`; expect(extractActionRefs(pinned)).toContain(`actions/checkout@${sha}`); expect(() => expectImmutableExternalActions('jobs:\n  build:\n    ? steps\n    : [{ uses: actions/checkout@v4 }]','explicit-steps.yml')).toThrow(); });
+  it('preserves block steps scope across bare sequence markers and decoded uses keys', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=['steps:','  -','    { "\\u0075ses": actions/checkout@'+sha+' }'].join('\n'); expect(extractActionRefs(pinned)).toContain(`actions/checkout@${sha}`); expect(() => expectImmutableExternalActions(['steps:','  -','    { "\\u0075ses": actions/checkout@v4 }'].join('\n'),'bare-step.yml')).toThrow(); });
 });
