@@ -41,7 +41,8 @@ const containsUntrustedText = (value: string) => {
 const extractDirectRunValues = (workflow: string) => {
   const values: string[] = [];
   const key = '(?:"(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[A-Za-z_][A-Za-z0-9_-]*)';
-  const mapping = new RegExp(`(?:^|[,{])\\s*(${key})\\s*:\\s*("(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[^,}]+)`, 'g');
+  // Include '[' because flow-style step sequences begin with `[{ run: ... }]`.
+  const mapping = new RegExp(`(?:^|[\\[,{])\\s*(${key})\\s*:\\s*("(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[^,}]+)`, 'g');
 
   for (const line of workflow.split('\n')) {
     for (const match of line.matchAll(mapping)) {
