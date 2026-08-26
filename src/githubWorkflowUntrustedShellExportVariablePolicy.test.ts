@@ -7,15 +7,30 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
-const normalizePayloadAccess = (value: string) => value.replace(/\?\./g, '.');
+const normalizePayloadAccess = (value: string) => value
+  .replace(/\?\.\s*\[\s*(['"])([A-Za-z_][A-Za-z0-9_-]*)\1\s*\]/g, '.$2')
+  .replace(/\[\s*(['"])([A-Za-z_][A-Za-z0-9_-]*)\1\s*\]/g, '.$2')
+  .replace(/\?\./g, '.');
+
 const untrustedPayloadPattern = /(?:github\.event\.(?:issue|comment|pull_request|review|review_comment)\.(?:title|body)|context\.payload\.(?:issue|comment|pull_request|review|review_comment)\.(?:title|body))/;
 
 const exportedUntrustedVariables = (workflow: string) => {
   const variables = new Set<string>();
   const aliases = new Set<string>();
+  const assignments = [...workflow.matchAll(/(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*([^;\n]+)/g)]
+    .map((match) => ({ name: match[1], value: normalizePayloadAccess(match[2].trim()) }));
 
-  for (const match of workflow.matchAll(/(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*([^;\n]+)/g)) {
-    if (untrustedPayloadPattern.test(normalizePayloadAccess(match[2]))) aliases.add(match[1]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const assignment of assignments) {
+      const isDirectlyUntrusted = untrustedPayloadPattern.test(assignment.value);
+      const isAliasedUntrusted = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(assignment.value) && aliases.has(assignment.value);
+      if ((isDirectlyUntrusted || isAliasedUntrusted) && !aliases.has(assignment.name)) {
+        aliases.add(assignment.name);
+        changed = true;
+      }
+    }
   }
 
   const exportPattern = /core\.exportVariable\(\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\1\s*,\s*([\s\S]*?)\)/g;
@@ -76,26 +91,27 @@ describe('GitHub Script exported-variable shell boundary policy', () => {
     expect(() => expectNoExportedUntrustedShellValues(unsafe, 'exported-comment.yml')).toThrow();
   });
 
-  it('rejects local aliases of untrusted payload text before export', () => {
+  it('rejects chained local aliases of untrusted payload text before export', () => {
     const unsafe = [
       'steps:',
       '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
       '    with:',
       '      script: |',
-      '        const command = context.payload.comment.body;',
+      '        const raw = context.payload.comment.body;',
+      '        const command = raw;',
       "        core.exportVariable('CMD', command)",
       '  - run: bash -c "$CMD"',
     ].join('\n');
     expect(() => expectNoExportedUntrustedShellValues(unsafe, 'exported-alias.yml')).toThrow();
   });
 
-  it('rejects optional-chained payload text exported to shell', () => {
+  it('rejects computed optional-chained payload text exported to shell', () => {
     const unsafe = [
       'steps:',
       '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
       '    with:',
       '      script: |',
-      "        core.exportVariable('CMD', context.payload.comment?.body)",
+      "        core.exportVariable('CMD', context.payload.comment?.['body'])",
       '  - run: call %CMD%',
     ].join('\n');
     expect(() => expectNoExportedUntrustedShellValues(unsafe, 'exported-optional-chain.yml')).toThrow();
