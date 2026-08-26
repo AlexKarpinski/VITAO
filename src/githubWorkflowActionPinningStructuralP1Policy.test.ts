@@ -35,15 +35,21 @@ const structuralUses = (source: string) => {
   let pendingBareStepIndent: number | null = null;
 
   const collectFlowMapping = (text: string) => {
+    const normalized = text.trim();
+    if (normalized.startsWith('{') && normalized.endsWith('}')) {
+      collectFlowMapping(normalized.slice(1, -1));
+      return;
+    }
+
     let quote: '"' | "'" | null = null;
     let curly = 0;
     let square = 0;
     let start = 0;
     const entries: string[] = [];
-    for (let index = 0; index < text.length; index += 1) {
-      const char = text[index];
+    for (let index = 0; index < normalized.length; index += 1) {
+      const char = normalized[index];
       if (quote) {
-        if (char === quote && (quote === "'" || text[index - 1] !== '\\')) quote = null;
+        if (char === quote && (quote === "'" || normalized[index - 1] !== '\\')) quote = null;
         continue;
       }
       if (char === '"' || char === "'") { quote = char; continue; }
@@ -52,13 +58,18 @@ const structuralUses = (source: string) => {
       else if (char === '[') square += 1;
       else if (char === ']') square -= 1;
       else if (char === ',' && curly === 0 && square === 0) {
-        entries.push(text.slice(start, index));
+        entries.push(normalized.slice(start, index));
         start = index + 1;
       }
     }
-    entries.push(text.slice(start));
+    entries.push(normalized.slice(start));
     for (const entry of entries) {
-      const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
+      const candidate = entry.trim();
+      if (candidate.startsWith('{') && candidate.endsWith('}')) {
+        collectFlowMapping(candidate);
+        continue;
+      }
+      const mapping = candidate.match(/^((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
       if (mapping && decodeYamlKey(mapping[1]) === 'uses') refs.push(stripQuoted(mapping[2]));
     }
   };
@@ -87,7 +98,10 @@ const structuralUses = (source: string) => {
           }
           value = parts.join(' ');
         }
-        if (value.startsWith('[')) collectFlowMapping(value.slice(1, value.lastIndexOf(']') >= 0 ? value.lastIndexOf(']') : undefined));
+        if (value.startsWith('[')) {
+          const closing = value.lastIndexOf(']');
+          collectFlowMapping(value.slice(1, closing >= 0 ? closing : undefined));
+        }
         explicitStepsIndent = null;
         continue;
       }
@@ -109,7 +123,7 @@ const structuralUses = (source: string) => {
       continue;
     }
     if (pendingBareStepIndent !== null && indent > pendingBareStepIndent && trimmed.startsWith('{')) {
-      collectFlowMapping(trimmed.slice(1, trimmed.lastIndexOf('}') >= 0 ? trimmed.lastIndexOf('}') : undefined));
+      collectFlowMapping(trimmed);
       pendingBareStepIndent = null;
     }
   }
