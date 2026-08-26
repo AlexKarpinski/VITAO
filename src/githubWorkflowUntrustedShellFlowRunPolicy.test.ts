@@ -78,7 +78,7 @@ describe('GitHub workflow flow-style shell trust policy', () => {
   it('rejects mutable event text in a flow-style run mapping', () => {
     expect(() =>
       expectNoUntrustedFlowRun(
-        `steps:\n  - { run: 'bash -c "${{ github.event.comment.body }}"' }`,
+        `steps:\n  - { run: 'bash -c "\${{ github.event.comment.body }}"' }`,
         'unsafe.yml',
       ),
     ).toThrow();
