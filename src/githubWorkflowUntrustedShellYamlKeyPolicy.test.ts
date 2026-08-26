@@ -20,9 +20,12 @@ const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
-const isUntrusted = (value: string) =>
-  /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/
-    .test(normalizeAccess(value));
+const isUntrusted = (value: string) => {
+  const normalized = normalizeAccess(value);
+  return /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/
+    .test(normalized)
+    || /toJSON\(\s*github\.event\s*\)/.test(normalized);
+};
 
 const shellReferences = (script: string, name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -63,7 +66,7 @@ const splitTopLevel = (body: string) => {
 const flowEnvBodies = (workflow: string) => {
   const bodies: string[] = [];
   for (const line of workflow.split('\n')) {
-    const envIndex = line.search(/\benv\s*:/);
+    const envIndex = line.search(/\benv[ \t]*:/);
     if (envIndex < 0) continue;
     const opening = line.indexOf('{', envIndex);
     const closing = line.lastIndexOf('}');
@@ -76,7 +79,7 @@ const collectFlowEnvTaint = (workflow: string) => {
   const tainted = new Set<string>();
   for (const body of flowEnvBodies(workflow)) {
     for (const entry of splitTopLevel(body)) {
-      const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.*)$/);
+      const mapping = entry.match(/^[ \t]*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))[ \t]*:[ \t]*(.*)$/);
       if (!mapping) continue;
       const name = decodeYamlKey(mapping[1]);
       if (isUntrusted(mapping[2])) tainted.add(name);
@@ -87,7 +90,7 @@ const collectFlowEnvTaint = (workflow: string) => {
 
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
-  const keyPattern = /(?:^|\n)\s*(?:-\s*)?((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*([^\n]+)/g;
+  const keyPattern = /(?:^|\n)[ \t]*(?:-[ \t]*)?((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))[ \t]*:[ \t]*([^\n]+)/g;
   for (const match of workflow.matchAll(keyPattern)) {
     if (decodeYamlKey(match[1]) === 'run') scripts.push(match[2].trim());
   }
@@ -128,6 +131,16 @@ describe('GitHub workflow YAML key shell policy', () => {
       '  test:',
       '    steps:',
       '      - "r\\u0075n": bash -c "${{ github.event.comment.body }}"',
+    ].join('\n');
+    expect(() => expectNoYamlKeyShellBypass(unsafe)).toThrow();
+  });
+
+  it('rejects serialization of the complete GitHub event into shell', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - run: bash -c \'${{ toJSON(github.event) }}\'',
     ].join('\n');
     expect(() => expectNoYamlKeyShellBypass(unsafe)).toThrow();
   });
