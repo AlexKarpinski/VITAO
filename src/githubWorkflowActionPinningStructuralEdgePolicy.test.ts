@@ -27,6 +27,65 @@ const decodeYamlKey = (raw: string) => {
   return key;
 };
 
+const structuralSquareDelta = (line: string) => {
+  let quote: '"' | "'" | null = null;
+  let delta = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (char === quote) {
+        let backslashes = 0;
+        for (let previous = index - 1; previous >= 0 && line[previous] === '\\'; previous -= 1) backslashes += 1;
+        if (quote === "'" || backslashes % 2 === 0) quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; continue; }
+    if (char === '[') delta += 1;
+    else if (char === ']') delta -= 1;
+  }
+  return delta;
+};
+
+const splitStructuralFlowEntries = (line: string) => {
+  const entries: string[] = [];
+  let quote: '"' | "'" | null = null;
+  let curly = 0;
+  let square = 0;
+  let start = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (char === quote) {
+        let backslashes = 0;
+        for (let previous = index - 1; previous >= 0 && line[previous] === '\\'; previous -= 1) backslashes += 1;
+        if (quote === "'" || backslashes % 2 === 0) quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; continue; }
+    if (char === '{') curly += 1;
+    else if (char === '}') curly -= 1;
+    else if (char === '[') square += 1;
+    else if (char === ']') square -= 1;
+    else if (char === ',' && curly <= 1 && square <= 1) {
+      entries.push(line.slice(start, index));
+      start = index + 1;
+    }
+  }
+  entries.push(line.slice(start));
+  return entries;
+};
+
+const collectStructuralUses = (line: string) => {
+  const refs: string[] = [];
+  for (const entry of splitStructuralFlowEntries(line)) {
+    const mapping = entry.match(/(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*([^,}\]]+)/);
+    if (mapping && decodeYamlKey(mapping[1]) === 'uses') refs.push(stripQuoted(mapping[2]));
+  }
+  return refs;
+};
+
 const extractMultilineFlowJobRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
@@ -124,21 +183,16 @@ const extractExplicitStepsRefs = (workflow: string) => {
       }
       const opening = value[1].indexOf('[');
       if (opening >= 0) {
-        flowDepth = 1;
         const remainder = value[1].slice(opening + 1);
-        for (const match of remainder.matchAll(/(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*([^,}\]]+)/g)) {
-          if (decodeYamlKey(match[1]) === 'uses') refs.push(stripQuoted(match[2]));
-        }
-        flowDepth += (remainder.match(/\[/g) ?? []).length - (remainder.match(/\]/g) ?? []).length;
+        refs.push(...collectStructuralUses(remainder));
+        flowDepth = 1 + structuralSquareDelta(remainder);
       }
       pendingSteps = false;
       continue;
     }
     if (flowDepth > 0) {
-      for (const match of line.matchAll(/(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*([^,}\]]+)/g)) {
-        if (decodeYamlKey(match[1]) === 'uses') refs.push(stripQuoted(match[2]));
-      }
-      flowDepth += (line.match(/\[/g) ?? []).length - (line.match(/\]/g) ?? []).length;
+      refs.push(...collectStructuralUses(line));
+      flowDepth += structuralSquareDelta(line);
       if (flowDepth < 0) flowDepth = 0;
     }
   }
@@ -160,46 +214,34 @@ describe('GitHub workflow structural action-pinning edge policy', () => {
   });
 
   it('rejects mutable reusable-workflow refs in multiline outer jobs mappings', () => {
-    const unsafe = [
-      'jobs: {',
-      '  call: { uses: owner/repo/.github/workflows/build.yml@main },',
-      '}',
-    ].join('\n');
+    const unsafe = ['jobs: {', '  call: { uses: owner/repo/.github/workflows/build.yml@main },', '}'].join('\n');
     expect(() => expectPinned(extractMultilineFlowJobRefs(unsafe))).toThrow();
   });
 
   it('rejects mutable action refs after a bare steps sequence marker', () => {
-    const unsafe = [
-      'jobs:',
-      '  build:',
-      '    steps:',
-      '      -',
-      '        { uses: actions/checkout@v4 }',
-    ].join('\n');
+    const unsafe = ['jobs:', '  build:', '    steps:', '      -', '        { uses: actions/checkout@v4 }'].join('\n');
     expect(() => expectPinned(extractBareSequenceStepRefs(unsafe))).toThrow();
   });
 
   it('rejects escaped uses keys after a bare steps sequence marker', () => {
-    const unsafe = [
-      'jobs:',
-      '  build:',
-      '    steps:',
-      '      -',
-      '        { "\\u0075ses": actions/checkout@v4 }',
-    ].join('\n');
+    const unsafe = ['jobs:', '  build:', '    steps:', '      -', '        { "\\u0075ses": actions/checkout@v4 }'].join('\n');
     expect(() => expectPinned(extractBareSequenceStepRefs(unsafe))).toThrow();
   });
 
   it('rejects mutable refs in multiline explicit-key steps sequences', () => {
-    const unsafe = [
-      'jobs:',
-      '  build:',
-      '    ? steps',
-      '    : [',
-      '      { uses: actions/checkout@v4 },',
-      '    ]',
-    ].join('\n');
+    const unsafe = ['jobs:', '  build:', '    ? steps', '    : [', '      { uses: actions/checkout@v4 },', '    ]'].join('\n');
     expect(() => expectPinned(extractExplicitStepsRefs(unsafe))).toThrow();
+  });
+
+  it('keeps explicit steps context when quoted scalars contain closing brackets', () => {
+    const unsafe = ['jobs:', '  build:', '    ? steps', '    : [', '      { run: "echo ]" },', '      { uses: actions/checkout@v4 },', '    ]'].join('\n');
+    expect(() => expectPinned(extractExplicitStepsRefs(unsafe))).toThrow();
+  });
+
+  it('ignores uses-like text inside quoted explicit-step scalars', () => {
+    const safe = ['jobs:', '  build:', '    ? steps', '    : [', '      { run: "echo ok, uses: actions/checkout@v4" },', '    ]'].join('\n');
+    expect(extractExplicitStepsRefs(safe)).toEqual([]);
+    expectPinned(extractExplicitStepsRefs(safe));
   });
 
   it('accepts immutable refs for the same structural forms', () => {
