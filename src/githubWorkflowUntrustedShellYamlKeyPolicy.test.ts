@@ -34,14 +34,19 @@ const splitTopLevel = (body: string) => {
   let quote: '"' | "'" | null = null;
   let curly = 0;
   let square = 0;
+  let expressionDepth = 0;
   let start = 0;
   for (let index = 0; index < body.length; index += 1) {
     const char = body[index];
+    const next = body[index + 1];
     if (quote) {
       if (char === quote && (quote === "'" || body[index - 1] !== '\\')) quote = null;
       continue;
     }
     if (char === '"' || char === "'") { quote = char; continue; }
+    if (char === '$' && next === '{' && body[index + 2] === '{') { expressionDepth += 1; index += 2; continue; }
+    if (expressionDepth > 0 && char === '}' && next === '}') { expressionDepth -= 1; index += 1; continue; }
+    if (expressionDepth > 0) continue;
     if (char === '{') curly += 1;
     else if (char === '}') curly -= 1;
     else if (char === '[') square += 1;
@@ -55,10 +60,22 @@ const splitTopLevel = (body: string) => {
   return entries;
 };
 
+const flowEnvBodies = (workflow: string) => {
+  const bodies: string[] = [];
+  for (const line of workflow.split('\n')) {
+    const envIndex = line.search(/\benv\s*:/);
+    if (envIndex < 0) continue;
+    const opening = line.indexOf('{', envIndex);
+    const closing = line.lastIndexOf('}');
+    if (opening >= 0 && closing > opening) bodies.push(line.slice(opening + 1, closing));
+  }
+  return bodies;
+};
+
 const collectFlowEnvTaint = (workflow: string) => {
   const tainted = new Set<string>();
-  for (const match of workflow.matchAll(/\benv\s*:\s*\{([^{}]*)\}/g)) {
-    for (const entry of splitTopLevel(match[1])) {
+  for (const body of flowEnvBodies(workflow)) {
+    for (const entry of splitTopLevel(body)) {
       const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.*)$/);
       if (!mapping) continue;
       const name = decodeYamlKey(mapping[1]);
