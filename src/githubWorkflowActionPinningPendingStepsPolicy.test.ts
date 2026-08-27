@@ -10,6 +10,19 @@ const workflowFiles = readdirSync(workflowsDir)
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 
+const decodeYamlKey = (raw: string) => {
+  const key = raw.trim();
+  if (key.startsWith('"') && key.endsWith('"')) {
+    try {
+      return JSON.parse(key);
+    } catch {
+      return key.slice(1, -1);
+    }
+  }
+  if (key.startsWith("'") && key.endsWith("'")) return key.slice(1, -1).replace(/''/g, "'");
+  return key;
+};
+
 const structuralBracketDelta = (line: string) => {
   let quote: '"' | "'" | null = null;
   let backslashes = 0;
@@ -88,15 +101,17 @@ const collectDeferredStepsRefs = (workflow: string) => {
   for (const raw of lines) {
     const trimmed = raw.trim();
     const indent = indentOf(raw);
+    const keyMatch = trimmed.match(/^((?:"(?:\\.|[^"])*"|'(?:''|[^'])*'|[A-Za-z0-9_.-]+))\s*:\s*$/);
+    const isStepsKey = keyMatch ? decodeYamlKey(keyMatch[1]) === 'steps' : false;
 
-    if (flowDepth === 0 && /^steps\s*:\s*$/.test(trimmed)) {
+    if (flowDepth === 0 && isStepsKey) {
       pendingStepsIndent = indent;
       blockStepsIndent = indent;
       bareStepIndent = null;
       continue;
     }
 
-    if (blockStepsIndent !== null && trimmed && indent <= blockStepsIndent && !/^steps\s*:/.test(trimmed)) {
+    if (blockStepsIndent !== null && trimmed && indent <= blockStepsIndent && !isStepsKey) {
       blockStepsIndent = null;
       bareStepIndent = null;
     }
@@ -156,6 +171,16 @@ describe('deferred steps flow-sequence immutable pinning', () => {
 
     const mutable = ['jobs:', '  test:', '    steps:', '      [', '        { uses: actions/checkout@v4 }', '      ]'].join('\n');
     expect(() => expectDeferredStepsPinned(mutable, 'mutable.yml')).toThrow();
+  });
+
+  it('decodes quoted steps keys before tracking a deferred sequence', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = ['jobs:', '  test:', '    "steps":', '      [', `        { uses: actions/checkout@${sha} }`, '      ]'].join('\n');
+    expect(collectDeferredStepsRefs(pinned)).toContain(`actions/checkout@${sha}`);
+    expectDeferredStepsPinned(pinned, 'quoted-steps.yml');
+
+    const mutable = ['jobs:', '  test:', '    "steps":', '      [', '        { uses: actions/checkout@v4 }', '      ]'].join('\n');
+    expect(() => expectDeferredStepsPinned(mutable, 'quoted-steps.yml')).toThrow();
   });
 
   it('ignores quoted brackets while tracking a deferred flow sequence', () => {
