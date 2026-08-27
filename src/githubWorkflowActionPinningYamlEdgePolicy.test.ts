@@ -10,7 +10,8 @@ const workflowFiles = readdirSync(workflowsDir)
 const immutableActionRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const stripComment = (line: string) => line.replace(/\s+#.*$/, '');
 const isActionStepContext = (line: string) => /^\s*-\s*\{/.test(line) || /\bsteps\s*:\s*\[/.test(line);
-const isBlockHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(value.trim());
+const stripNodeProperties = (value: string) => value.trim().replace(/^(?:(?:&[A-Za-z0-9_.-]+|![^\s]+)\s+)+/, '');
+const isBlockHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(stripNodeProperties(value));
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 
 const extractTargetedActionRefs = (workflow: string) => {
@@ -31,7 +32,7 @@ const extractTargetedActionRefs = (workflow: string) => {
     }
 
     if (explicitOuterKeyIndent !== null) {
-      const explicitValue = trimmed.match(/^:\s*(\S+)\s*$/);
+      const explicitValue = trimmed.match(/^:\s*(.+?)\s*$/);
       if (indent >= explicitOuterKeyIndent && explicitValue && isBlockHeader(explicitValue[1])) {
         ignoredBlockIndent = indent;
         explicitOuterKeyIndent = null;
@@ -64,7 +65,7 @@ const extractTargetedActionRefs = (workflow: string) => {
       continue;
     }
 
-    const outerScalar = line.match(/^\s*(?:-\s*)?(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(\S+)\s*$/);
+    const outerScalar = line.match(/^\s*(?:-\s*)?(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.+?)\s*$/);
     if (outerScalar && isBlockHeader(outerScalar[1])) {
       ignoredBlockIndent = indent;
       continue;
@@ -137,6 +138,22 @@ describe('GitHub workflow deferred YAML action pinning edge policy', () => {
     ].join('\n');
     expect(extractTargetedActionRefs(documentation)).toEqual([]);
     expectTargetedRefsImmutable(documentation, 'explicit-block-scalar-docs.yml');
+  });
+
+  it('ignores explicit-key block scalars with YAML node properties', () => {
+    const documentation = [
+      'jobs:',
+      '  demo:',
+      '    steps:',
+      '      - ? run',
+      '        : &script |',
+      '            Example configuration:',
+      '            uses: >-',
+      '              actions/checkout@v4',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(extractTargetedActionRefs(documentation)).toEqual([]);
+    expectTargetedRefsImmutable(documentation, 'explicit-node-property-block-scalar-docs.yml');
   });
 
   it('still enforces immutable refs in actual flow-style step contexts', () => {
