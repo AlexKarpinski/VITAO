@@ -95,7 +95,7 @@ const collectExplicitJobsWorkflowRefs = (workflow: string) => {
       if (/^\{/.test(trimmed)) continue;
     }
 
-    const splitNodePropertyJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?:(?:&[^\s{}]+|![^\s{}]+)\s+)+$/);
+    const splitNodePropertyJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?:&[^\s{}]+|![^\s{}]+)(?:\s+(?:&[^\s{}]+|![^\s{}]+))*\s*$/);
     if (splitNodePropertyJob) {
       pendingFlowJobIndent = indent;
       continue;
