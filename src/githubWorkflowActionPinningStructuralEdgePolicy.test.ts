@@ -141,7 +141,7 @@ const extractBareSequenceStepRefs = (workflow: string) => {
       ignoredBlockIndent = null;
     }
 
-    if (/:[ \t]*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?[ \t]*$/.test(line)) {
+    if (/:[ \t]*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?[ \t]*(?:#.*)?$/.test(line)) {
       ignoredBlockIndent = indent;
       continue;
     }
@@ -241,6 +241,12 @@ describe('GitHub workflow structural action-pinning edge policy', () => {
 
   it('ignores bare-step examples inside block scalars', () => {
     const documented = ['env:', '  DOC: |', '    steps:', '      -', '        { uses: actions/checkout@v4 }'].join('\n');
+    expect(extractBareSequenceStepRefs(documented)).toEqual([]);
+    expectPinned(extractBareSequenceStepRefs(documented));
+  });
+
+  it('ignores bare-step examples inside commented block scalar headers', () => {
+    const documented = ['env:', '  DOC: | # action example', '    steps:', '      -', '        { uses: actions/checkout@v4 }'].join('\n');
     expect(extractBareSequenceStepRefs(documented)).toEqual([]);
     expectPinned(extractBareSequenceStepRefs(documented));
   });
