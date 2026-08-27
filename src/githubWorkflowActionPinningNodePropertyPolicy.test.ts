@@ -10,6 +10,15 @@ const workflowFiles = readdirSync(workflowsDir)
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const blockScalarHeader = /:\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*(?:#.*)?$/;
 
+const decodeKey = (raw: string) => {
+  const value = raw.trim();
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try { return JSON.parse(value); } catch { return value.slice(1, -1); }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1).replace(/''/g, "'");
+  return value;
+};
+
 const unquote = (raw: string) => {
   const value = raw.trim().replace(/[,}]\s*$/, '').trim();
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
@@ -77,8 +86,8 @@ const collectNodePropertyStepRefs = (workflow: string) => {
     const entry = line.match(/^\s*-\s+(?:(?:&|!)[^\s{}]+\s+)+\{([\s\S]*)\}\s*$/);
     if (!entry) continue;
     for (const mapping of splitTopLevelEntries(entry[1])) {
-      const match = mapping.match(/^\s*["']?uses["']?\s*:\s*(.+?)\s*$/);
-      if (match) refs.push(unquote(match[1]));
+      const match = mapping.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^:\s]+))\s*:\s*(.+?)\s*$/);
+      if (match && decodeKey(match[1]) === 'uses') refs.push(unquote(match[2]));
     }
   }
   return refs;
@@ -110,6 +119,16 @@ describe('GitHub workflow node-property action pinning', () => {
 
     const tagged = 'steps:\n  - !custom { env: { NOTE: ok }, uses: actions/checkout@main }';
     expect(() => expectImmutableNodePropertyStepRefs(tagged, 'tagged-step.yml')).toThrow();
+  });
+
+  it('decodes escaped uses keys in anchored flow steps', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = `steps:\n  - &checkout { "\\u0075ses": actions/checkout@${sha} }`;
+    expect(collectNodePropertyStepRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
+    expectImmutableNodePropertyStepRefs(pinned, 'escaped-key.yml');
+
+    const mutable = 'steps:\n  - &checkout { "\\u0075ses": actions/checkout@v4 }';
+    expect(() => expectImmutableNodePropertyStepRefs(mutable, 'escaped-key.yml')).toThrow();
   });
 
   it('ignores node-property mappings outside an actual steps collection', () => {
