@@ -127,6 +127,7 @@ const collectDeferredStepsRefs = (workflow: string) => {
       bareStepIndent = null;
     }
 
+    let openedDeferredSequence = false;
     if (pendingStepsIndent !== null && flowDepth === 0) {
       if (!trimmed) continue;
       if (indent <= pendingStepsIndent) {
@@ -134,6 +135,7 @@ const collectDeferredStepsRefs = (workflow: string) => {
       } else if (trimmed.startsWith('[')) {
         flowDepth = structuralBracketDelta(raw);
         pendingStepsIndent = null;
+        openedDeferredSequence = true;
         if (flowDepth <= 0) flowDepth = 1;
       }
     }
@@ -141,7 +143,7 @@ const collectDeferredStepsRefs = (workflow: string) => {
     if (flowDepth === 0) continue;
 
     refs.push(...extractUsesFromFlowMapping(raw));
-    flowDepth += structuralBracketDelta(raw);
+    if (!openedDeferredSequence) flowDepth += structuralBracketDelta(raw);
     if (flowDepth < 0) flowDepth = 0;
   }
 
@@ -165,8 +167,8 @@ describe('deferred steps flow-sequence immutable pinning', () => {
 
   it('enforces refs when a steps sequence begins on the following line', () => {
     const sha = '0123456789abcdef0123456789abcdef01234567';
-    const pinned = ['jobs:', '  test:', '    steps:', '      [', `        { uses: actions/checkout@${sha} }`, '      ]'].join('\n');
-    expect(collectDeferredStepsRefs(pinned)).toContain(`actions/checkout@${sha}`);
+    const pinned = ['jobs:', '  test:', '    steps:', '      [', `        { uses: actions/checkout@${sha} }`, '      ]', '    strategy: { matrix: { include: [{ uses: actions/cache@v4 }] } }'].join('\n');
+    expect(collectDeferredStepsRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
     expectDeferredStepsPinned(pinned, 'pinned.yml');
 
     const mutable = ['jobs:', '  test:', '    steps:', '      [', '        { uses: actions/checkout@v4 }', '      ]'].join('\n');
