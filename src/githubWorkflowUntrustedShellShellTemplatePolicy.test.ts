@@ -41,12 +41,34 @@ const stripYamlComment = (value: string) => {
   return value;
 };
 
+const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const blockScalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
+
 const collectShellTemplates = (workflow: string) => {
   const templates: string[] = [];
-  for (const raw of workflow.split('\n')) {
+  const lines = workflow.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
     const line = stripYamlComment(raw);
     const match = line.match(/^\s*(?:-\s*)?(?:["']?shell["']?)\s*:\s*(.+?)\s*$/);
-    if (match) templates.push(match[1].trim());
+    if (!match) continue;
+
+    const value = match[1].trim();
+    if (!blockScalarHeader.test(value)) {
+      templates.push(value);
+      continue;
+    }
+
+    const parentIndent = indentOf(raw);
+    const body: string[] = [];
+    for (let child = index + 1; child < lines.length; child += 1) {
+      const childRaw = lines[child];
+      const childTrimmed = stripYamlComment(childRaw).trim();
+      if (childTrimmed && indentOf(childRaw) <= parentIndent) break;
+      if (childTrimmed) body.push(childTrimmed);
+      index = child;
+    }
+    templates.push(body.join('\n'));
   }
   return templates;
 };
@@ -76,6 +98,20 @@ describe('GitHub workflow custom-shell trust policy', () => {
       '        run: echo safe',
     ].join('\n');
     expect(() => expectSafeShellTemplates(unsafe, 'custom-shell.yml')).toThrow();
+  });
+
+  it('rejects attacker-controlled text inside block-scalar custom shell templates', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'jobs:',
+      '  test:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - shell: >-',
+      "          bash -c '${{ github.event.comment.body }}' -- {0}",
+      '        run: echo safe',
+    ].join('\n');
+    expect(() => expectSafeShellTemplates(unsafe, 'block-shell.yml')).toThrow();
   });
 
   it('rejects attacker-controlled pull-request head refs in shell templates', () => {
