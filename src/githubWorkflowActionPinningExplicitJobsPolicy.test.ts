@@ -77,7 +77,7 @@ const collectExplicitJobsWorkflowRefs = (workflow: string) => {
     }
     if (jobsValueIndent === null || !trimmed) continue;
     if (indent <= jobsValueIndent) { explicitJobsIndent = null; jobsValueIndent = null; continue; }
-    const flowJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\{([\s\S]*)\}\s*$/);
+    const flowJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?:(?:&[^\s{}]+|![^\s{}]+)\s+)*\{([\s\S]*)\}\s*$/);
     if (!flowJob) continue;
     for (const entry of splitTopLevelFlowEntries(flowJob[1])) {
       const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
@@ -127,5 +127,12 @@ describe('explicit top-level jobs immutable-pinning policy', () => {
     expect(collectExplicitJobsWorkflowRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]);
     const mutable = ['? jobs', ':', '  call: { uses: owner/repo/.github/workflows/build.yml@main } # mutable'].join('\n');
     expect(() => expectImmutableExplicitJobsRefs(mutable, 'explicit-jobs-comment.yml')).toThrow();
+  });
+  it('enforces reusable-workflow pins when a flow job has YAML node properties', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = ['? jobs', ':', `  call: &shared { uses: owner/repo/.github/workflows/build.yml@${sha} }`].join('\n');
+    expect(collectExplicitJobsWorkflowRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]);
+    const mutable = ['? jobs', ':', '  call: !shared { uses: owner/repo/.github/workflows/build.yml@main }'].join('\n');
+    expect(() => expectImmutableExplicitJobsRefs(mutable, 'explicit-jobs-node-property.yml')).toThrow();
   });
 });
