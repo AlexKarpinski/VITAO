@@ -10,6 +10,23 @@ const workflowFiles = readdirSync(workflowsDir)
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const blockScalarHeader = /:\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*(?:#.*)?$/;
 
+const stripYamlComment = (value: string) => {
+  let quote: '"' | "'" | null = null;
+  let backslashes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (char === '\\') { backslashes += 1; continue; }
+      if (char === quote && (quote === "'" || backslashes % 2 === 0)) quote = null;
+      backslashes = 0;
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; backslashes = 0; continue; }
+    if (char === '#' && (index === 0 || /\s/.test(value[index - 1]))) return value.slice(0, index).trimEnd();
+  }
+  return value;
+};
+
 const decodeKey = (raw: string, aliases: Map<string, string>) => {
   const value = raw.trim();
   if (value.startsWith('*')) return aliases.get(value.slice(1)) ?? value;
@@ -22,9 +39,7 @@ const decodeKey = (raw: string, aliases: Map<string, string>) => {
 
 const unquote = (raw: string) => {
   const value = raw.trim().replace(/[,}]\s*$/, '').trim();
-  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1);
-  }
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return value.slice(1, -1);
   return value;
 };
 
@@ -48,10 +63,7 @@ const splitTopLevelEntries = (body: string) => {
     else if (char === '}') curly -= 1;
     else if (char === '[') square += 1;
     else if (char === ']') square -= 1;
-    else if (char === ',' && curly === 0 && square === 0) {
-      entries.push(body.slice(start, index));
-      start = index + 1;
-    }
+    else if (char === ',' && curly === 0 && square === 0) { entries.push(body.slice(start, index)); start = index + 1; }
   }
   entries.push(body.slice(start));
   return entries;
@@ -72,24 +84,14 @@ const collectNodePropertyStepRefs = (workflow: string) => {
       if (!trimmed || indent > blockScalarIndent) continue;
       blockScalarIndent = null;
     }
-
-    if (blockScalarHeader.test(line)) {
-      blockScalarIndent = indent;
-      continue;
-    }
+    if (blockScalarHeader.test(line)) { blockScalarIndent = indent; continue; }
 
     const anchor = trimmed.match(/^(?:[^:#]+):\s*&([A-Za-z_][A-Za-z0-9_-]*)\s+(.+?)\s*$/);
-    if (anchor) aliases.set(anchor[1], decodeKey(anchor[2], aliases));
+    if (anchor) aliases.set(anchor[1], decodeKey(stripYamlComment(anchor[2]), aliases));
 
-    if (/^["']?steps["']?\s*:\s*$/.test(trimmed)) {
-      stepsIndent = indent;
-      continue;
-    }
+    if (/^["']?steps["']?\s*:\s*$/.test(trimmed)) { stepsIndent = indent; continue; }
     if (stepsIndent === null) continue;
-    if (trimmed && indent <= stepsIndent) {
-      stepsIndent = null;
-      continue;
-    }
+    if (trimmed && indent <= stepsIndent) { stepsIndent = null; continue; }
 
     const entry = line.match(/^\s*-\s+(?:(?:&|!)[^\s{}]+\s+)+\{([\s\S]*)\}\s*$/);
     if (!entry) continue;
@@ -111,9 +113,7 @@ const expectImmutableNodePropertyStepRefs = (workflow: string, source: string) =
 describe('GitHub workflow node-property action pinning', () => {
   it('enforces node-property flow steps across checked-in workflows', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
-    for (const file of workflowFiles) {
-      expectImmutableNodePropertyStepRefs(readFileSync(join(workflowsDir, file), 'utf8'), file);
-    }
+    for (const file of workflowFiles) expectImmutableNodePropertyStepRefs(readFileSync(join(workflowsDir, file), 'utf8'), file);
   });
 
   it('rejects mutable refs after anchors or tags regardless of key order', () => {
@@ -121,12 +121,8 @@ describe('GitHub workflow node-property action pinning', () => {
     const pinned = `steps:\n  - &checkout { name: Checkout, uses: actions/checkout@${sha} }`;
     expect(collectNodePropertyStepRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
     expectImmutableNodePropertyStepRefs(pinned, 'anchored-step.yml');
-
-    const mutable = 'steps:\n  - &checkout { name: Checkout, uses: actions/checkout@v4 }';
-    expect(() => expectImmutableNodePropertyStepRefs(mutable, 'anchored-step.yml')).toThrow();
-
-    const tagged = 'steps:\n  - !custom { env: { NOTE: ok }, uses: actions/checkout@main }';
-    expect(() => expectImmutableNodePropertyStepRefs(tagged, 'tagged-step.yml')).toThrow();
+    expect(() => expectImmutableNodePropertyStepRefs('steps:\n  - &checkout { name: Checkout, uses: actions/checkout@v4 }', 'anchored-step.yml')).toThrow();
+    expect(() => expectImmutableNodePropertyStepRefs('steps:\n  - !custom { env: { NOTE: ok }, uses: actions/checkout@main }', 'tagged-step.yml')).toThrow();
   });
 
   it('decodes escaped uses keys in anchored flow steps', () => {
@@ -134,26 +130,15 @@ describe('GitHub workflow node-property action pinning', () => {
     const pinned = `steps:\n  - &checkout { "\\u0075ses": actions/checkout@${sha} }`;
     expect(collectNodePropertyStepRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
     expectImmutableNodePropertyStepRefs(pinned, 'escaped-key.yml');
-
-    const mutable = 'steps:\n  - &checkout { "\\u0075ses": actions/checkout@v4 }';
-    expect(() => expectImmutableNodePropertyStepRefs(mutable, 'escaped-key.yml')).toThrow();
+    expect(() => expectImmutableNodePropertyStepRefs('steps:\n  - &checkout { "\\u0075ses": actions/checkout@v4 }', 'escaped-key.yml')).toThrow();
   });
 
-  it('resolves aliased uses keys in node-property steps', () => {
+  it('resolves aliased uses keys in node-property steps, including commented anchor values', () => {
     const sha = '0123456789abcdef0123456789abcdef01234567';
-    const pinned = [
-      'name: &uses-key uses',
-      'steps:',
-      `  - &checkout { *uses-key: actions/checkout@${sha} }`,
-    ].join('\n');
+    const pinned = ['name: &uses-key uses # canonical key', 'steps:', `  - &checkout { *uses-key: actions/checkout@${sha} }`].join('\n');
     expect(collectNodePropertyStepRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
     expectImmutableNodePropertyStepRefs(pinned, 'aliased-key.yml');
-
-    const mutable = [
-      'name: &uses-key uses',
-      'steps:',
-      '  - &checkout { *uses-key: actions/checkout@v4 }',
-    ].join('\n');
+    const mutable = ['name: &uses-key uses # canonical key', 'steps:', '  - &checkout { *uses-key: actions/checkout@v4 }'].join('\n');
     expect(() => expectImmutableNodePropertyStepRefs(mutable, 'aliased-key.yml')).toThrow();
   });
 
@@ -164,16 +149,7 @@ describe('GitHub workflow node-property action pinning', () => {
   });
 
   it('ignores node-property examples inside block scalars', () => {
-    const safe = [
-      'env:',
-      '  DOC: |',
-      '    steps:',
-      '      - &example { uses: actions/checkout@v4 }',
-      'jobs:',
-      '  build:',
-      '    steps:',
-      '      - &checkout { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 }',
-    ].join('\n');
+    const safe = ['env:', '  DOC: |', '    steps:', '      - &example { uses: actions/checkout@v4 }', 'jobs:', '  build:', '    steps:', '      - &checkout { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 }'].join('\n');
     expect(collectNodePropertyStepRefs(safe)).toEqual(['actions/checkout@0123456789abcdef0123456789abcdef01234567']);
     expectImmutableNodePropertyStepRefs(safe, 'block-scalar-doc.yml');
   });
