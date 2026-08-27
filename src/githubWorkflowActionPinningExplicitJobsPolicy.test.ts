@@ -60,29 +60,49 @@ const decodeMappingKey = (rawKey: string) => {
   return key;
 };
 
+const collectDirectUses = (body: string, refs: string[]) => {
+  for (const entry of splitTopLevelFlowEntries(body)) {
+    const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
+    if (mapping && decodeMappingKey(mapping[1]) === 'uses') refs.push(unquote(mapping[2]));
+  }
+};
+
 const collectExplicitJobsWorkflowRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let explicitJobsIndent: number | null = null;
   let jobsValueIndent: number | null = null;
+  let pendingFlowJobIndent: number | null = null;
   for (const rawLine of lines) {
     const line = stripYamlComment(rawLine);
     const indent = rawLine.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = line.trim();
-    if (/^\?\s+(?:jobs|["']jobs["'])\s*$/.test(trimmed)) { explicitJobsIndent = indent; jobsValueIndent = null; continue; }
+    if (/^\?\s+(?:jobs|["']jobs["'])\s*$/.test(trimmed)) { explicitJobsIndent = indent; jobsValueIndent = null; pendingFlowJobIndent = null; continue; }
     if (explicitJobsIndent !== null && jobsValueIndent === null) {
       if (!trimmed) continue;
       if (indent < explicitJobsIndent || !/^:\s*$/.test(trimmed)) { explicitJobsIndent = null; continue; }
       jobsValueIndent = indent; continue;
     }
     if (jobsValueIndent === null || !trimmed) continue;
-    if (indent <= jobsValueIndent) { explicitJobsIndent = null; jobsValueIndent = null; continue; }
-    const flowJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?:(?:&[^\s{}]+|![^\s{}]+)\s+)*\{([\s\S]*)\}\s*$/);
-    if (!flowJob) continue;
-    for (const entry of splitTopLevelFlowEntries(flowJob[1])) {
-      const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
-      if (mapping && decodeMappingKey(mapping[1]) === 'uses') refs.push(unquote(mapping[2]));
+    if (indent <= jobsValueIndent) { explicitJobsIndent = null; jobsValueIndent = null; pendingFlowJobIndent = null; continue; }
+
+    if (pendingFlowJobIndent !== null) {
+      if (indent > pendingFlowJobIndent) {
+        const continued = trimmed.match(/^\{([\s\S]*)\}\s*$/);
+        if (continued) collectDirectUses(continued[1], refs);
+      }
+      pendingFlowJobIndent = null;
+      if (/^\{/.test(trimmed)) continue;
     }
+
+    const splitNodePropertyJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?:(?:&[^\s{}]+|![^\s{}]+)\s+)+$/);
+    if (splitNodePropertyJob) {
+      pendingFlowJobIndent = indent;
+      continue;
+    }
+
+    const flowJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?:(?:&[^\s{}]+|![^\s{}]+)\s+)*\{([\s\S]*)\}\s*$/);
+    if (flowJob) collectDirectUses(flowJob[1], refs);
   }
   return refs;
 };
@@ -134,5 +154,12 @@ describe('explicit top-level jobs immutable-pinning policy', () => {
     expect(collectExplicitJobsWorkflowRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]);
     const mutable = ['? jobs', ':', '  call: !shared { uses: owner/repo/.github/workflows/build.yml@main }'].join('\n');
     expect(() => expectImmutableExplicitJobsRefs(mutable, 'explicit-jobs-node-property.yml')).toThrow();
+  });
+  it('tracks node properties whose flow mapping starts on the following line', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = ['? jobs', ':', '  call: &shared', `    { uses: owner/repo/.github/workflows/build.yml@${sha} }`].join('\n');
+    expect(collectExplicitJobsWorkflowRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]);
+    const mutable = ['? jobs', ':', '  call: !shared', '    { uses: owner/repo/.github/workflows/build.yml@main }'].join('\n');
+    expect(() => expectImmutableExplicitJobsRefs(mutable, 'explicit-jobs-split-node-property.yml')).toThrow();
   });
 });
