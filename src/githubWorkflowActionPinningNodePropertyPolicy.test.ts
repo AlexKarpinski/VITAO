@@ -8,6 +8,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .sort();
 
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
+const blockScalarHeader = /:\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*(?:#.*)?$/;
 
 const unquote = (raw: string) => {
   const value = raw.trim().replace(/[,}]\s*$/, '').trim();
@@ -47,10 +48,22 @@ const collectNodePropertyStepRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
 
   for (const line of lines) {
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = line.trim();
+
+    if (blockScalarIndent !== null) {
+      if (!trimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+
+    if (blockScalarHeader.test(line)) {
+      blockScalarIndent = indent;
+      continue;
+    }
+
     if (/^["']?steps["']?\s*:\s*$/.test(trimmed)) {
       stepsIndent = indent;
       continue;
@@ -103,5 +116,20 @@ describe('GitHub workflow node-property action pinning', () => {
     const safe = 'strategy:\n  matrix:\n    include:\n      - &case { uses: actions/checkout@v4, os: ubuntu-latest }';
     expect(collectNodePropertyStepRefs(safe)).toEqual([]);
     expectImmutableNodePropertyStepRefs(safe, 'matrix-data.yml');
+  });
+
+  it('ignores node-property examples inside block scalars', () => {
+    const safe = [
+      'env:',
+      '  DOC: |',
+      '    steps:',
+      '      - &example { uses: actions/checkout@v4 }',
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - &checkout { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 }',
+    ].join('\n');
+    expect(collectNodePropertyStepRefs(safe)).toEqual(['actions/checkout@0123456789abcdef0123456789abcdef01234567']);
+    expectImmutableNodePropertyStepRefs(safe, 'block-scalar-doc.yml');
   });
 });
