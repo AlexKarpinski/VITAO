@@ -10,8 +10,9 @@ const workflowFiles = readdirSync(workflowsDir)
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const blockScalarHeader = /:\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*(?:#.*)?$/;
 
-const decodeKey = (raw: string) => {
+const decodeKey = (raw: string, aliases: Map<string, string>) => {
   const value = raw.trim();
+  if (value.startsWith('*')) return aliases.get(value.slice(1)) ?? value;
   if (value.startsWith('"') && value.endsWith('"')) {
     try { return JSON.parse(value); } catch { return value.slice(1, -1); }
   }
@@ -33,13 +34,16 @@ const splitTopLevelEntries = (body: string) => {
   let quote: '"' | "'" | null = null;
   let curly = 0;
   let square = 0;
+  let backslashes = 0;
   for (let index = 0; index < body.length; index += 1) {
     const char = body[index];
     if (quote) {
-      if (char === quote && (quote === "'" || body[index - 1] !== '\\')) quote = null;
+      if (char === '\\') { backslashes += 1; continue; }
+      if (char === quote && (quote === "'" || backslashes % 2 === 0)) quote = null;
+      backslashes = 0;
       continue;
     }
-    if (char === '"' || char === "'") { quote = char; continue; }
+    if (char === '"' || char === "'") { quote = char; backslashes = 0; continue; }
     if (char === '{') curly += 1;
     else if (char === '}') curly -= 1;
     else if (char === '[') square += 1;
@@ -55,6 +59,7 @@ const splitTopLevelEntries = (body: string) => {
 
 const collectNodePropertyStepRefs = (workflow: string) => {
   const refs: string[] = [];
+  const aliases = new Map<string, string>();
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
   let blockScalarIndent: number | null = null;
@@ -73,6 +78,9 @@ const collectNodePropertyStepRefs = (workflow: string) => {
       continue;
     }
 
+    const anchor = trimmed.match(/^(?:[^:#]+):\s*&([A-Za-z_][A-Za-z0-9_-]*)\s+(.+?)\s*$/);
+    if (anchor) aliases.set(anchor[1], decodeKey(anchor[2], aliases));
+
     if (/^["']?steps["']?\s*:\s*$/.test(trimmed)) {
       stepsIndent = indent;
       continue;
@@ -86,8 +94,8 @@ const collectNodePropertyStepRefs = (workflow: string) => {
     const entry = line.match(/^\s*-\s+(?:(?:&|!)[^\s{}]+\s+)+\{([\s\S]*)\}\s*$/);
     if (!entry) continue;
     for (const mapping of splitTopLevelEntries(entry[1])) {
-      const match = mapping.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^:\s]+))\s*:\s*(.+?)\s*$/);
-      if (match && decodeKey(match[1]) === 'uses') refs.push(unquote(match[2]));
+      const match = mapping.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z_][A-Za-z0-9_-]*|[^:\s]+))\s*:\s*(.+?)\s*$/);
+      if (match && decodeKey(match[1], aliases) === 'uses') refs.push(unquote(match[2]));
     }
   }
   return refs;
@@ -129,6 +137,24 @@ describe('GitHub workflow node-property action pinning', () => {
 
     const mutable = 'steps:\n  - &checkout { "\\u0075ses": actions/checkout@v4 }';
     expect(() => expectImmutableNodePropertyStepRefs(mutable, 'escaped-key.yml')).toThrow();
+  });
+
+  it('resolves aliased uses keys in node-property steps', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = [
+      'name: &uses-key uses',
+      'steps:',
+      `  - &checkout { *uses-key: actions/checkout@${sha} }`,
+    ].join('\n');
+    expect(collectNodePropertyStepRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
+    expectImmutableNodePropertyStepRefs(pinned, 'aliased-key.yml');
+
+    const mutable = [
+      'name: &uses-key uses',
+      'steps:',
+      '  - &checkout { *uses-key: actions/checkout@v4 }',
+    ].join('\n');
+    expect(() => expectImmutableNodePropertyStepRefs(mutable, 'aliased-key.yml')).toThrow();
   });
 
   it('ignores node-property mappings outside an actual steps collection', () => {
