@@ -17,6 +17,7 @@ const extractTargetedActionRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let ignoredBlockIndent: number | null = null;
+  let explicitOuterKeyIndent: number | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index];
@@ -27,6 +28,21 @@ const extractTargetedActionRefs = (workflow: string) => {
     if (ignoredBlockIndent !== null) {
       if (!trimmed || indent > ignoredBlockIndent) continue;
       ignoredBlockIndent = null;
+    }
+
+    if (explicitOuterKeyIndent !== null) {
+      const explicitValue = trimmed.match(/^:\s*(\S+)\s*$/);
+      if (indent >= explicitOuterKeyIndent && explicitValue && isBlockHeader(explicitValue[1])) {
+        ignoredBlockIndent = indent;
+        explicitOuterKeyIndent = null;
+        continue;
+      }
+      if (trimmed) explicitOuterKeyIndent = null;
+    }
+
+    if (/^(?:-\s*)?\?\s+(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*$/.test(trimmed)) {
+      explicitOuterKeyIndent = indent;
+      continue;
     }
 
     const canonical = line.match(/^\s*(?:-\s*)?uses\s*:\s*(.*)$/);
@@ -105,6 +121,22 @@ describe('GitHub workflow deferred YAML action pinning edge policy', () => {
     ].join('\n');
     expect(extractTargetedActionRefs(documentation)).toEqual([]);
     expectTargetedRefsImmutable(documentation, 'block-scalar-docs.yml');
+  });
+
+  it('ignores uses-like action examples nested inside explicit-key block scalars', () => {
+    const documentation = [
+      'jobs:',
+      '  demo:',
+      '    steps:',
+      '      - ? run',
+      '        : |',
+      '            Example configuration:',
+      '            uses: >-',
+      '              actions/checkout@v4',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(extractTargetedActionRefs(documentation)).toEqual([]);
+    expectTargetedRefsImmutable(documentation, 'explicit-block-scalar-docs.yml');
   });
 
   it('still enforces immutable refs in actual flow-style step contexts', () => {
