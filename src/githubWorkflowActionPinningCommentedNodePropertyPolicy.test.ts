@@ -70,6 +70,12 @@ const decodeKey = (raw: string) => {
   return key;
 };
 
+const stripNodeProperties = (value: string) => {
+  let rest = value.trim();
+  while (/^(?:&|!)[^\s]+(?:\s+|$)/.test(rest)) rest = rest.replace(/^(?:&|!)[^\s]+\s*/, '');
+  return rest;
+};
+
 const collectCommentedNodePropertyRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
@@ -87,7 +93,7 @@ const collectCommentedNodePropertyRefs = (workflow: string) => {
     }
 
     const scalar = line.match(/^\s*(?:[^:#]+|"(?:\\.|[^"\\])*"|'(?:''|[^'])*')\s*:\s*(.+?)\s*$/);
-    if (scalar && scalarHeader.test(scalar[1].trim())) {
+    if (scalar && scalarHeader.test(stripNodeProperties(scalar[1]))) {
       scalarIndent = indent;
       continue;
     }
@@ -143,5 +149,11 @@ describe('commented node-property action pinning', () => {
     const safe = ['jobs:', '  build:', '    env:', '      DOC: |', '        steps:', '          - &example { uses: actions/checkout@v4 } # documentation only', '    steps:', '      - run: echo ok'].join('\n');
     expect(collectCommentedNodePropertyRefs(safe)).toEqual([]);
     expectImmutableRefs(safe, 'docs.yml');
+  });
+
+  it('ignores action examples inside anchored block scalars', () => {
+    const safe = ['jobs:', '  build:', '    env:', '      DOC: &example |', '        steps:', '          - &fake { uses: actions/checkout@v4 }', '    steps:', '      - run: echo ok'].join('\n');
+    expect(collectCommentedNodePropertyRefs(safe)).toEqual([]);
+    expectImmutableRefs(safe, 'anchored-docs.yml');
   });
 });
