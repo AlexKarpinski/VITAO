@@ -11,29 +11,46 @@ const immutableActionRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const stripComment = (line: string) => line.replace(/\s+#.*$/, '');
 const isActionStepContext = (line: string) => /^\s*-\s*\{/.test(line) || /\bsteps\s*:\s*\[/.test(line);
 const isBlockHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(value.trim());
+const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 
 const extractTargetedActionRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
+  let ignoredBlockIndent: number | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = stripComment(lines[index]);
+    const rawLine = lines[index];
+    const line = stripComment(rawLine);
+    const trimmed = line.trim();
+    const indent = indentOf(rawLine);
+
+    if (ignoredBlockIndent !== null) {
+      if (!trimmed || indent > ignoredBlockIndent) continue;
+      ignoredBlockIndent = null;
+    }
+
     const canonical = line.match(/^\s*(?:-\s*)?uses\s*:\s*(.*)$/);
     if (canonical) {
       const value = canonical[1].trim();
       if (isBlockHeader(value)) {
-        const parentIndent = lines[index].match(/^\s*/)?.[0].length ?? 0;
+        const parentIndent = indent;
         const folded: string[] = [];
         for (let child = index + 1; child < lines.length; child += 1) {
           const childLine = stripComment(lines[child]);
           const childTrimmed = childLine.trim();
-          const childIndent = lines[child].match(/^\s*/)?.[0].length ?? 0;
+          const childIndent = indentOf(lines[child]);
           if (childTrimmed && childIndent <= parentIndent) break;
           if (childTrimmed) folded.push(childTrimmed);
           index = child;
         }
         if (folded.length) refs.push(folded.join(' '));
       }
+      continue;
+    }
+
+    const outerScalar = line.match(/^\s*(?:-\s*)?(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(\S+)\s*$/);
+    if (outerScalar && isBlockHeader(outerScalar[1])) {
+      ignoredBlockIndent = indent;
       continue;
     }
 
@@ -73,6 +90,21 @@ describe('GitHub workflow deferred YAML action pinning edge policy', () => {
     ].join('\n');
     expect(extractTargetedActionRefs(unrelated)).toEqual([]);
     expectTargetedRefsImmutable(unrelated, 'unrelated-flow.yml');
+  });
+
+  it('ignores uses-like action examples nested inside outer block scalars', () => {
+    const documentation = [
+      'jobs:',
+      '  demo:',
+      '    steps:',
+      '      - run: |',
+      '          Example configuration:',
+      '          uses: >-',
+      '            actions/checkout@v4',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(extractTargetedActionRefs(documentation)).toEqual([]);
+    expectTargetedRefsImmutable(documentation, 'block-scalar-docs.yml');
   });
 
   it('still enforces immutable refs in actual flow-style step contexts', () => {
