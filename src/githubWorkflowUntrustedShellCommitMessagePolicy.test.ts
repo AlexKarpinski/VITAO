@@ -41,9 +41,34 @@ const collectRunScripts = (workflow: string) => {
   return scripts;
 };
 
+const splitFlowEntries = (body: string) => {
+  const entries: string[] = [];
+  let start = 0;
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (quote) {
+      if (char === quote && (quote === "'" || body[index - 1] !== '\\')) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; continue; }
+    if (char === ',') { entries.push(body.slice(start, index)); start = index + 1; }
+  }
+  entries.push(body.slice(start));
+  return entries;
+};
+
 const collectCommitMessageEnvNames = (workflow: string) => {
   const names = new Set<string>();
   for (const line of workflow.split('\n')) {
+    const flowEnv = line.match(/^\s*env\s*:\s*\{([\s\S]*)\}\s*$/);
+    if (flowEnv) {
+      for (const entry of splitFlowEntries(flowEnv[1])) {
+        const nested = entry.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.+?)\s*$/);
+        if (nested && untrustedCommitMessage.test(normalizeAccess(nested[2]))) names.add(nested[1]);
+      }
+      continue;
+    }
     const match = line.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.+?)\s*$/);
     if (!match) continue;
     if (untrustedCommitMessage.test(normalizeAccess(match[2]))) names.add(match[1]);
@@ -79,56 +104,32 @@ const expectNoCommitMessageShell = (workflow: string, source: string) => {
 describe('GitHub workflow commit-message shell policy', () => {
   it('scans every checked-in workflow', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
-    for (const file of workflowFiles) {
-      expectNoCommitMessageShell(readFileSync(join(workflowsDir, file), 'utf8'), file);
-    }
+    for (const file of workflowFiles) expectNoCommitMessageShell(readFileSync(join(workflowsDir, file), 'utf8'), file);
   });
 
   it('rejects direct head commit messages in shell scripts', () => {
-    const unsafe = [
-      'on: push',
-      'jobs:',
-      '  demo:',
-      '    steps:',
-      `      - run: "bash -c '\${{ github.event.head_commit.message }}'"`,
-    ].join('\n');
+    const unsafe = ['on: push', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ github.event.head_commit.message }}'"`].join('\n');
     expect(() => expectNoCommitMessageShell(unsafe, 'push.yml')).toThrow();
   });
 
   it('rejects workflow-run head commit messages in block shell scripts', () => {
-    const unsafe = [
-      'on: workflow_run',
-      'jobs:',
-      '  demo:',
-      '    steps:',
-      '      - run: |',
-      `          bash -c '\${{ github.event.workflow_run.head_commit.message }}'`,
-    ].join('\n');
+    const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    steps:', '      - run: |', `          bash -c '\${{ github.event.workflow_run.head_commit.message }}'`].join('\n');
     expect(() => expectNoCommitMessageShell(unsafe, 'workflow-run.yml')).toThrow();
   });
 
   it('rejects bracketed commit-message access', () => {
-    const unsafe = [
-      'on: workflow_run',
-      'jobs:',
-      '  demo:',
-      '    steps:',
-      `      - run: "bash -c '\${{ github['event']['workflow_run']['head_commit']['message'] }}'"`,
-    ].join('\n');
+    const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ github['event']['workflow_run']['head_commit']['message'] }}'"`].join('\n');
     expect(() => expectNoCommitMessageShell(unsafe, 'bracketed.yml')).toThrow();
   });
 
   it('rejects commit-message taint routed through environment variables', () => {
-    const unsafe = [
-      'on: workflow_run',
-      'jobs:',
-      '  demo:',
-      '    env:',
-      `      CMD: "\${{ github.event.workflow_run.head_commit.message }}"`,
-      '    steps:',
-      '      - run: bash -c "$CMD"',
-    ].join('\n');
+    const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    env:', `      CMD: "\${{ github.event.workflow_run.head_commit.message }}"`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoCommitMessageShell(unsafe, 'env.yml')).toThrow();
+  });
+
+  it('rejects commit-message taint routed through flow-style environment variables', () => {
+    const unsafe = ['on: workflow_run', 'jobs:', '  demo:', `    env: { CMD: "\${{ github.event.workflow_run.head_commit.message }}" }`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoCommitMessageShell(unsafe, 'flow-env.yml')).toThrow();
   });
 
   it('allows constant shell scripts', () => {
