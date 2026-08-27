@@ -19,11 +19,27 @@ const isUntrustedMatrixSource = (value: string) => {
 };
 
 const runUsesMatrix = (value: string) => /\$\{\{[\s\S]*\bmatrix\.[A-Za-z_][A-Za-z0-9_-]*\b[\s\S]*\}\}/.test(normalizeAccess(value));
+const isBlockHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(value.trim());
+
+const collectIndentedValue = (lines: string[], start: number, parentIndent: number) => {
+  const parts: string[] = [];
+  let end = start;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const raw = lines[index];
+    const trimmed = raw.trim();
+    const indent = indentOf(raw);
+    if (trimmed && indent <= parentIndent) break;
+    if (trimmed) parts.push(trimmed);
+    end = index;
+  }
+  return { value: parts.join(' '), end };
+};
 
 const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
   const lines = workflow.split('\n');
   let jobsIndent: number | null = null;
   let jobIndent: number | null = null;
+  let matrixIndent: number | null = null;
   let matrixTainted = false;
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -35,6 +51,7 @@ const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
     if (/^jobs\s*:\s*$/.test(trimmed)) {
       jobsIndent = indent;
       jobIndent = null;
+      matrixIndent = null;
       matrixTainted = false;
       continue;
     }
@@ -42,30 +59,50 @@ const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
     if (indent <= jobsIndent) {
       jobsIndent = null;
       jobIndent = null;
+      matrixIndent = null;
       matrixTainted = false;
       continue;
     }
 
     if (jobIndent === null && indent > jobsIndent && /^[A-Za-z_][A-Za-z0-9_-]*\s*:\s*$/.test(trimmed)) {
       jobIndent = indent;
+      matrixIndent = null;
       matrixTainted = false;
       continue;
     }
     if (jobIndent !== null && indent === jobIndent && /^[A-Za-z_][A-Za-z0-9_-]*\s*:\s*$/.test(trimmed)) {
+      matrixIndent = null;
       matrixTainted = false;
       continue;
     }
     if (jobIndent === null || indent <= jobIndent) continue;
 
-    const matrix = trimmed.match(/^matrix\s*:\s*(.+)$/);
-    if (matrix && isUntrustedMatrixSource(matrix[1])) {
-      matrixTainted = true;
+    const matrix = trimmed.match(/^matrix\s*:\s*(.*)$/);
+    if (matrix) {
+      matrixIndent = indent;
+      if (matrix[1] && isUntrustedMatrixSource(matrix[1])) matrixTainted = true;
       continue;
     }
 
+    if (matrixIndent !== null) {
+      if (indent <= matrixIndent) {
+        matrixIndent = null;
+      } else if (isUntrustedMatrixSource(trimmed)) {
+        matrixTainted = true;
+      }
+    }
+
     const run = trimmed.match(/^(?:-\s*)?["']?run["']?\s*:\s*(.*)$/);
-    if (matrixTainted && run && runUsesMatrix(run[1])) {
-      throw new Error(`${source}: untrusted strategy.matrix value reaches shell`);
+    if (matrixTainted && run) {
+      let runValue = run[1];
+      if (isBlockHeader(runValue)) {
+        const collected = collectIndentedValue(lines, index, indent);
+        runValue = collected.value;
+        index = collected.end;
+      }
+      if (runUsesMatrix(runValue)) {
+        throw new Error(`${source}: untrusted strategy.matrix value reaches shell`);
+      }
     }
   }
 };
@@ -89,6 +126,34 @@ describe('GitHub workflow matrix-to-shell trust boundary', () => {
       "      - run: bash -c '${{ matrix.command }}'",
     ].join('\n');
     expect(() => expectNoUntrustedMatrixShell(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects untrusted values nested below a matrix mapping', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        command: ${{ fromJSON(github.event.issue.body) }}',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      "      - run: bash -c '${{ matrix.command }}'",
+    ].join('\n');
+    expect(() => expectNoUntrustedMatrixShell(unsafe, 'nested-matrix.yml')).toThrow();
+  });
+
+  it('rejects matrix references inside block-scalar run bodies', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix: ${{ fromJSON(github.event.issue.body) }}',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: |',
+      "          bash -c '${{ matrix.command }}'",
+    ].join('\n');
+    expect(() => expectNoUntrustedMatrixShell(unsafe, 'block-run.yml')).toThrow();
   });
 
   it('allows a constant matrix used by a shell step', () => {
