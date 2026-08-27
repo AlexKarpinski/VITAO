@@ -80,14 +80,15 @@ const collectTaintedEnvNames = (workflow: string) => {
 
 const bashParameterReferences = (script: string, name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`\\$\\{${escaped}[^}]*\\}`, 'g').test(script);
+  if (new RegExp(`\\$\\{${escaped}[^}]*\\}`, 'g').test(script)) return true;
+  return new RegExp(`\\$\\(\\([^)]*\\b${escaped}\\b[^)]*\\)\\)`, 'g').test(script);
 };
 
 const expectNoTaintedBashParameterExpansion = (workflow: string, source: string) => {
   const taintedEnv = collectTaintedEnvNames(workflow);
   for (const script of collectRunScripts(workflow)) {
     for (const name of taintedEnv) {
-      expect(bashParameterReferences(script, name), `${source}: tainted environment ${name} reaches Bash parameter expansion`).toBe(false);
+      expect(bashParameterReferences(script, name), `${source}: tainted environment ${name} reaches Bash parameter or arithmetic expansion`).toBe(false);
     }
   }
 };
@@ -108,6 +109,10 @@ describe('GitHub workflow Bash parameter-expansion shell policy', () => {
   it('rejects pattern substitution of an attacker-controlled variable', () => {
     const unsafe = ['on: issue_comment','jobs:','  demo:','    env:',`      CMD: "\${{ github.event.comment.body }}"`,'    steps:','      - run: bash -c "${CMD//x/x}"'].join('\n');
     expect(() => expectNoTaintedBashParameterExpansion(unsafe, 'pattern-substitution.yml')).toThrow();
+  });
+  it('rejects arithmetic expansion of an attacker-controlled variable', () => {
+    const unsafe = ['on: issue_comment','jobs:','  demo:','    env:',`      CMD: "\${{ github.event.comment.body }}"`,'    steps:','      - run: printf "%s" "$((CMD))"'].join('\n');
+    expect(() => expectNoTaintedBashParameterExpansion(unsafe, 'arithmetic.yml')).toThrow();
   });
   it('rejects step-output taint before Bash parameter substitution', () => {
     const unsafe = ['on: issue_comment','jobs:','  demo:','    steps:','      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567','        id: capture','        with:','          result-encoding: string','          script: return context.payload.comment.body',`      - env:`,`          CMD: "\${{ steps.capture.outputs.result }}"`,'        run: bash -c "${CMD//x/x}"'].join('\n');
