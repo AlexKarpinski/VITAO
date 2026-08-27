@@ -35,11 +35,15 @@ const collectRunScripts = (workflow: string) => {
   return scripts;
 };
 
-const wildcardEventBody = /github\.event(?:\?\.)?\.\*\.(?:title|body)\b|github\[['"]event['"]\]\[['"]\*['"]\]\[['"](?:title|body)['"]\]/;
+const normalizeAccess = (value: string) => value
+  .replace(/\?\./g, '.')
+  .replace(/\[['"]([A-Za-z_*][A-Za-z0-9_*-]*)['"]\]/g, '.$1');
+
+const wildcardEventBody = /github\.event\.\*\.(?:title|body)\b/;
 
 const expectNoWildcardEventShell = (workflow: string, source: string) => {
   for (const script of collectRunScripts(workflow)) {
-    expect(wildcardEventBody.test(script), `${source}: wildcard-filtered event text reaches shell`).toBe(false);
+    expect(wildcardEventBody.test(normalizeAccess(script)), `${source}: wildcard-filtered event text reaches shell`).toBe(false);
   }
 };
 
@@ -60,6 +64,17 @@ describe('GitHub workflow wildcard event shell policy', () => {
       `      - run: "bash -c '\${{ join(github.event.*.body, ' ') }}'"`,
     ].join('\n');
     expect(() => expectNoWildcardEventShell(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects mixed bracket/dot wildcard event access', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'jobs:',
+      '  demo:',
+      '    steps:',
+      `      - run: "bash -c '\${{ join(github['event'].*.body, ' ') }}'"`,
+    ].join('\n');
+    expect(() => expectNoWildcardEventShell(unsafe, 'mixed-access.yml')).toThrow();
   });
 
   it('allows constant shell scripts', () => {
