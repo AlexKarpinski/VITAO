@@ -9,6 +9,7 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const scalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
 
 const stripYamlComment = (value: string) => {
   let quote: '"' | "'" | null = null;
@@ -73,11 +74,23 @@ const collectCommentedNodePropertyRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
+  let scalarIndent: number | null = null;
 
   for (const rawLine of lines) {
     const line = stripYamlComment(rawLine);
     const indent = indentOf(rawLine);
     const trimmed = line.trim();
+
+    if (scalarIndent !== null) {
+      if (!trimmed || indent > scalarIndent) continue;
+      scalarIndent = null;
+    }
+
+    const scalar = line.match(/^\s*(?:[^:#]+|"(?:\\.|[^"\\])*"|'(?:''|[^'])*')\s*:\s*(.+?)\s*$/);
+    if (scalar && scalarHeader.test(scalar[1].trim())) {
+      scalarIndent = indent;
+      continue;
+    }
 
     if (/^steps\s*:\s*$/.test(trimmed)) {
       stepsIndent = indent;
@@ -124,5 +137,11 @@ describe('commented node-property action pinning', () => {
   it('ignores node-property mappings outside steps scope', () => {
     const safe = ['jobs:', '  build:', '    strategy:', '      matrix:', '        include:', '          - &case { uses: actions/checkout@v4, os: ubuntu-latest }', '    steps:', '      - run: echo ok'].join('\n');
     expect(collectCommentedNodePropertyRefs(safe)).toEqual([]);
+  });
+
+  it('ignores node-property action examples inside block scalars', () => {
+    const safe = ['jobs:', '  build:', '    env:', '      DOC: |', '        steps:', '          - &example { uses: actions/checkout@v4 } # documentation only', '    steps:', '      - run: echo ok'].join('\n');
+    expect(collectCommentedNodePropertyRefs(safe)).toEqual([]);
+    expectImmutableRefs(safe, 'docs.yml');
   });
 });
