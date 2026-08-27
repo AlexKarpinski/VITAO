@@ -129,11 +129,22 @@ const extractBareSequenceStepRefs = (workflow: string) => {
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
   let bareDashIndent: number | null = null;
+  let ignoredBlockIndent: number | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const trimmed = line.trim();
     const indent = indentOf(line);
+
+    if (ignoredBlockIndent !== null) {
+      if (!trimmed || indent > ignoredBlockIndent) continue;
+      ignoredBlockIndent = null;
+    }
+
+    if (/:[ \t]*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?[ \t]*$/.test(line)) {
+      ignoredBlockIndent = indent;
+      continue;
+    }
 
     if (stepsIndent === null) {
       if (/^["']?steps["']?\s*:\s*$/.test(trimmed)) stepsIndent = indent;
@@ -226,6 +237,12 @@ describe('GitHub workflow structural action-pinning edge policy', () => {
   it('rejects escaped uses keys after a bare steps sequence marker', () => {
     const unsafe = ['jobs:', '  build:', '    steps:', '      -', '        { "\\u0075ses": actions/checkout@v4 }'].join('\n');
     expect(() => expectPinned(extractBareSequenceStepRefs(unsafe))).toThrow();
+  });
+
+  it('ignores bare-step examples inside block scalars', () => {
+    const documented = ['env:', '  DOC: |', '    steps:', '      -', '        { uses: actions/checkout@v4 }'].join('\n');
+    expect(extractBareSequenceStepRefs(documented)).toEqual([]);
+    expectPinned(extractBareSequenceStepRefs(documented));
   });
 
   it('rejects mutable refs in multiline explicit-key steps sequences', () => {
