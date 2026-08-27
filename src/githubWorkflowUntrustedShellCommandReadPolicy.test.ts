@@ -69,16 +69,56 @@ const collectRuns = (workflow: string) => {
   return scripts;
 };
 
+const containsDirectUntrusted = (value: string) =>
+  /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body|head\.ref)|review(?:_comment)?\.body|discussion\.(?:title|body))/.test(normalizeAccess(value));
+
+const collectTaintedStepIds = (workflow: string) => {
+  const ids = new Set<string>();
+  const lines = workflow.split('\n');
+
+  for (let start = 0; start < lines.length; start += 1) {
+    const raw = lines[start];
+    const sequence = raw.match(/^(\s*)-\s+/);
+    if (!sequence) continue;
+    const itemIndent = sequence[1].length;
+    const block = [raw];
+    let end = start;
+
+    for (let index = start + 1; index < lines.length; index += 1) {
+      const candidate = lines[index];
+      if (candidate.trim() && indentOf(candidate) <= itemIndent) break;
+      block.push(candidate);
+      end = index;
+    }
+
+    const text = block.join('\n');
+    if (!/uses:\s*["']?actions\/github-script@/i.test(text) || !containsDirectUntrusted(text)) {
+      start = end;
+      continue;
+    }
+
+    const id = text.match(/^\s*(?:-\s*)?id:\s*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*$/m);
+    if (id) ids.add(id[1]);
+    start = end;
+  }
+
+  return ids;
+};
+
 const collectDirectTaintedEnv = (workflow: string) => {
   const names = new Set<string>();
+  const taintedStepIds = collectTaintedStepIds(workflow);
   for (const rawLine of workflow.split('\n')) {
     const line = stripYamlComment(rawLine);
     const match = line.match(/^[ \t]*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?[ \t]*:[ \t]*(.+)$/);
     if (!match) continue;
     const value = normalizeAccess(unquote(match[2]));
-    if (/(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body|head\.ref)|review(?:_comment)?\.body|discussion\.(?:title|body))/.test(value)) {
+    if (containsDirectUntrusted(value)) {
       names.add(match[1]);
+      continue;
     }
+    const output = value.match(/\$\{\{\s*steps\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\.[A-Za-z_][A-Za-z0-9_-]*\s*\}\}/);
+    if (output && taintedStepIds.has(output[1])) names.add(match[1]);
   }
   return names;
 };
@@ -123,6 +163,23 @@ describe('command-based untrusted shell reads', () => {
   it('rejects command-based reads of directly tainted environment values', () => {
     const unsafe = ['jobs:', '  check:', '    env:', '      CMD: ${{ github.event.comment.body }}', '    steps:', '      - run: bash -c "$(printenv CMD)"'].join('\n');
     expect(() => expectNoCommandBasedEnvReads(unsafe, 'printenv.yml')).toThrow();
+  });
+
+  it('rejects command-based reads of tainted github-script outputs routed through env', () => {
+    const unsafe = [
+      'jobs:',
+      '  check:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        id: capture',
+      '        with:',
+      '          result-encoding: string',
+      '          script: return context.payload.comment.body',
+      '      - env:',
+      '          CMD: ${{ steps.capture.outputs.result }}',
+      '        run: bash -c "$(printenv CMD)"',
+    ].join('\n');
+    expect(() => expectNoCommandBasedEnvReads(unsafe, 'output-printenv.yml')).toThrow();
   });
 
   it('allows command reads of constant environment values', () => {
