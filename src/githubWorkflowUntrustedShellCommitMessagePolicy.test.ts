@@ -10,6 +10,12 @@ const workflowFiles = readdirSync(workflowsDir)
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const blockHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
 
+const normalizeAccess = (value: string) => value
+  .replace(/\?\./g, '.')
+  .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
+
+const untrustedCommitMessage = /github\.event\.(?:workflow_run\.)?head_commit\.message\b/;
+
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
   const lines = workflow.split('\n');
@@ -35,18 +41,38 @@ const collectRunScripts = (workflow: string) => {
   return scripts;
 };
 
-const normalizeAccess = (value: string) => value
-  .replace(/\?\./g, '.')
-  .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
+const collectCommitMessageEnvNames = (workflow: string) => {
+  const names = new Set<string>();
+  for (const line of workflow.split('\n')) {
+    const match = line.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.+?)\s*$/);
+    if (!match) continue;
+    if (untrustedCommitMessage.test(normalizeAccess(match[2]))) names.add(match[1]);
+  }
+  return names;
+};
 
-const untrustedCommitMessage = /github\.event\.(?:workflow_run\.)?head_commit\.message\b/;
+const shellReferencesEnv = (script: string, name: string) => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(
+    `(?:\\$${escaped}\\b|\\$\\{${escaped}\\}|\\$env:${escaped}\\b|%${escaped}%|\\$\\{\\{\\s*env\\.${escaped}\\s*\\}\\})`,
+    'i',
+  ).test(script);
+};
 
 const expectNoCommitMessageShell = (workflow: string, source: string) => {
-  for (const script of collectRunScripts(workflow)) {
+  const scripts = collectRunScripts(workflow);
+  const taintedEnv = collectCommitMessageEnvNames(workflow);
+  for (const script of scripts) {
     expect(
       untrustedCommitMessage.test(normalizeAccess(script)),
       `${source}: attacker-controlled commit message reaches shell`,
     ).toBe(false);
+    for (const name of taintedEnv) {
+      expect(
+        shellReferencesEnv(script, name),
+        `${source}: commit-message environment ${name} reaches shell`,
+      ).toBe(false);
+    }
   }
 };
 
@@ -90,6 +116,19 @@ describe('GitHub workflow commit-message shell policy', () => {
       `      - run: "bash -c '\${{ github['event']['workflow_run']['head_commit']['message'] }}'"`,
     ].join('\n');
     expect(() => expectNoCommitMessageShell(unsafe, 'bracketed.yml')).toThrow();
+  });
+
+  it('rejects commit-message taint routed through environment variables', () => {
+    const unsafe = [
+      'on: workflow_run',
+      'jobs:',
+      '  demo:',
+      '    env:',
+      `      CMD: "\${{ github.event.workflow_run.head_commit.message }}"`,
+      '    steps:',
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => expectNoCommitMessageShell(unsafe, 'env.yml')).toThrow();
   });
 
   it('allows constant shell scripts', () => {
