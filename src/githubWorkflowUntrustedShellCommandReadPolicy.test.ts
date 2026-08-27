@@ -62,9 +62,7 @@ const collectRuns = (workflow: string) => {
       const scalar = collectScalar(lines, index, indentOf(raw));
       scripts.push(scalar.value);
       index = scalar.end;
-    } else {
-      scripts.push(unquote(value));
-    }
+    } else scripts.push(unquote(value));
   }
   return scripts;
 };
@@ -75,7 +73,6 @@ const containsDirectUntrusted = (value: string) =>
 const collectTaintedStepIds = (workflow: string) => {
   const ids = new Set<string>();
   const lines = workflow.split('\n');
-
   for (let start = 0; start < lines.length; start += 1) {
     const raw = lines[start];
     const sequence = raw.match(/^(\s*)-\s+/);
@@ -83,26 +80,32 @@ const collectTaintedStepIds = (workflow: string) => {
     const itemIndent = sequence[1].length;
     const block = [raw];
     let end = start;
-
     for (let index = start + 1; index < lines.length; index += 1) {
       const candidate = lines[index];
       if (candidate.trim() && indentOf(candidate) <= itemIndent) break;
-      block.push(candidate);
-      end = index;
+      block.push(candidate); end = index;
     }
-
     const text = block.join('\n');
-    if (!/uses:\s*["']?actions\/github-script@/i.test(text) || !containsDirectUntrusted(text)) {
-      start = end;
-      continue;
-    }
-
+    if (!/uses:\s*["']?actions\/github-script@/i.test(text) || !containsDirectUntrusted(text)) { start = end; continue; }
     const id = text.match(/^\s*(?:-\s*)?id:\s*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*$/m);
     if (id) ids.add(id[1]);
     start = end;
   }
-
   return ids;
+};
+
+const valueHasTaintedOutput = (value: string, taintedStepIds: Set<string>) => {
+  const normalized = normalizeAccess(value);
+  for (const match of normalized.matchAll(/steps\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\.[A-Za-z_][A-Za-z0-9_-]*/g)) {
+    if (taintedStepIds.has(match[1])) return true;
+  }
+  return false;
+};
+
+const maybeAddTaintedEnv = (names: Set<string>, rawName: string, rawValue: string, taintedStepIds: Set<string>) => {
+  const name = unquote(rawName);
+  const value = normalizeAccess(unquote(rawValue));
+  if (containsDirectUntrusted(value) || valueHasTaintedOutput(value, taintedStepIds)) names.add(name);
 };
 
 const collectDirectTaintedEnv = (workflow: string) => {
@@ -110,15 +113,16 @@ const collectDirectTaintedEnv = (workflow: string) => {
   const taintedStepIds = collectTaintedStepIds(workflow);
   for (const rawLine of workflow.split('\n')) {
     const line = stripYamlComment(rawLine);
-    const match = line.match(/^[ \t]*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?[ \t]*:[ \t]*(.+)$/);
-    if (!match) continue;
-    const value = normalizeAccess(unquote(match[2]));
-    if (containsDirectUntrusted(value)) {
-      names.add(match[1]);
+    const flowEnv = line.match(/^[ \t]*(?:-[ \t]*)?env[ \t]*:[ \t]*\{(.*)\}[ \t]*$/);
+    if (flowEnv) {
+      for (const entry of flowEnv[1].split(',')) {
+        const mapping = entry.match(/^[ \t]*("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*(.+)$/);
+        if (mapping) maybeAddTaintedEnv(names, mapping[1], mapping[2], taintedStepIds);
+      }
       continue;
     }
-    const output = value.match(/\$\{\{\s*steps\.([A-Za-z_][A-Za-z0-9_-]*)\.outputs\.[A-Za-z_][A-Za-z0-9_-]*\s*\}\}/);
-    if (output && taintedStepIds.has(output[1])) names.add(match[1]);
+    const match = line.match(/^[ \t]*("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*(.+)$/);
+    if (match) maybeAddTaintedEnv(names, match[1], match[2], taintedStepIds);
   }
   return names;
 };
@@ -166,20 +170,13 @@ describe('command-based untrusted shell reads', () => {
   });
 
   it('rejects command-based reads of tainted github-script outputs routed through env', () => {
-    const unsafe = [
-      'jobs:',
-      '  check:',
-      '    steps:',
-      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        id: capture',
-      '        with:',
-      '          result-encoding: string',
-      '          script: return context.payload.comment.body',
-      '      - env:',
-      '          CMD: ${{ steps.capture.outputs.result }}',
-      '        run: bash -c "$(printenv CMD)"',
-    ].join('\n');
+    const unsafe = ['jobs:', '  check:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        id: capture', '        with:', '          result-encoding: string', '          script: return context.payload.comment.body', '      - env:', '          CMD: ${{ steps.capture.outputs.result }}', '        run: bash -c "$(printenv CMD)"'].join('\n');
     expect(() => expectNoCommandBasedEnvReads(unsafe, 'output-printenv.yml')).toThrow();
+  });
+
+  it('rejects flow env output taint and fallback expressions in command reads', () => {
+    const unsafe = ['jobs:', '  check:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        id: capture', '        with:', '          result-encoding: string', '          script: return context.payload.comment.body', '      - env: { CMD: "${{ steps.capture.outputs.result || \'echo safe\' }}" }', '        run: bash -c "$(printenv CMD)"'].join('\n');
+    expect(() => expectNoCommandBasedEnvReads(unsafe, 'flow-output-printenv.yml')).toThrow();
   });
 
   it('allows command reads of constant environment values', () => {
