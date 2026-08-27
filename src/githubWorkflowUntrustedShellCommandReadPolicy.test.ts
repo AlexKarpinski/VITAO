@@ -55,7 +55,7 @@ const collectRuns = (workflow: string) => {
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
     const line = stripYamlComment(raw);
-    const match = line.match(/^\s*(?:-\s*)?["']?run["']?\s*:\s*(.*)$/);
+    const match = line.match(/^[ \t]*(?:-[ \t]*)?["']?run["']?[ \t]*:[ \t]*(.*)$/);
     if (!match) continue;
     const value = match[1].trim();
     if (scalarHeader.test(value)) {
@@ -71,10 +71,12 @@ const collectRuns = (workflow: string) => {
 
 const collectDirectTaintedEnv = (workflow: string) => {
   const names = new Set<string>();
-  const normalized = normalizeAccess(workflow);
-  for (const match of normalized.matchAll(/^\s*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*:\s*(.+)$/gm)) {
-    const value = unquote(match[2]);
-    if (/(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body|head\.ref)|review(?:_comment)?\.body|discussion\.(?:title|body))/.test(normalizeAccess(value))) {
+  for (const rawLine of workflow.split('\n')) {
+    const line = stripYamlComment(rawLine);
+    const match = line.match(/^[ \t]*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?[ \t]*:[ \t]*(.+)$/);
+    if (!match) continue;
+    const value = normalizeAccess(unquote(match[2]));
+    if (/(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body|head\.ref)|review(?:_comment)?\.body|discussion\.(?:title|body))/.test(value)) {
       names.add(match[1]);
     }
   }
