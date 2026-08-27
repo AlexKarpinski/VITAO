@@ -52,7 +52,7 @@ const collectTaintedEnvNames = (workflow: string) => {
 
 const bashParameterReferences = (script: string, name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`\\$\\{${escaped}(?::[^}]*)?\\}`, 'g').test(script);
+  return new RegExp(`\\$\\{${escaped}[^}]*\\}`, 'g').test(script);
 };
 
 const expectNoTaintedBashParameterExpansion = (workflow: string, source: string) => {
@@ -99,6 +99,19 @@ describe('GitHub workflow Bash parameter-expansion shell policy', () => {
       '      - run: bash -c "${CMD:-echo safe}"',
     ].join('\n');
     expect(() => expectNoTaintedBashParameterExpansion(unsafe, 'operator.yml')).toThrow();
+  });
+
+  it('rejects pattern substitution of an attacker-controlled variable', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'jobs:',
+      '  demo:',
+      '    env:',
+      `      CMD: "\${{ github.event.comment.body }}"`,
+      '    steps:',
+      '      - run: bash -c "${CMD//x/x}"',
+    ].join('\n');
+    expect(() => expectNoTaintedBashParameterExpansion(unsafe, 'pattern-substitution.yml')).toThrow();
   });
 
   it('allows parameter expansion of constant environment values', () => {
