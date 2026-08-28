@@ -78,10 +78,11 @@ const collectAliasedJobRefs = (workflow: string) => {
       continue;
     }
 
+    const mappingEntry = line.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:/);
+    if (jobIndent === null && mappingEntry) jobIndent = indent;
+
     const aliasJob = line.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\*([A-Za-z0-9_-]+)\s*(?:#.*)?$/);
-    if (!aliasJob) continue;
-    if (jobIndent === null) jobIndent = indent;
-    if (indent !== jobIndent) continue;
+    if (!aliasJob || indent !== jobIndent) continue;
     const ref = anchoredRefs.get(aliasJob[1]);
     if (ref) refs.push(ref);
   }
