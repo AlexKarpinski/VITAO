@@ -52,8 +52,29 @@ const splitTopLevel = (body: string) => {
 const collectTaggedStepRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
+  let pendingExplicitIndent: number | null = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+    const explicitKey = line.match(/^(\s*)\?\s+(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*$/);
+    if (explicitKey) {
+      pendingExplicitIndent = explicitKey[1].length;
+      continue;
+    }
+    if (pendingExplicitIndent !== null) {
+      const explicitValue = line.match(/^(\s*):\s*(.+?)\s*$/);
+      if (explicitValue && explicitValue[1].length === pendingExplicitIndent && blockHeader.test(explicitValue[2].trim())) {
+        const parentIndent = pendingExplicitIndent;
+        while (index + 1 < lines.length) {
+          const next = lines[index + 1];
+          if (next.trim() && indentOf(next) <= parentIndent) break;
+          index += 1;
+        }
+        pendingExplicitIndent = null;
+        continue;
+      }
+      if (line.trim() && indentOf(line) <= pendingExplicitIndent) pendingExplicitIndent = null;
+    }
+
     const scalar = line.match(/^\s*(?:-\s*)?(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.+?)\s*$/);
     if (scalar && blockHeader.test(scalar[1].trim())) {
       const parentIndent = indentOf(line);
@@ -117,6 +138,12 @@ describe('tagged steps action-pinning policy', () => {
     const safe = ['jobs:', '  build:', '    env:', '      DOC: |', '        steps: !!seq [{ uses: actions/checkout@v4 }]', '    steps:', '      - run: echo safe'].join('\n');
     expect(collectTaggedStepRefs(safe)).toEqual([]);
     expectImmutableRefs(safe, 'documentation.yml');
+  });
+
+  it('ignores tagged-step examples inside explicit-key block scalars', () => {
+    const safe = ['jobs:', '  build:', '    env:', '      ? DOC', '      : |', '        steps: !!seq [{ uses: actions/checkout@v4 }]', '    steps:', '      - run: echo safe'].join('\n');
+    expect(collectTaggedStepRefs(safe)).toEqual([]);
+    expectImmutableRefs(safe, 'explicit-documentation.yml');
   });
 
   it('ignores uses-like text outside tagged steps values', () => {
