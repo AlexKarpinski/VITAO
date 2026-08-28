@@ -14,7 +14,7 @@ const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
-const untrustedCommitMessage = /github\.event\.(?:workflow_run\.)?head_commit\.message\b/;
+const untrustedCommitMetadata = /github\.event\.(?:workflow_run\.)?head_commit\.(?:message|(?:author|committer)\.(?:name|email|username))\b/;
 
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
@@ -58,20 +58,20 @@ const splitFlowEntries = (body: string) => {
   return entries;
 };
 
-const collectCommitMessageEnvNames = (workflow: string) => {
+const collectCommitMetadataEnvNames = (workflow: string) => {
   const names = new Set<string>();
   for (const line of workflow.split('\n')) {
     const flowEnv = line.match(/^\s*env\s*:\s*\{([\s\S]*)\}\s*$/);
     if (flowEnv) {
       for (const entry of splitFlowEntries(flowEnv[1])) {
         const nested = entry.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.+?)\s*$/);
-        if (nested && untrustedCommitMessage.test(normalizeAccess(nested[2]))) names.add(nested[1]);
+        if (nested && untrustedCommitMetadata.test(normalizeAccess(nested[2]))) names.add(nested[1]);
       }
       continue;
     }
     const match = line.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.+?)\s*$/);
     if (!match) continue;
-    if (untrustedCommitMessage.test(normalizeAccess(match[2]))) names.add(match[1]);
+    if (untrustedCommitMetadata.test(normalizeAccess(match[2]))) names.add(match[1]);
   }
   return names;
 };
@@ -84,56 +84,66 @@ const shellReferencesEnv = (script: string, name: string) => {
   ).test(script);
 };
 
-const expectNoCommitMessageShell = (workflow: string, source: string) => {
+const expectNoCommitMetadataShell = (workflow: string, source: string) => {
   const scripts = collectRunScripts(workflow);
-  const taintedEnv = collectCommitMessageEnvNames(workflow);
+  const taintedEnv = collectCommitMetadataEnvNames(workflow);
   for (const script of scripts) {
     expect(
-      untrustedCommitMessage.test(normalizeAccess(script)),
-      `${source}: attacker-controlled commit message reaches shell`,
+      untrustedCommitMetadata.test(normalizeAccess(script)),
+      `${source}: attacker-controlled commit metadata reaches shell`,
     ).toBe(false);
     for (const name of taintedEnv) {
       expect(
         shellReferencesEnv(script, name),
-        `${source}: commit-message environment ${name} reaches shell`,
+        `${source}: commit-metadata environment ${name} reaches shell`,
       ).toBe(false);
     }
   }
 };
 
-describe('GitHub workflow commit-message shell policy', () => {
+describe('GitHub workflow commit metadata shell policy', () => {
   it('scans every checked-in workflow', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
-    for (const file of workflowFiles) expectNoCommitMessageShell(readFileSync(join(workflowsDir, file), 'utf8'), file);
+    for (const file of workflowFiles) expectNoCommitMetadataShell(readFileSync(join(workflowsDir, file), 'utf8'), file);
   });
 
   it('rejects direct head commit messages in shell scripts', () => {
     const unsafe = ['on: push', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ github.event.head_commit.message }}'"`].join('\n');
-    expect(() => expectNoCommitMessageShell(unsafe, 'push.yml')).toThrow();
+    expect(() => expectNoCommitMetadataShell(unsafe, 'push.yml')).toThrow();
   });
 
   it('rejects workflow-run head commit messages in block shell scripts', () => {
     const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    steps:', '      - run: |', `          bash -c '\${{ github.event.workflow_run.head_commit.message }}'`].join('\n');
-    expect(() => expectNoCommitMessageShell(unsafe, 'workflow-run.yml')).toThrow();
+    expect(() => expectNoCommitMetadataShell(unsafe, 'workflow-run.yml')).toThrow();
   });
 
   it('rejects bracketed commit-message access', () => {
     const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ github['event']['workflow_run']['head_commit']['message'] }}'"`].join('\n');
-    expect(() => expectNoCommitMessageShell(unsafe, 'bracketed.yml')).toThrow();
+    expect(() => expectNoCommitMetadataShell(unsafe, 'bracketed.yml')).toThrow();
   });
 
   it('rejects commit-message taint routed through environment variables', () => {
     const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    env:', `      CMD: "\${{ github.event.workflow_run.head_commit.message }}"`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
-    expect(() => expectNoCommitMessageShell(unsafe, 'env.yml')).toThrow();
+    expect(() => expectNoCommitMetadataShell(unsafe, 'env.yml')).toThrow();
   });
 
   it('rejects commit-message taint routed through flow-style environment variables', () => {
     const unsafe = ['on: workflow_run', 'jobs:', '  demo:', `    env: { CMD: "\${{ github.event.workflow_run.head_commit.message }}" }`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
-    expect(() => expectNoCommitMessageShell(unsafe, 'flow-env.yml')).toThrow();
+    expect(() => expectNoCommitMetadataShell(unsafe, 'flow-env.yml')).toThrow();
+  });
+
+  it('rejects workflow-run commit author identity in shell scripts', () => {
+    const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ github.event.workflow_run.head_commit.author.name }}'"`].join('\n');
+    expect(() => expectNoCommitMetadataShell(unsafe, 'author.yml')).toThrow();
+  });
+
+  it('rejects commit committer identity routed through environment variables', () => {
+    const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    env:', `      CMD: "\${{ github.event.workflow_run.head_commit.committer.email }}"`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoCommitMetadataShell(unsafe, 'committer-env.yml')).toThrow();
   });
 
   it('allows constant shell scripts', () => {
     const safe = ['jobs:', '  demo:', '    steps:', '      - run: echo safe'].join('\n');
-    expectNoCommitMessageShell(safe, 'safe.yml');
+    expectNoCommitMetadataShell(safe, 'safe.yml');
   });
 });
