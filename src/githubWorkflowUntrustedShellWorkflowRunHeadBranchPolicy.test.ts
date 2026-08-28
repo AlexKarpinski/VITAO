@@ -7,7 +7,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
-const headBranchSource = /github\.event\.workflow_run\.head_branch|github\[['"]event['"]\]\[['"]workflow_run['"]\]\[['"]head_branch['"]\]/;
+const workflowRunTextSource = /github\.event\.workflow_run\.(?:head_branch|display_title)|github\[['"]event['"]\]\[['"]workflow_run['"]\]\[['"](?:head_branch|display_title)['"]\]/;
 const envReference = (name: string) =>
   new RegExp(`(?:\\$${name}(?![A-Za-z0-9_])|\\$\\{${name}(?:[^}]*)?\\}|%${name}%|\\$env:${name}(?![A-Za-z0-9_])|\\$\\{env:${name}\\}|\\$\\{\\{\\s*env\\.${name}\\s*\\}\\})`);
 
@@ -39,31 +39,31 @@ const collectRunScripts = (workflow: string) => {
   return scripts;
 };
 
-const collectHeadBranchEnvNames = (workflow: string) => {
+const collectWorkflowRunTextEnvNames = (workflow: string) => {
   const names = new Set<string>();
   for (const line of workflow.split('\n')) {
     const match = line.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.+)$/);
-    if (match && headBranchSource.test(match[2])) names.add(match[1]);
+    if (match && workflowRunTextSource.test(match[2])) names.add(match[1]);
   }
   return names;
 };
 
-const expectNoWorkflowRunHeadBranchShellExecution = (workflow: string, source: string) => {
+const expectNoWorkflowRunTextShellExecution = (workflow: string, source: string) => {
   if (!/workflow_run\s*:/.test(workflow)) return;
-  const taintedEnv = collectHeadBranchEnvNames(workflow);
+  const taintedEnv = collectWorkflowRunTextEnvNames(workflow);
   for (const script of collectRunScripts(workflow)) {
-    expect(headBranchSource.test(script), `${source}: workflow_run.head_branch reaches a shell run step`).toBe(false);
+    expect(workflowRunTextSource.test(script), `${source}: attacker-controlled workflow_run text reaches a shell run step`).toBe(false);
     for (const name of taintedEnv) {
-      expect(envReference(name).test(script), `${source}: workflow_run.head_branch reaches shell through env.${name}`).toBe(false);
+      expect(envReference(name).test(script), `${source}: attacker-controlled workflow_run text reaches shell through env.${name}`).toBe(false);
     }
   }
 };
 
-describe('GitHub workflow_run head branch shell policy', () => {
+describe('GitHub workflow_run text shell policy', () => {
   it('scans every checked-in workflow', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
     for (const file of workflowFiles) {
-      expectNoWorkflowRunHeadBranchShellExecution(readFileSync(join(workflowsDir, file), 'utf8'), file);
+      expectNoWorkflowRunTextShellExecution(readFileSync(join(workflowsDir, file), 'utf8'), file);
     }
   });
 
@@ -79,7 +79,7 @@ describe('GitHub workflow_run head branch shell policy', () => {
       `    steps:`,
       `      - run: "bash -c '${'${{ github.event.workflow_run.head_branch }}'}'"`,
     ].join('\n');
-    expect(() => expectNoWorkflowRunHeadBranchShellExecution(unsafe, 'workflow-run-head.yml')).toThrow();
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head.yml')).toThrow();
   });
 
   it('rejects workflow_run head branch propagated through env', () => {
@@ -96,7 +96,39 @@ describe('GitHub workflow_run head branch shell policy', () => {
       '    steps:',
       '      - run: bash -c "$CMD"',
     ].join('\n');
-    expect(() => expectNoWorkflowRunHeadBranchShellExecution(unsafe, 'workflow-run-head-env.yml')).toThrow();
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-env.yml')).toThrow();
+  });
+
+  it('rejects direct workflow_run display-title shell execution', () => {
+    const unsafe = [
+      'on:',
+      '  workflow_run:',
+      '    workflows: [CI]',
+      '    types: [completed]',
+      'jobs:',
+      '  demo:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      `      - run: "bash -c '${'${{ github.event.workflow_run.display_title }}'}'"`,
+    ].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-display-title.yml')).toThrow();
+  });
+
+  it('rejects workflow_run display-title propagated through env', () => {
+    const unsafe = [
+      'on:',
+      '  workflow_run:',
+      '    workflows: [CI]',
+      '    types: [completed]',
+      'jobs:',
+      '  demo:',
+      '    runs-on: ubuntu-latest',
+      '    env:',
+      `      CMD: ${'${{ github.event.workflow_run.display_title }}'}`,
+      '    steps:',
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-display-title-env.yml')).toThrow();
   });
 
   it('allows workflow_run workflows that use only constant shell commands', () => {
@@ -111,6 +143,6 @@ describe('GitHub workflow_run head branch shell policy', () => {
       '    steps:',
       '      - run: echo safe',
     ].join('\n');
-    expectNoWorkflowRunHeadBranchShellExecution(safe, 'safe.yml');
+    expectNoWorkflowRunTextShellExecution(safe, 'safe.yml');
   });
 });
