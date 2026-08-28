@@ -41,12 +41,34 @@ const collectRunScripts = (workflow: string) => {
   return scripts;
 };
 
+const collectTaintedEnv = (workflow: string) => {
+  const names = new Set<string>();
+  for (const raw of workflow.split('\n')) {
+    const match = raw.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.+?)\s*$/);
+    if (!match) continue;
+    if (forkRepoText.test(normalizeAccess(match[2]))) names.add(match[1]);
+  }
+  return names;
+};
+
+const scriptReadsEnv = (script: string, name: string) => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:\\$${escaped}\\b|\\$\\{${escaped}(?::?[-+?=][^}]*)?\\}|\\$env:${escaped}\\b|\\$\\{env:${escaped}\\}|%${escaped}%|\\$\\{\\{\\s*env\\.${escaped}\\s*\\}\\})`, 'i').test(script);
+};
+
 const expectNoForkRepoMetadataInShell = (workflow: string, source: string) => {
+  const taintedEnv = collectTaintedEnv(workflow);
   for (const script of collectRunScripts(workflow)) {
     expect(
       forkRepoText.test(normalizeAccess(script)),
       `${source}: attacker-controlled fork repository metadata reaches shell execution`,
     ).toBe(false);
+    for (const name of taintedEnv) {
+      expect(
+        scriptReadsEnv(script, name),
+        `${source}: fork repository metadata reaches shell through environment variable ${name}`,
+      ).toBe(false);
+    }
   }
 };
 
@@ -80,6 +102,19 @@ describe('GitHub workflow fork-repository metadata shell policy', () => {
       `      - run: bash -c "\${{ context.payload.pull_request.head.repo.full_name }}"`,
     ].join('\n');
     expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-bracket.yml')).toThrow();
+  });
+
+  it('rejects fork repository metadata routed through an environment variable', () => {
+    const unsafe = [
+      'on: pull_request_target',
+      'jobs:',
+      '  demo:',
+      '    env:',
+      `      CMD: "\${{ github.event.pull_request.head.repo.description }}"`,
+      '    steps:',
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-env.yml')).toThrow();
   });
 
   it('allows constant commands that do not interpolate fork metadata', () => {
