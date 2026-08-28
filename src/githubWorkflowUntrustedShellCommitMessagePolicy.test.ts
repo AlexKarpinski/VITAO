@@ -15,7 +15,7 @@ const normalizeAccess = (value: string) => value
   .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
 const directCommitMetadata = /github\.event\.(?:workflow_run\.)?head_commit\.(?:message|(?:author|committer)\.(?:name|email|username))\b/;
-const serializedCommitIdentity = /tojson\s*\(\s*[^)]*github\.event\.(?:workflow_run\.)?head_commit\.(?:author|committer)\b[^)]]*\)/i;
+const serializedCommitIdentity = /tojson\s*\(\s*[^)]*github\.event\.(?:workflow_run\.)?head_commit\.(?:author|committer)\b[^)]*\)/i;
 const containsUntrustedCommitMetadata = (value: string) =>
   directCommitMetadata.test(value) || serializedCommitIdentity.test(value);
 
