@@ -14,7 +14,10 @@ const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
-const untrustedCommitMetadata = /(?:github\.event\.(?:workflow_run\.)?head_commit\.(?:message|(?:author|committer)\.(?:name|email|username))\b|tojson\(\s*github\.event\.(?:workflow_run\.)?head_commit\.(?:author|committer)\s*\))/i;
+const directCommitMetadata = /github\.event\.(?:workflow_run\.)?head_commit\.(?:message|(?:author|committer)\.(?:name|email|username))\b/;
+const serializedCommitIdentity = /tojson\s*\(\s*[^)]*github\.event\.(?:workflow_run\.)?head_commit\.(?:author|committer)\b[^)]]*\)/i;
+const containsUntrustedCommitMetadata = (value: string) =>
+  directCommitMetadata.test(value) || serializedCommitIdentity.test(value);
 
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
@@ -65,13 +68,13 @@ const collectCommitMetadataEnvNames = (workflow: string) => {
     if (flowEnv) {
       for (const entry of splitFlowEntries(flowEnv[1])) {
         const nested = entry.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.+?)\s*$/);
-        if (nested && untrustedCommitMetadata.test(normalizeAccess(nested[2]))) names.add(nested[1]);
+        if (nested && containsUntrustedCommitMetadata(normalizeAccess(nested[2]))) names.add(nested[1]);
       }
       continue;
     }
     const match = line.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.+?)\s*$/);
     if (!match) continue;
-    if (untrustedCommitMetadata.test(normalizeAccess(match[2]))) names.add(match[1]);
+    if (containsUntrustedCommitMetadata(normalizeAccess(match[2]))) names.add(match[1]);
   }
   return names;
 };
@@ -89,7 +92,7 @@ const expectNoCommitMetadataShell = (workflow: string, source: string) => {
   const taintedEnv = collectCommitMetadataEnvNames(workflow);
   for (const script of scripts) {
     expect(
-      untrustedCommitMetadata.test(normalizeAccess(script)),
+      containsUntrustedCommitMetadata(normalizeAccess(script)),
       `${source}: attacker-controlled commit metadata reaches shell`,
     ).toBe(false);
     for (const name of taintedEnv) {
@@ -150,6 +153,16 @@ describe('GitHub workflow commit metadata shell policy', () => {
   it('rejects serialized commit committer identity case-insensitively', () => {
     const unsafe = ['on: push', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ toJson(github.event.head_commit.committer) }}'"`].join('\n');
     expect(() => expectNoCommitMetadataShell(unsafe, 'serialized-committer.yml')).toThrow();
+  });
+
+  it('rejects compound serialized commit identity arguments', () => {
+    const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ toJson(github.event.workflow_run.head_commit.author || null) }}'"`].join('\n');
+    expect(() => expectNoCommitMetadataShell(unsafe, 'serialized-compound-author.yml')).toThrow();
+  });
+
+  it('does not case-fold ordinary commit metadata text', () => {
+    const safe = ['jobs:', '  demo:', '    steps:', '      - run: echo GITHUB.EVENT.HEAD_COMMIT.MESSAGE'].join('\n');
+    expectNoCommitMetadataShell(safe, 'uppercase-constant.yml');
   });
 
   it('allows constant shell scripts', () => {
