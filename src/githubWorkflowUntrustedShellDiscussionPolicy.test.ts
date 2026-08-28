@@ -23,10 +23,35 @@ const containsUntrustedDiscussionText = (value: string) => {
     || /tojson\s*\(\s*github\.event\.discussion\s*\)/i.test(normalized);
 };
 
-const collectRunLikeScalars = (workflow: string) => workflow
-  .split('\n')
-  .map((line) => line.trim())
-  .filter((line) => /^(?:-\s*)?(?:["']?run["']?|["']?shell["']?)\s*:/.test(line));
+const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const blockHeader = /^(?:[|>])(?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?(?:\s+#.*)?$/;
+
+const collectRunLikeScalars = (workflow: string) => {
+  const scalars: string[] = [];
+  const lines = workflow.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const match = line.match(/^(\s*)(?:-\s*)?(?:["']?run["']?|["']?shell["']?)\s*:\s*(.*?)\s*$/);
+    if (!match) continue;
+
+    const value = match[2];
+    if (!blockHeader.test(value)) {
+      scalars.push(line.trim());
+      continue;
+    }
+
+    const parentIndent = match[1].length;
+    const body: string[] = [];
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1];
+      if (next.trim() && indentOf(next) <= parentIndent) break;
+      index += 1;
+      body.push(next);
+    }
+    scalars.push(body.join('\n'));
+  }
+  return scalars;
+};
 
 const assertDiscussionTextDoesNotCrossShellBoundary = (workflow: string) => {
   for (const scalar of collectRunLikeScalars(workflow)) {
@@ -50,6 +75,18 @@ describe('GitHub workflow discussion-text shell boundary policy', () => {
       '  validate:',
       '    steps:',
       `      - run: bash -c '\${{ github.event.discussion.body }}'`,
+    ].join('\n');
+    expect(() => assertDiscussionTextDoesNotCrossShellBoundary(unsafe)).toThrow();
+  });
+
+  it('rejects discussion body interpolation inside block-scalar run bodies', () => {
+    const unsafe = [
+      'on: discussion',
+      'jobs:',
+      '  validate:',
+      '    steps:',
+      '      - run: |',
+      `          bash -c '\${{ github.event.discussion.body }}'`,
     ].join('\n');
     expect(() => assertDiscussionTextDoesNotCrossShellBoundary(unsafe)).toThrow();
   });
