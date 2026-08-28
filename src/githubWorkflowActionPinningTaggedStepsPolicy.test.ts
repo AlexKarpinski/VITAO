@@ -8,6 +8,8 @@ const workflowFiles = readdirSync(workflowsDir)
   .sort();
 
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
+const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const blockHeader = /^(?:(?:![^\s]+|&[^\s]+)\s+)*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?(?:\s+#.*)?$/;
 
 const decodeKey = (raw: string) => {
   const key = raw.trim();
@@ -49,7 +51,20 @@ const splitTopLevel = (body: string) => {
 
 const collectTaggedStepRefs = (workflow: string) => {
   const refs: string[] = [];
-  for (const line of workflow.split('\n')) {
+  const lines = workflow.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const scalar = line.match(/^\s*(?:-\s*)?(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.+?)\s*$/);
+    if (scalar && blockHeader.test(scalar[1].trim())) {
+      const parentIndent = indentOf(line);
+      while (index + 1 < lines.length) {
+        const next = lines[index + 1];
+        if (next.trim() && indentOf(next) <= parentIndent) break;
+        index += 1;
+      }
+      continue;
+    }
+
     const match = line.match(/^\s*(?:["']?steps["']?)\s*:\s*(?:(?:![^\s]+|&[^\s]+)\s+)+\[([\s\S]*)\]\s*$/);
     if (!match) continue;
     for (const stepEntry of splitTopLevel(match[1])) {
@@ -96,6 +111,12 @@ describe('tagged steps action-pinning policy', () => {
     const safe = ['jobs:', '  build:', `    steps: &common !!seq [{ "uses": actions/checkout@${sha} }]`].join('\n');
     expect(collectTaggedStepRefs(safe)).toEqual([`actions/checkout@${sha}`]);
     expectImmutableRefs(safe, 'tagged-anchor.yml');
+  });
+
+  it('ignores tagged-step examples inside block scalars', () => {
+    const safe = ['jobs:', '  build:', '    env:', '      DOC: |', '        steps: !!seq [{ uses: actions/checkout@v4 }]', '    steps:', '      - run: echo safe'].join('\n');
+    expect(collectTaggedStepRefs(safe)).toEqual([]);
+    expectImmutableRefs(safe, 'documentation.yml');
   });
 
   it('ignores uses-like text outside tagged steps values', () => {
