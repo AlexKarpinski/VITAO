@@ -37,9 +37,13 @@ const stripComment = (line: string) => {
   return line;
 };
 
+const isBlockScalarHeader = (trimmed: string) =>
+  /^(?:-\s+)?[^:]+:\s*(?:[&!][^\s]+\s+)*(?:[>|](?:[+-]?\d*|\d+[+-]?))\s*$/.test(trimmed);
+
 const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
 
   for (const rawLine of lines) {
     const line = stripComment(rawLine);
@@ -47,12 +51,22 @@ const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
     if (!trimmed) continue;
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
 
+    if (blockScalarIndent !== null) {
+      if (indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+
     if (/^steps\s*:\s*$/.test(trimmed)) {
       stepsIndent = indent;
       continue;
     }
     if (stepsIndent !== null && indent <= stepsIndent) stepsIndent = null;
     if (stepsIndent === null) continue;
+
+    if (isBlockScalarHeader(trimmed)) {
+      blockScalarIndent = indent;
+      continue;
+    }
 
     const match = trimmed.match(/^-\s+(?:[&!][^\s]+\s+)+uses\s*:\s*([^\s]+)\s*$/);
     if (!match) continue;
@@ -87,6 +101,20 @@ describe('GitHub workflow decorated uses scope policy', () => {
     ].join('\n');
 
     expectDecoratedStepUsesPinned(safe, 'safe.yml');
+  });
+
+  it('ignores decorated uses examples inside run block scalars', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: |',
+      '          echo "example:"',
+      '          - &uses-key uses: actions/checkout@v4',
+      '      - run: echo safe',
+    ].join('\n');
+
+    expectDecoratedStepUsesPinned(safe, 'block-scalar.yml');
   });
 
   it('accepts a full immutable SHA for decorated action keys', () => {
