@@ -32,8 +32,16 @@ const expectNoCmdExpansionOfTaintedEnv = (workflow: string, source: string) => {
   const tainted = taintedEnvNames(workflow);
   for (const name of tainted) {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const cmdReference = new RegExp(`%${escaped}%`, 'i');
-    expect(cmdReference.test(workflow), `${source}: cmd expands tainted env ${name}`).toBe(false);
+    const percentReference = new RegExp(`%${escaped}%`, 'i');
+    const delayedReference = new RegExp(
+      `cmd(?:\\.exe)?[^\\n]*\\/V(?::ON)?[^\\n]*!${escaped}!`,
+      'i',
+    );
+    expect(percentReference.test(workflow), `${source}: cmd expands tainted env ${name}`).toBe(false);
+    expect(
+      delayedReference.test(workflow),
+      `${source}: cmd delayed-expands tainted env ${name}`,
+    ).toBe(false);
   }
 };
 
@@ -48,6 +56,30 @@ describe('GitHub workflow cmd environment trust policy', () => {
     ].join('\n');
 
     expect(() => expectNoCmdExpansionOfTaintedEnv(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects delayed cmd expansion when /V:ON is enabled', () => {
+    const unsafe = [
+      'env:',
+      '  CMD: ${{ github.event.comment.body }}',
+      'steps:',
+      '  - shell: cmd',
+      '    run: cmd /V:ON /C "call !CMD!"',
+    ].join('\n');
+
+    expect(() => expectNoCmdExpansionOfTaintedEnv(unsafe, 'delayed.yml')).toThrow();
+  });
+
+  it('does not treat delayed syntax as expansion without /V', () => {
+    const safe = [
+      'env:',
+      '  CMD: ${{ github.event.comment.body }}',
+      'steps:',
+      '  - shell: cmd',
+      '    run: echo !CMD!',
+    ].join('\n');
+
+    expectNoCmdExpansionOfTaintedEnv(safe, 'delayed-disabled.yml');
   });
 
   it('allows cmd expansion of constant environment values', () => {
