@@ -59,13 +59,13 @@ const collectFlowJobRefs = (workflow: string) => {
       continue;
     }
 
-    const mapping = line.match(/^\s*(?:(?:&[^\s]+|![^\s]+)\s+)*(?:["']?[A-Za-z0-9_.-]+["']?)\s*:\s*(.+)$/);
+    const mapping = line.match(/^\s*(?:(?:&[^\s]+|![^\s]+)\s+)*(?:["']?[A-Za-z0-9_.-]+["']?)\s*:\s*(.*)$/);
     if (!mapping) continue;
     if (directJobIndent === null) directJobIndent = indent;
     if (indent !== directJobIndent) continue;
 
     const value = mapping[1].trim();
-    if (!/^\{/.test(value)) continue;
+    if (!value || !/^\{/.test(value)) continue;
     const uses = value.match(/\buses\s*:\s*([^,}\s]+)/);
     if (uses) refs.push(uses[1].replace(/^['"]|['"]$/g, ''));
   }
