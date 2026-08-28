@@ -72,19 +72,20 @@ const collectExplicitJobsWorkflowRefs = (workflow: string) => {
   const lines = workflow.split('\n');
   let explicitJobsIndent: number | null = null;
   let jobsValueIndent: number | null = null;
+  let jobEntryIndent: number | null = null;
   let pendingFlowJobIndent: number | null = null;
   for (const rawLine of lines) {
     const line = stripYamlComment(rawLine);
     const indent = rawLine.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = line.trim();
-    if (/^\?\s+(?:jobs|["']jobs["'])\s*$/.test(trimmed)) { explicitJobsIndent = indent; jobsValueIndent = null; pendingFlowJobIndent = null; continue; }
+    if (/^\?\s+(?:jobs|["']jobs["'])\s*$/.test(trimmed)) { explicitJobsIndent = indent; jobsValueIndent = null; jobEntryIndent = null; pendingFlowJobIndent = null; continue; }
     if (explicitJobsIndent !== null && jobsValueIndent === null) {
       if (!trimmed) continue;
       if (indent < explicitJobsIndent || !/^:\s*$/.test(trimmed)) { explicitJobsIndent = null; continue; }
       jobsValueIndent = indent; continue;
     }
     if (jobsValueIndent === null || !trimmed) continue;
-    if (indent <= jobsValueIndent) { explicitJobsIndent = null; jobsValueIndent = null; pendingFlowJobIndent = null; continue; }
+    if (indent <= jobsValueIndent) { explicitJobsIndent = null; jobsValueIndent = null; jobEntryIndent = null; pendingFlowJobIndent = null; continue; }
 
     if (pendingFlowJobIndent !== null) {
       if (indent > pendingFlowJobIndent) {
@@ -94,6 +95,10 @@ const collectExplicitJobsWorkflowRefs = (workflow: string) => {
       pendingFlowJobIndent = null;
       if (/^\{/.test(trimmed)) continue;
     }
+
+    if (jobEntryIndent === null) jobEntryIndent = indent;
+    if (indent < jobEntryIndent) { jobEntryIndent = indent; pendingFlowJobIndent = null; }
+    if (indent !== jobEntryIndent) continue;
 
     const splitNodePropertyJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?:&[^\s{}]+|![^\s{}]+)(?:\s+(?:&[^\s{}]+|![^\s{}]+))*\s*$/);
     if (splitNodePropertyJob) {
@@ -128,7 +133,7 @@ describe('explicit top-level jobs immutable-pinning policy', () => {
     expect(() => expectImmutableExplicitJobsRefs(mutable, 'explicit-jobs.yml')).toThrow();
   });
   it('does not treat nested uses-like metadata as a reusable-workflow ref', () => {
-    const safe = ['? jobs', ':', '  build: { runs-on: ubuntu-latest, env: { NOTE: ok, uses: actions/checkout@v4 }, with: { uses: actions/cache@v4 } }'].join('\n');
+    const safe = ['? jobs', ':', '  build:', '    env: { uses: actions/checkout@v4 }', '    steps:', '      - run: echo safe'].join('\n');
     expect(collectExplicitJobsWorkflowRefs(safe)).toEqual([]);
   });
   it('checks only a direct job-level uses key when nested mappings also contain uses-like keys', () => {
@@ -161,5 +166,10 @@ describe('explicit top-level jobs immutable-pinning policy', () => {
     expect(collectExplicitJobsWorkflowRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]);
     const mutable = ['? jobs', ':', '  call: !shared', '    { uses: owner/repo/.github/workflows/build.yml@main }'].join('\n');
     expect(() => expectImmutableExplicitJobsRefs(mutable, 'explicit-jobs-split-node-property.yml')).toThrow();
+  });
+  it('ignores nested flow mappings below a direct explicit job entry', () => {
+    const safe = ['? jobs', ':', '  build:', '    env: { uses: actions/checkout@v4 }', '    strategy: { matrix: { uses: actions/cache@v4 } }'].join('\n');
+    expect(collectExplicitJobsWorkflowRefs(safe)).toEqual([]);
+    expectImmutableExplicitJobsRefs(safe, 'nested-explicit-job.yml');
   });
 });
