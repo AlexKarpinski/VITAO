@@ -73,6 +73,7 @@ const collectBlockFlowJobRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let jobsIndent: number | null = null;
+  let jobEntryIndent: number | null = null;
   let explicitJobKey: { indent: number; key: string } | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -83,17 +84,16 @@ const collectBlockFlowJobRefs = (workflow: string) => {
 
     if (/^jobs\s*:\s*$/.test(trimmed)) {
       jobsIndent = indent;
+      jobEntryIndent = null;
       explicitJobKey = null;
       continue;
     }
     if (jobsIndent === null) continue;
-    if (trimmed && indent <= jobsIndent) { jobsIndent = null; explicitJobKey = null; continue; }
+    if (trimmed && indent <= jobsIndent) { jobsIndent = null; jobEntryIndent = null; explicitJobKey = null; continue; }
+    if (!trimmed) continue;
+    if (jobEntryIndent === null) jobEntryIndent = indent;
+    if (indent < jobEntryIndent) { jobEntryIndent = indent; explicitJobKey = null; }
 
-    const explicitKey = trimmed.match(/^\?\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*$/);
-    if (explicitKey) {
-      explicitJobKey = { indent, key: decodeKey(explicitKey[1]) };
-      continue;
-    }
     if (explicitJobKey) {
       const explicitValue = trimmed.match(/^:\s*(?:(?:&|!)[^\s]+\s+)*\{([\s\S]*)\}\s*$/);
       if (indent === explicitJobKey.indent && explicitValue) {
@@ -102,7 +102,15 @@ const collectBlockFlowJobRefs = (workflow: string) => {
         explicitJobKey = null;
         continue;
       }
-      if (trimmed) explicitJobKey = null;
+      if (indent <= explicitJobKey.indent) explicitJobKey = null;
+    }
+
+    if (indent !== jobEntryIndent) continue;
+
+    const explicitKey = trimmed.match(/^\?\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*$/);
+    if (explicitKey) {
+      explicitJobKey = { indent, key: decodeKey(explicitKey[1]) };
+      continue;
     }
 
     const implicitJob = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?:(?:&|!)[^\s]+\s+)*\{([\s\S]*)\}\s*$/);
@@ -147,7 +155,7 @@ describe('block flow reusable-workflow job pinning', () => {
   });
 
   it('ignores uses-like keys nested below the direct job mapping', () => {
-    const safe = ['jobs:', '  call: &shared { env: { uses: actions/checkout@v4 }, runs-on: ubuntu-latest }'].join('\n');
+    const safe = ['jobs:', '  build:', '    env: { uses: actions/checkout@v4 }', '    steps:', '      - run: echo safe'].join('\n');
     expect(collectBlockFlowJobRefs(safe)).toEqual([]);
     expectPinned(safe, 'nested-env.yml');
   });
