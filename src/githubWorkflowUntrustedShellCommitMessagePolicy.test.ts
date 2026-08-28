@@ -14,7 +14,7 @@ const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
-const untrustedCommitMetadata = /github\.event\.(?:workflow_run\.)?head_commit\.(?:message|(?:author|committer)\.(?:name|email|username))\b/;
+const untrustedCommitMetadata = /(?:github\.event\.(?:workflow_run\.)?head_commit\.(?:message|(?:author|committer)\.(?:name|email|username))\b|tojson\(\s*github\.event\.(?:workflow_run\.)?head_commit\.(?:author|committer)\s*\))/i;
 
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
@@ -140,6 +140,16 @@ describe('GitHub workflow commit metadata shell policy', () => {
   it('rejects commit committer identity routed through environment variables', () => {
     const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    env:', `      CMD: "\${{ github.event.workflow_run.head_commit.committer.email }}"`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoCommitMetadataShell(unsafe, 'committer-env.yml')).toThrow();
+  });
+
+  it('rejects serialized workflow-run commit author identity', () => {
+    const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ toJSON(github.event.workflow_run.head_commit.author) }}'"`].join('\n');
+    expect(() => expectNoCommitMetadataShell(unsafe, 'serialized-author.yml')).toThrow();
+  });
+
+  it('rejects serialized commit committer identity case-insensitively', () => {
+    const unsafe = ['on: push', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ toJson(github.event.head_commit.committer) }}'"`].join('\n');
+    expect(() => expectNoCommitMetadataShell(unsafe, 'serialized-committer.yml')).toThrow();
   });
 
   it('allows constant shell scripts', () => {
