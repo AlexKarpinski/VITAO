@@ -13,6 +13,8 @@ const isActionStepContext = (line: string) => /^\s*-\s*\{/.test(line) || /\bstep
 const stripNodeProperties = (value: string) => value.trim().replace(/^(?:(?:&[A-Za-z0-9_.-]+|![^\s]+)\s+)+/, '');
 const isBlockHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(stripNodeProperties(value));
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const isSimpleYamlKey = (value: string) =>
+  /^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)$/.test(value);
 
 const extractTargetedActionRefs = (workflow: string) => {
   const refs: string[] = [];
@@ -41,7 +43,8 @@ const extractTargetedActionRefs = (workflow: string) => {
       if (trimmed) explicitOuterKeyIndent = null;
     }
 
-    if (/^(?:-\s*)?\?\s+(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*$/.test(trimmed)) {
+    const explicitOuterKey = trimmed.match(/^(?:-\s*)?\?\s+(.+?)\s*$/);
+    if (explicitOuterKey && isSimpleYamlKey(stripNodeProperties(explicitOuterKey[1]))) {
       explicitOuterKeyIndent = indent;
       continue;
     }
@@ -140,7 +143,7 @@ describe('GitHub workflow deferred YAML action pinning edge policy', () => {
     expectTargetedRefsImmutable(documentation, 'explicit-block-scalar-docs.yml');
   });
 
-  it('ignores explicit-key block scalars with YAML node properties', () => {
+  it('ignores explicit-key block scalars with YAML node properties on the value', () => {
     const documentation = [
       'jobs:',
       '  demo:',
@@ -154,6 +157,22 @@ describe('GitHub workflow deferred YAML action pinning edge policy', () => {
     ].join('\n');
     expect(extractTargetedActionRefs(documentation)).toEqual([]);
     expectTargetedRefsImmutable(documentation, 'explicit-node-property-block-scalar-docs.yml');
+  });
+
+  it('ignores explicit-key block scalars with YAML node properties on the key', () => {
+    const documentation = [
+      'jobs:',
+      '  demo:',
+      '    steps:',
+      '      - ? &command run',
+      '        : |',
+      '            Example configuration:',
+      '            uses: >-',
+      '              actions/checkout@v4',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(extractTargetedActionRefs(documentation)).toEqual([]);
+    expectTargetedRefsImmutable(documentation, 'explicit-key-node-property-block-scalar-docs.yml');
   });
 
   it('still enforces immutable refs in actual flow-style step contexts', () => {
