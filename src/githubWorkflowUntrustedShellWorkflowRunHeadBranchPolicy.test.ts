@@ -7,7 +7,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
-const workflowRunTextSource = /github\.event\.workflow_run\.(?:head_branch|display_title)|github\[['"]event['"]\]\[['"]workflow_run['"]\]\[['"](?:head_branch|display_title)['"]\]/;
+const workflowRunTextSource = /github\.event\.workflow_run\.(?:head_branch|display_title|head_repository\.description)|github\[['"]event['"]\]\[['"]workflow_run['"]\](?:\[['"](?:head_branch|display_title)['"]\]|\[['"]head_repository['"]\]\[['"]description['"]\])/;
 const envReference = (name: string) =>
   new RegExp(`(?:\\$${name}(?![A-Za-z0-9_])|\\$\\{${name}(?:[^}]*)?\\}|%${name}%|\\$env:${name}(?![A-Za-z0-9_])|\\$\\{env:${name}\\}|\\$\\{\\{\\s*env\\.${name}\\s*\\}\\})`);
 
@@ -68,81 +68,37 @@ describe('GitHub workflow_run text shell policy', () => {
   });
 
   it('rejects direct workflow_run head branch shell execution', () => {
-    const unsafe = [
-      'on:',
-      '  workflow_run:',
-      '    workflows: [CI]',
-      '    types: [completed]',
-      'jobs:',
-      '  demo:',
-      '    runs-on: ubuntu-latest',
-      `    steps:`,
-      `      - run: "bash -c '${'${{ github.event.workflow_run.head_branch }}'}'"`,
-    ].join('\n');
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.event.workflow_run.head_branch }}'}'"`].join('\n');
     expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head.yml')).toThrow();
   });
 
   it('rejects workflow_run head branch propagated through env', () => {
-    const unsafe = [
-      'on:',
-      '  workflow_run:',
-      '    workflows: [CI]',
-      '    types: [completed]',
-      'jobs:',
-      '  demo:',
-      '    runs-on: ubuntu-latest',
-      '    env:',
-      `      CMD: ${'${{ github.event.workflow_run.head_branch }}'}`,
-      '    steps:',
-      '      - run: bash -c "$CMD"',
-    ].join('\n');
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github.event.workflow_run.head_branch }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-env.yml')).toThrow();
   });
 
   it('rejects direct workflow_run display-title shell execution', () => {
-    const unsafe = [
-      'on:',
-      '  workflow_run:',
-      '    workflows: [CI]',
-      '    types: [completed]',
-      'jobs:',
-      '  demo:',
-      '    runs-on: ubuntu-latest',
-      '    steps:',
-      `      - run: "bash -c '${'${{ github.event.workflow_run.display_title }}'}'"`,
-    ].join('\n');
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.event.workflow_run.display_title }}'}'"`].join('\n');
     expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-display-title.yml')).toThrow();
   });
 
   it('rejects workflow_run display-title propagated through env', () => {
-    const unsafe = [
-      'on:',
-      '  workflow_run:',
-      '    workflows: [CI]',
-      '    types: [completed]',
-      'jobs:',
-      '  demo:',
-      '    runs-on: ubuntu-latest',
-      '    env:',
-      `      CMD: ${'${{ github.event.workflow_run.display_title }}'}`,
-      '    steps:',
-      '      - run: bash -c "$CMD"',
-    ].join('\n');
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github.event.workflow_run.display_title }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-display-title-env.yml')).toThrow();
   });
 
+  it('rejects workflow_run head repository descriptions in shell execution', () => {
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.event.workflow_run.head_repository.description }}'}'"`].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-repo.yml')).toThrow();
+  });
+
+  it('rejects workflow_run head repository descriptions propagated through env', () => {
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github.event.workflow_run.head_repository.description }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-repo-env.yml')).toThrow();
+  });
+
   it('allows workflow_run workflows that use only constant shell commands', () => {
-    const safe = [
-      'on:',
-      '  workflow_run:',
-      '    workflows: [CI]',
-      '    types: [completed]',
-      'jobs:',
-      '  demo:',
-      '    runs-on: ubuntu-latest',
-      '    steps:',
-      '      - run: echo safe',
-    ].join('\n');
+    const safe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', '      - run: echo safe'].join('\n');
     expectNoWorkflowRunTextShellExecution(safe, 'safe.yml');
   });
 });
