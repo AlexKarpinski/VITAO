@@ -12,10 +12,14 @@ const collectAnchoredActionMappings = (workflow: string) => {
   const anchors = new Map<string, string>();
   for (const line of workflow.split('\n')) {
     if (line.trimStart().startsWith('#')) continue;
-    const anchor = line.match(/&([A-Za-z_][A-Za-z0-9_-]*)\s*\{([^}]*)\}/);
-    if (!anchor) continue;
-    const uses = anchor[2].match(/(?:^|,)\s*["']?uses["']?\s*:\s*["']?([^,"'}\s]+)["']?/);
-    if (uses) anchors.set(anchor[1], uses[1]);
+    const anchoredValues = [
+      ...line.matchAll(/&([A-Za-z_][A-Za-z0-9_-]*)\s*\{([^}]*)\}/g),
+      ...line.matchAll(/&([A-Za-z_][A-Za-z0-9_-]*)\s*\[\s*\{([^}]*)\}\s*\]/g),
+    ];
+    for (const anchor of anchoredValues) {
+      const uses = anchor[2].match(/(?:^|,)\s*["']?uses["']?\s*:\s*["']?([^,"'}\s]+)["']?/);
+      if (uses) anchors.set(anchor[1], uses[1]);
+    }
   }
   return anchors;
 };
@@ -108,6 +112,18 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
       '      - *checkout',
     ].join('\n');
     expect(() => expectAliasedStepsPinned(safe, 'safe.yml')).not.toThrow();
+  });
+
+  it('accepts an immutable action sequence aliased as the complete steps value', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: &common [{ uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 }]',
+      '    steps: *common',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(safe, 'safe-sequence.yml')).not.toThrow();
   });
 
   it('ignores alias-like text inside run scalars', () => {
