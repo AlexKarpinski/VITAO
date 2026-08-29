@@ -26,6 +26,8 @@ const stripComment = (line: string) => {
   return line;
 };
 
+const nodeProperty = '(?:&[A-Za-z0-9_-]+|!(?:[^\\s{]+)?)';
+
 const collectDeferredNodePropertyStepRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
@@ -58,7 +60,13 @@ const collectDeferredNodePropertyStepRefs = (workflow: string) => {
       }
     }
 
-    if (/^-\s+(?:(?:&[A-Za-z0-9_-]+|![^\s]+)\s*)+$/.test(trimmed)) {
+    const inlinePropertyMapping = trimmed.match(new RegExp(`^-\\s+(?:${nodeProperty}\\s*)+\\{\\s*(?:["']?uses["']?)\\s*:\\s*([^,}\\s]+)\\s*(?:,|})`));
+    if (inlinePropertyMapping) {
+      refs.push(inlinePropertyMapping[1]);
+      continue;
+    }
+
+    if (new RegExp(`^-\\s+(?:${nodeProperty}\\s*)+$`).test(trimmed)) {
       pendingIndent = indent;
       continue;
     }
@@ -81,6 +89,16 @@ describe('GitHub workflow deferred node-property step pinning policy', () => {
       '    steps:',
       '      - &checkout',
       '        { uses: actions/checkout@v4 }',
+    ].join('\n');
+    expect(() => expectImmutableDeferredNodePropertySteps(unsafe)).toThrow();
+  });
+
+  it('rejects mutable action refs behind a bare non-specific tag', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - ! { uses: actions/checkout@v4 }',
     ].join('\n');
     expect(() => expectImmutableDeferredNodePropertySteps(unsafe)).toThrow();
   });
