@@ -142,7 +142,7 @@ const expectNoCommandBasedEnvReads = (workflow: string, source: string) => {
   for (const script of collectRuns(workflow)) {
     for (const name of tainted) {
       const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const commandRead = new RegExp(`(?:printenv\\s+${escaped}\\b|env\\s+[^\\n]*\\b${escaped}\\b|Get-Item\\s+Env:${escaped}\\b)`, 'i');
+      const commandRead = new RegExp(`(?:printenv\\s+${escaped}\\b|env\\s+[^\\n]*\\b${escaped}\\b|Get-Item\\s+(?:['"])?Env:${escaped}(?:['"])?\\b)`, 'i');
       const commandSink = /(?:bash\s+-c|sh\s+-c|eval|Invoke-Expression|cmd\s+\/c|call)\b/i;
       expect(commandRead.test(script) && commandSink.test(script), `${source}: command-based read of tainted ${name} reaches shell`).toBe(false);
     }
@@ -172,6 +172,11 @@ describe('command-based untrusted shell reads', () => {
   it('rejects command-based reads of directly tainted environment values', () => {
     const unsafe = ['jobs:', '  check:', '    env:', '      CMD: ${{ github.event.comment.body }}', '    steps:', '      - run: bash -c "$(printenv CMD)"'].join('\n');
     expect(() => expectNoCommandBasedEnvReads(unsafe, 'printenv.yml')).toThrow();
+  });
+
+  it('rejects quoted PowerShell provider reads of tainted environment values', () => {
+    const unsafe = ['jobs:', '  check:', '    env:', '      CMD: ${{ github.event.comment.body }}', '    steps:', "      - run: Invoke-Expression (Get-Item 'Env:CMD').Value"].join('\n');
+    expect(() => expectNoCommandBasedEnvReads(unsafe, 'powershell-provider.yml')).toThrow();
   });
 
   it('rejects command-based reads of tainted github-script outputs routed through env', () => {
