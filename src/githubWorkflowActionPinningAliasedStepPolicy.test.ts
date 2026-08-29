@@ -85,6 +85,18 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
     expect(() => expectAliasedStepsPinned(unsafe, 'unsafe.yml')).toThrow();
   });
 
+  it('rejects a mutable action sequence aliased as the complete steps value', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: &common [{ uses: actions/checkout@v4 }]',
+      '    steps: *common',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(unsafe, 'unsafe-sequence.yml')).toThrow();
+  });
+
   it('accepts an immutable action mapping aliased into steps', () => {
     const safe = [
       'jobs:',
