@@ -31,9 +31,10 @@ const aliasesUsedAsSteps = (workflow: string) => {
       names.add(trimmed.slice(1));
       return;
     }
-    if (!trimmed.startsWith('[')) return;
-    for (const item of trimmed.slice(1).split(',')) {
-      const alias = item.trim().match(/^\*([A-Za-z_][A-Za-z0-9_-]*)(?:\s*#.*)?$/);
+    const sequence = trimmed.match(/^\[([\s\S]*)\]$/);
+    if (!sequence) return;
+    for (const item of sequence[1].split(',')) {
+      const alias = item.trim().match(/^\*([A-Za-z_][A-Za-z0-9_-]*)$/);
       if (alias) names.add(alias[1]);
     }
   };
