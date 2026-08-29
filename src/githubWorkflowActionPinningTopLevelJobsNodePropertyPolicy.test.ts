@@ -44,7 +44,7 @@ const collectRefs = (workflow: string) => {
     const trimmed = line.trim();
 
     if (jobsIndent === null) {
-      const jobs = trimmed.match(/^(?:&[A-Za-z0-9_-]+\s+|![^\s]+\s+)*jobs\s*:\s*(?:(?:&[A-Za-z0-9_-]+|![^\s]+)\s*)*$/);
+      const jobs = trimmed.match(/^(?:&[A-Za-z0-9_-]+\s+|!\S*\s+)*jobs\s*:\s*(?:(?:&[A-Za-z0-9_-]+|!\S*)\s*)*$/);
       if (jobs) {
         jobsIndent = indent;
         directJobIndent = null;
@@ -58,11 +58,11 @@ const collectRefs = (workflow: string) => {
       continue;
     }
 
-    const directJobKey = trimmed.match(/^(?:(?:&[A-Za-z0-9_-]+|![^\s]+)\s+)*[A-Za-z0-9_-]+\s*:\s*(?:$|[^{}].*$|\{)/);
+    const directJobKey = trimmed.match(/^(?:(?:&[A-Za-z0-9_-]+|!\S*)\s+)*[A-Za-z0-9_-]+\s*:\s*(?:$|[^{}].*$|\{)/);
     if (directJobIndent === null && directJobKey) directJobIndent = indent;
     if (directJobIndent === null || indent !== directJobIndent) continue;
 
-    const jobMatch = trimmed.match(/^(?:(?:&[A-Za-z0-9_-]+|![^\s]+)\s+)*[A-Za-z0-9_-]+\s*:\s*(?:(?:&[A-Za-z0-9_-]+|![^\s]+)\s+)*\{(.*)\}\s*$/);
+    const jobMatch = trimmed.match(/^(?:(?:&[A-Za-z0-9_-]+|!\S*)\s+)*[A-Za-z0-9_-]+\s*:\s*(?:(?:&[A-Za-z0-9_-]+|!\S*)\s+)*\{(.*)\}\s*$/);
     if (!jobMatch) continue;
 
     const uses = jobMatch[1].match(/(?:^|,)\s*uses\s*:\s*([^,}\s]+)\s*(?:,|$)/);
@@ -83,6 +83,14 @@ describe('GitHub workflow top-level jobs node-property pinning policy', () => {
   it('enforces immutable refs for flow jobs under node-property-decorated jobs mappings', () => {
     const unsafe = [
       'jobs: &all',
+      '  call: { uses: owner/repo/.github/workflows/build.yml@main }',
+    ].join('\n');
+    expect(() => expectPinned(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('recognizes a bare non-specific tag on the jobs key', () => {
+    const unsafe = [
+      '! jobs:',
       '  call: { uses: owner/repo/.github/workflows/build.yml@main }',
     ].join('\n');
     expect(() => expectPinned(unsafe, 'unsafe.yml')).toThrow();
