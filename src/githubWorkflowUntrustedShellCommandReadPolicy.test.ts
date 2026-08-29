@@ -132,7 +132,7 @@ const expectNoEventPathCommandExecution = (workflow: string, source: string) => 
     const normalized = normalizeAccess(script);
     if (!/GITHUB_EVENT_PATH/.test(normalized)) continue;
     const readsUntrustedField = /(?:\.comment\.body|\.issue\.(?:title|body)|\.pull_request\.(?:title|body|head\.ref)|\.review(?:_comment)?\.body|\.discussion\.(?:title|body))/.test(normalized);
-    const executesRead = /(?:bash\s+-c|sh\s+-c|eval|Invoke-Expression|cmd\s+\/c|call)\b/i.test(normalized);
+    const executesRead = /(?:bash\s+-c|sh\s+-c|eval|Invoke-Expression|cmd\s+\/c|call|source\s+<\(|(?:^|[;&|]\s*)\.\s+<\()\b/i.test(normalized);
     expect(readsUntrustedField && executesRead, `${source}: untrusted GITHUB_EVENT_PATH data reaches shell`).toBe(false);
   }
 };
@@ -162,6 +162,11 @@ describe('command-based untrusted shell reads', () => {
   it('rejects shell execution of comment text read from GITHUB_EVENT_PATH', () => {
     const unsafe = ['jobs:', '  check:', '    steps:', '      - run: bash -c "$(jq -r \' .comment.body \' \"$GITHUB_EVENT_PATH\")"'].join('\n').replace("' .comment.body '", "'.comment.body'");
     expect(() => expectNoEventPathCommandExecution(unsafe, 'event-path.yml')).toThrow();
+  });
+
+  it('rejects sourcing comment text read from GITHUB_EVENT_PATH', () => {
+    const unsafe = ['jobs:', '  check:', '    steps:', '      - run: source <(jq -r \' .comment.body \' \"$GITHUB_EVENT_PATH\")'].join('\n').replace("' .comment.body '", "'.comment.body'");
+    expect(() => expectNoEventPathCommandExecution(unsafe, 'event-path-source.yml')).toThrow();
   });
 
   it('rejects command-based reads of directly tainted environment values', () => {
