@@ -81,7 +81,14 @@ const collectTaintedEnvNames = (workflow: string) => {
 const bashParameterReferences = (script: string, name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (new RegExp(`\\$\\{${escaped}[^}]*\\}`, 'g').test(script)) return true;
-  return new RegExp(`\\$\\(\\([^)]*\\b${escaped}\\b[^)]*\\)\\)`, 'g').test(script);
+  if (new RegExp(`\\$\\(\\([^)]*\\b${escaped}\\b[^)]*\\)\\)`, 'g').test(script)) return true;
+
+  for (const match of script.matchAll(/(?:^|[;\n]\s*)declare\s+-n\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\b/g)) {
+    if (match[2] !== name) continue;
+    const alias = match[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`\\$(?:${alias}\\b|\\{${alias}[^}]*\\})`).test(script.slice(match.index + match[0].length))) return true;
+  }
+  return false;
 };
 
 const expectNoTaintedBashParameterExpansion = (workflow: string, source: string) => {
@@ -117,6 +124,14 @@ describe('GitHub workflow Bash parameter-expansion shell policy', () => {
   it('rejects step-output taint before Bash parameter substitution', () => {
     const unsafe = ['on: issue_comment','jobs:','  demo:','    steps:','      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567','        id: capture','        with:','          result-encoding: string','          script: return context.payload.comment.body',`      - env:`,`          CMD: "\${{ steps.capture.outputs.result }}"`,'        run: bash -c "${CMD//x/x}"'].join('\n');
     expect(() => expectNoTaintedBashParameterExpansion(unsafe, 'step-output.yml')).toThrow();
+  });
+  it('rejects Bash nameref aliases of attacker-controlled variables', () => {
+    const unsafe = ['on: issue_comment','jobs:','  demo:','    env:',`      CMD: "\${{ github.event.comment.body }}"`,'    steps:','      - run: |','          declare -n ref=CMD','          bash -c "$ref"'].join('\n');
+    expect(() => expectNoTaintedBashParameterExpansion(unsafe, 'nameref.yml')).toThrow();
+  });
+  it('allows namerefs to constant environment values', () => {
+    const safe = ['jobs:','  demo:','    env:','      CMD: echo-safe','    steps:','      - run: |','          declare -n ref=CMD','          printf "%s" "$ref"'].join('\n');
+    expectNoTaintedBashParameterExpansion(safe, 'safe-nameref.yml');
   });
   it('allows parameter expansion of constant environment values', () => {
     const safe = ['jobs:','  demo:','    env:','      CMD: echo-safe','    steps:','      - run: printf "%s" "${CMD:0}"'].join('\n');
