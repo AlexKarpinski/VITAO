@@ -14,7 +14,7 @@ const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
-const forkRepoText = /(?:github\.event\.pull_request\.head\.repo|context\.payload\.pull_request\.head\.repo)\.(?:description|name|full_name)\b/;
+const forkRepoText = /(?:github\.event\.pull_request\.head\.repo|context\.payload\.pull_request\.head\.repo)\.(?:description|name|full_name|default_branch)\b/;
 
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
@@ -90,6 +90,18 @@ describe('GitHub workflow fork-repository metadata shell policy', () => {
       `      - run: bash -c "\${{ github.event.pull_request.head.repo.description }}"`,
     ].join('\n');
     expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-description.yml')).toThrow();
+  });
+
+  it('rejects fork default-branch names interpolated into a privileged shell', () => {
+    const unsafe = [
+      'on: pull_request_target',
+      'jobs:',
+      '  demo:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      `      - run: bash -c "\${{ github.event.pull_request.head.repo.default_branch }}"`,
+    ].join('\n');
+    expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-default-branch.yml')).toThrow();
   });
 
   it('rejects bracket and context.payload access to fork repository metadata', () => {
