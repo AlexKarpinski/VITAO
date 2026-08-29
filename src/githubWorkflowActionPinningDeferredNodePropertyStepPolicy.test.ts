@@ -27,18 +27,29 @@ const stripComment = (line: string) => {
 };
 
 const nodeProperty = '(?:&[A-Za-z0-9_-]+|!(?:[^\\s{]+)?)';
+const blockScalarValue = new RegExp(`:\\s*(?:${nodeProperty}\\s*)*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\\s*$`);
 
 const collectDeferredNodePropertyStepRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
   let pendingIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
 
   for (const rawLine of lines) {
     const line = stripComment(rawLine);
     const trimmed = line.trim();
     const indent = rawLine.match(/^\s*/)?.[0].length ?? 0;
     if (!trimmed) continue;
+
+    if (blockScalarIndent !== null) {
+      if (indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+    if (blockScalarValue.test(trimmed)) {
+      blockScalarIndent = indent;
+      continue;
+    }
 
     if (stepsIndent === null) {
       if (/^steps\s*:\s*$/.test(trimmed)) stepsIndent = indent;
@@ -125,6 +136,19 @@ describe('GitHub workflow deferred node-property step pinning policy', () => {
       '            { uses: actions/checkout@v4 }',
       '    steps:',
       '      - run: echo ok',
+    ].join('\n');
+    expect(() => expectImmutableDeferredNodePropertySteps(safe)).not.toThrow();
+  });
+
+  it('ignores deferred node-property examples inside run block scalars', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: |',
+      '          - &example',
+      '            { uses: actions/checkout@v4 }',
+      '      - run: echo safe',
     ].join('\n');
     expect(() => expectImmutableDeferredNodePropertySteps(safe)).not.toThrow();
   });
