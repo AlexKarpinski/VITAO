@@ -10,6 +10,37 @@ const workflowFiles = readdirSync(workflowsDir)
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 
+const stripYamlComment = (line: string) => {
+  let quote: '"' | "'" | null = null;
+  let backslashes = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (char === '\\') {
+        backslashes += 1;
+        continue;
+      }
+      if (char === quote) {
+        if (quote === "'" && line[index + 1] === "'") {
+          index += 1;
+          backslashes = 0;
+          continue;
+        }
+        if (quote === "'" || backslashes % 2 === 0) quote = null;
+      }
+      backslashes = 0;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      backslashes = 0;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /\s/.test(line[index - 1]))) return line.slice(0, index);
+  }
+  return line;
+};
+
 const splitTopLevel = (body: string) => {
   const entries: string[] = [];
   let start = 0;
@@ -52,7 +83,9 @@ const collectAliasedJobRefs = (workflow: string) => {
   const lines = workflow.split('\n');
   const anchoredRefs = new Map<string, string>();
 
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    const line = stripYamlComment(rawLine);
+    if (!line.trim()) continue;
     const anchor = line.match(/&([A-Za-z0-9_-]+)\s*\{([\s\S]*)\}/);
     if (!anchor) continue;
     const ref = directUses(anchor[2]);
@@ -144,5 +177,26 @@ describe('aliased reusable-workflow job pinning policy', () => {
       'metadata: &call-job { uses: actions/checkout@v4 }',
     ].join('\n');
     expect(collectAliasedJobRefs(safe)).toEqual([]);
+  });
+
+  it('ignores anchor-shaped text in YAML comments', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const safe = [
+      `metadata: &call-job { uses: owner/repo/.github/workflows/build.yml@${sha} }`,
+      'jobs:',
+      '  call: *call-job',
+      '# &call-job { uses: owner/repo/.github/workflows/build.yml@main }',
+    ].join('\n');
+    expectImmutableRefs(safe, 'aliased-job-comment.yml');
+  });
+
+  it('preserves hashes inside quoted anchor values', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const safe = [
+      `metadata: &call-job { note: "release #1", uses: owner/repo/.github/workflows/build.yml@${sha} }`,
+      'jobs:',
+      '  call: *call-job',
+    ].join('\n');
+    expectImmutableRefs(safe, 'aliased-job-hash.yml');
   });
 });
