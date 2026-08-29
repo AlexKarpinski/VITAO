@@ -8,6 +8,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .sort();
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const blockScalarHeader = /:\s*[|>](?:[+-]?\d?|\d[+-])?\s*(?:#.*)?$/;
 
 const squareDelta = (line: string) => {
   let quote: '"' | "'" | null = null;
@@ -55,11 +56,24 @@ const extractDeferredExplicitStepRefs = (workflow: string) => {
   const lines = workflow.split('\n');
   let explicitKeyIndent: number | null = null;
   let pendingValueIndent: number | null = null;
+  let ignoredScalarIndent: number | null = null;
   let flowDepth = 0;
 
   for (const line of lines) {
     const trimmed = line.trim();
     const indent = indentOf(line);
+
+    if (ignoredScalarIndent !== null) {
+      if (!trimmed || indent > ignoredScalarIndent) continue;
+      ignoredScalarIndent = null;
+    }
+
+    if (blockScalarHeader.test(trimmed)) {
+      ignoredScalarIndent = indent;
+      explicitKeyIndent = null;
+      pendingValueIndent = null;
+      continue;
+    }
 
     if (flowDepth > 0) {
       refs.push(...collectUses(line));
@@ -127,6 +141,23 @@ describe('GitHub workflow deferred explicit steps action-pinning policy', () => 
   it('allows immutable refs for the same YAML structure', () => {
     const sha = '0123456789abcdef0123456789abcdef01234567';
     const safe = ['jobs:', '  build:', '    ? "steps"', '    :', '      [', `        { uses: actions/checkout@${sha} },`, '      ]'].join('\n');
+    expectPinned(extractDeferredExplicitStepRefs(safe));
+  });
+
+  it('ignores deferred explicit-steps examples inside block scalars', () => {
+    const safe = [
+      'env:',
+      '  DOC: |',
+      '    ? steps',
+      '    :',
+      '      [',
+      '        { uses: actions/checkout@v4 },',
+      '      ]',
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: echo safe',
+    ].join('\n');
     expectPinned(extractDeferredExplicitStepRefs(safe));
   });
 });
