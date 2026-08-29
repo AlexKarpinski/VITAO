@@ -20,7 +20,11 @@ const collectTaintedFileWrites = (workflow: string) => {
 
 const executesFile = (workflow: string, path: string) => {
   const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?:^|[\\n;]|&&|\\|\\|)\\s*(?:-\\s+)?(?:run:\\s*)?(?:source|\\.)\\s+(?:['"])?${escaped}(?:['"])?(?=\\s|$)`, 'm').test(workflow);
+  const commandBoundary = '(?:^|[\\n;]|&&|\\|\\|)\\s*(?:-\\s+)?(?:run:\\s*)?';
+  const quotedPath = `(?:['"])?${escaped}(?:['"])?`;
+  const sourceExecution = `(?:source|\\.)\\s+${quotedPath}(?=\\s|$)`;
+  const interpreterExecution = `(?:bash|sh|dash|ksh|zsh)\\s+(?:--\\s+)?${quotedPath}(?=\\s|$)`;
+  return new RegExp(`${commandBoundary}(?:${sourceExecution}|${interpreterExecution})`, 'm').test(workflow);
 };
 
 const expectNoUntrustedSharedFileExecution = (workflow: string, source: string) => {
@@ -58,6 +62,21 @@ describe('GitHub workflow shared-file shell trust boundary', () => {
       '      - run: source /tmp/command.sh',
     ].join('\n');
     expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe-async.yml')).toThrow();
+  });
+
+  it('rejects attacker-derived files executed directly by an interpreter', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const fs = require('node:fs');",
+      "            fs.writeFileSync('/tmp/command.sh', context.payload.comment.body);",
+      '      - run: bash /tmp/command.sh',
+    ].join('\n');
+    expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe-interpreter.yml')).toThrow();
   });
 
   it('allows sourcing a file written only with constant data', () => {
