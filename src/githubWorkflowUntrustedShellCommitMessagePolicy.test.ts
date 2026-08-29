@@ -14,7 +14,7 @@ const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
-const commitMetadataPath = /(?:head_commit|commits\.\*)\.(?:message|(?:author|committer)\.(?:name|email|username))\b/;
+const commitMetadataPath = /(?:head_commit|commits\.\*)\.(?:message|(?:author|committer)\.(?:name|email|username)|(?:added|removed|modified)(?:\.\*)?)\b/;
 const directCommitMetadata = new RegExp(`github\\.event\\.(?:workflow_run\\.)?${commitMetadataPath.source}`);
 const serializedCommitIdentity = /tojson\s*\(\s*[^)]*github\.event\.(?:workflow_run\.)?(?:head_commit|commits\.\*)\.(?:author|committer)\b[^)]*\)/i;
 const containsUntrustedCommitMetadata = (value: string) =>
@@ -119,6 +119,21 @@ describe('GitHub workflow commit metadata shell policy', () => {
   it('rejects messages from every commit in a push event', () => {
     const unsafe = ['on: push', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ join(github.event.commits.*.message, ' ') }}'"`].join('\n');
     expect(() => expectNoCommitMetadataShell(unsafe, 'push-commits.yml')).toThrow();
+  });
+
+  it('rejects pushed file paths from the head commit in shell scripts', () => {
+    const unsafe = ['on: push', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ join(github.event.head_commit.modified, ' ') }}'"`].join('\n');
+    expect(() => expectNoCommitMetadataShell(unsafe, 'push-head-paths.yml')).toThrow();
+  });
+
+  it('rejects pushed file paths from every commit in shell scripts', () => {
+    const unsafe = ['on: push', 'jobs:', '  demo:', '    steps:', `      - run: "bash -c '\${{ join(github.event.commits.*.added, ' ') }}'"`].join('\n');
+    expect(() => expectNoCommitMetadataShell(unsafe, 'push-commit-paths.yml')).toThrow();
+  });
+
+  it('rejects pushed file paths routed through environment variables', () => {
+    const unsafe = ['on: push', 'jobs:', '  demo:', '    env:', `      CMD: "\${{ join(github.event.commits.*.removed, ' ') }}"`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoCommitMetadataShell(unsafe, 'push-path-env.yml')).toThrow();
   });
 
   it('rejects pushed commit identity routed through environment variables', () => {
