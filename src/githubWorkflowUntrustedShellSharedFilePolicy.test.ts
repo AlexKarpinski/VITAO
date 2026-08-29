@@ -11,7 +11,7 @@ const untrustedPayload = /(?:github\.event|context\.payload)\.(?:issue\.(?:title
 
 const collectTaintedFileWrites = (workflow: string) => {
   const paths = new Set<string>();
-  const write = /(?:writeFileSync|appendFileSync)\(\s*['"]([^'"]+)['"]\s*,([^\n;]+)/g;
+  const write = /(?:(?:writeFileSync|appendFileSync)|(?:fs\.)?promises\.(?:writeFile|appendFile))\(\s*['"]([^'"]+)['"]\s*,([^\n;]+)/g;
   for (const match of workflow.matchAll(write)) {
     if (untrustedPayload.test(match[2])) paths.add(match[1]);
   }
@@ -20,7 +20,7 @@ const collectTaintedFileWrites = (workflow: string) => {
 
 const executesFile = (workflow: string, path: string) => {
   const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?:^|[\\n;]|&&|\\|\\|)\\s*(?:-\\s+)?(?:run:\s*)?(?:source|\\.)\\s+(?:['"])?${escaped}(?:['"])?(?=\\s|$)`, 'm').test(workflow);
+  return new RegExp(`(?:^|[\\n;]|&&|\\|\\|)\\s*(?:-\\s+)?(?:run:\\s*)?(?:source|\\.)\\s+(?:['"])?${escaped}(?:['"])?(?=\\s|$)`, 'm').test(workflow);
 };
 
 const expectNoUntrustedSharedFileExecution = (workflow: string, source: string) => {
@@ -43,6 +43,21 @@ describe('GitHub workflow shared-file shell trust boundary', () => {
       '      - run: source /tmp/command.sh',
     ].join('\n');
     expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects attacker-derived files written asynchronously and sourced later', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const fs = require('node:fs');",
+      "            await fs.promises.writeFile('/tmp/command.sh', context.payload.comment.body);",
+      '      - run: source /tmp/command.sh',
+    ].join('\n');
+    expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe-async.yml')).toThrow();
   });
 
   it('allows sourcing a file written only with constant data', () => {
