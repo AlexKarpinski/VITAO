@@ -8,6 +8,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .sort();
 
 const untrustedEventObjects = new Set(['comment', 'issue', 'pull_request', 'review', 'discussion']);
+const untrustedComputedLeaves = new Set(['body', 'title', 'diff_hunk']);
 
 const parseSingleQuoted = (raw: string) => {
   const trimmed = raw.trim();
@@ -58,6 +59,17 @@ const computedEventObjects = (script: string) => {
   return objects;
 };
 
+const computedEventLeaves = (script: string) => {
+  const leaves: Array<{ object: string; leaf: string }> = [];
+  const pattern = /github(?:\.event|\[['"]event['"]\])(?:\.([A-Za-z_][A-Za-z0-9_-]*)|\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\])\s*\[\s*format\s*\(((?:'(?:''|[^'])*'\s*,?\s*)+)\)\s*\]/gi;
+  for (const match of script.matchAll(pattern)) {
+    const leaf = resolveFormat(match[3]);
+    const object = match[1] ?? match[2];
+    if (object && leaf) leaves.push({ object, leaf });
+  }
+  return leaves;
+};
+
 const inlineRunValues = (workflow: string) =>
   workflow
     .split('\n')
@@ -70,6 +82,12 @@ const expectNoComputedUntrustedEventShellUse = (workflow: string, source: string
       expect(
         untrustedEventObjects.has(object),
         `${source}: computed event property ${object} reaches a shell run step`,
+      ).toBe(false);
+    }
+    for (const { object, leaf } of computedEventLeaves(script)) {
+      expect(
+        untrustedEventObjects.has(object) && untrustedComputedLeaves.has(leaf),
+        `${source}: computed ${object}.${leaf} event text reaches a shell run step`,
       ).toBe(false);
     }
   }
@@ -91,10 +109,19 @@ describe('computed GitHub event shell-boundary policy', () => {
     expect(() => expectNoComputedUntrustedEventShellUse(unsafe, 'computed-event.yml')).toThrow();
   });
 
+  it('rejects a computed leaf beneath an untrusted event object', () => {
+    const unsafe = [
+      'steps:',
+      "  - run: bash -c \"${{ github.event.comment[format('{0}{1}', 'bo', 'dy')] }}\"",
+    ].join('\n');
+    expect(() => expectNoComputedUntrustedEventShellUse(unsafe, 'computed-leaf.yml')).toThrow();
+  });
+
   it('allows a computed trusted event property when it is not user-authored text', () => {
     const safe = [
       'steps:',
       "  - run: echo '${{ github.event[format('{0}', 'action')] }}'",
+      "  - run: echo '${{ github.event.comment[format('{0}', 'id')] }}'",
     ].join('\n');
     expectNoComputedUntrustedEventShellUse(safe, 'computed-event-safe.yml');
   });
