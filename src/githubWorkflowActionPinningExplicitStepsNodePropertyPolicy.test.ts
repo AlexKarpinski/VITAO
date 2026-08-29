@@ -13,10 +13,37 @@ const scalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
 const stripNodeProperties = (value: string) =>
   value.replace(/^(?:(?:&[A-Za-z0-9_.-]+|![^\s]+|!![^\s]+)\s+)+/, '').trim();
 
+const updateMultilineQuote = (line: string, initial: '"' | "'" | null) => {
+  let quote = initial;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote === '"') {
+      if (char !== '"') continue;
+      let backslashes = 0;
+      for (let cursor = index - 1; cursor >= 0 && line[cursor] === '\\'; cursor -= 1) backslashes += 1;
+      if (backslashes % 2 === 0) quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      if (char !== "'") continue;
+      if (line[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+    if (char === '#' && quote === null && (index === 0 || /\s/.test(line[index - 1]))) break;
+  }
+  return quote;
+};
+
 const collectDecoratedExplicitStepRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let ignoredScalarIndent: number | null = null;
+  let multilineQuote: '"' | "'" | null = null;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const raw = lines[lineIndex];
@@ -27,9 +54,20 @@ const collectDecoratedExplicitStepRefs = (workflow: string) => {
       ignoredScalarIndent = null;
     }
 
+    if (multilineQuote !== null) {
+      multilineQuote = updateMultilineQuote(raw, multilineQuote);
+      continue;
+    }
+
     const scalar = raw.match(/^\s*[^:#]+:\s*(.+)$/);
     if (scalar && scalarHeader.test(stripNodeProperties(scalar[1]))) {
       ignoredScalarIndent = indent;
+      continue;
+    }
+
+    const quoteAfterLine = updateMultilineQuote(raw, null);
+    if (quoteAfterLine !== null) {
+      multilineQuote = quoteAfterLine;
       continue;
     }
 
@@ -97,6 +135,23 @@ jobs:
     : [{ uses: actions/checkout@v4 }]
 `;
     expect(() => assertPinned(unsafe)).toThrow(/actions\/checkout@v4/);
+  });
+
+  it('ignores explicit steps examples inside multiline quoted scalars', () => {
+    const safe = `
+name: multiline-quoted-docs
+env:
+  DOC: "documentation starts
+    ? !!str steps
+    : [{ uses: actions/checkout@v4 }]
+    documentation ends"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo safe
+`;
+    expect(() => assertPinned(safe)).not.toThrow();
   });
 
   it('scans every checked-in workflow', () => {
