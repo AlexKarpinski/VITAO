@@ -9,17 +9,113 @@ const workflowFiles = readdirSync('.github/workflows')
 const immutableSha = /^[^\s@]+@[0-9a-f]{40}$/i;
 const anchorName = '[A-Za-z0-9_][A-Za-z0-9_-]*';
 
+const isEscapedDoubleQuote = (value: string, index: number) => {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+};
+
+const extractBalancedFlowMapping = (value: string, start: number) => {
+  if (value[start] !== '{') return null;
+  let depth = 0;
+  let quote: 'single' | 'double' | null = null;
+
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote === 'single') {
+      if (char === "'" && value[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === 'double') {
+      if (char === '"' && !isEscapedDoubleQuote(value, index)) quote = null;
+      continue;
+    }
+    if (char === "'") {
+      quote = 'single';
+      continue;
+    }
+    if (char === '"') {
+      quote = 'double';
+      continue;
+    }
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return value.slice(start + 1, index);
+    }
+  }
+  return null;
+};
+
+const splitTopLevelFlowEntries = (mapping: string) => {
+  const entries: string[] = [];
+  let start = 0;
+  let braces = 0;
+  let brackets = 0;
+  let quote: 'single' | 'double' | null = null;
+
+  for (let index = 0; index < mapping.length; index += 1) {
+    const char = mapping[index];
+    if (quote === 'single') {
+      if (char === "'" && mapping[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === 'double') {
+      if (char === '"' && !isEscapedDoubleQuote(mapping, index)) quote = null;
+      continue;
+    }
+    if (char === "'") {
+      quote = 'single';
+      continue;
+    }
+    if (char === '"') {
+      quote = 'double';
+      continue;
+    }
+    if (char === '{') braces += 1;
+    else if (char === '}') braces -= 1;
+    else if (char === '[') brackets += 1;
+    else if (char === ']') brackets -= 1;
+    else if (char === ',' && braces === 0 && brackets === 0) {
+      entries.push(mapping.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  entries.push(mapping.slice(start).trim());
+  return entries;
+};
+
+const directUsesRef = (mapping: string) => {
+  for (const entry of splitTopLevelFlowEntries(mapping)) {
+    const match = entry.match(/^["']?uses["']?\s*:\s*["']?([^,"'}\s]+)["']?\s*$/);
+    if (match) return match[1];
+  }
+  return null;
+};
+
 const collectAnchoredActionMappings = (workflow: string) => {
   const anchors = new Map<string, string>();
   for (const line of workflow.split('\n')) {
     if (line.trimStart().startsWith('#')) continue;
-    const anchoredValues = [
-      ...line.matchAll(new RegExp(`&(${anchorName})\\s*\\{([^}]*)\\}`, 'g')),
-      ...line.matchAll(new RegExp(`&(${anchorName})\\s*\\[\\s*\\{([^}]*)\\}\\s*\\]`, 'g')),
-    ];
-    for (const anchor of anchoredValues) {
-      const uses = anchor[2].match(/(?:^|,)\s*["']?uses["']?\s*:\s*["']?([^,"'}\s]+)["']?/);
-      if (uses) anchors.set(anchor[1], uses[1]);
+    const anchorPattern = new RegExp(`&(${anchorName})\\b`, 'g');
+    for (const anchor of line.matchAll(anchorPattern)) {
+      const afterAnchor = anchor.index! + anchor[0].length;
+      const remainder = line.slice(afterAnchor);
+      const mappingOffset = remainder.search(/^(?:\s*\[)?\s*\{/);
+      if (mappingOffset < 0) continue;
+      const brace = line.indexOf('{', afterAnchor + mappingOffset);
+      const mapping = extractBalancedFlowMapping(line, brace);
+      if (mapping === null) continue;
+      const uses = directUsesRef(mapping);
+      if (uses) anchors.set(anchor[1], uses);
     }
   }
   return anchors;
@@ -89,6 +185,18 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
       '    steps: [*checkout]',
     ].join('\n');
     expect(() => expectAliasedStepsPinned(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects a mutable direct uses after a nested mapping in an anchored step', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: [ &checkout { with: { uses: owner/safe@0123456789abcdef0123456789abcdef01234567 }, uses: actions/checkout@v4 } ]',
+      '    steps: [*checkout]',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(unsafe, 'nested-mapping.yml')).toThrow();
   });
 
   it('rejects a mutable action mapping with a digit-leading alias name', () => {
