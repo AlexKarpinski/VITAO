@@ -11,31 +11,55 @@ const immutableRef = /^[^\s@]+@(?:[0-9a-fA-F]{40})$/;
 
 const stripQuotedScalarsByLine = (workflow: string) => {
   let quote: '"' | "'" | null = null;
+  let quotedValue = '';
   return workflow.split('\n').map((value) => {
     let result = '';
     for (let i = 0; i < value.length; i += 1) {
       const char = value[i];
       if (quote) {
         if (quote === '"' && char === '\\') {
+          quotedValue += char;
           result += ' ';
           if (i + 1 < value.length) {
+            quotedValue += value[i + 1];
             result += ' ';
             i += 1;
           }
           continue;
         }
         if (quote === "'" && char === "'" && value[i + 1] === "'") {
+          quotedValue += "''";
           result += '  ';
           i += 1;
           continue;
         }
-        if (char === quote) quote = null;
+        if (char === quote) {
+          const closingQuote = quote;
+          quote = null;
+          let cursor = i + 1;
+          while (cursor < value.length && /[ \t]/.test(value[cursor])) cursor += 1;
+          const isMappingKey = value[cursor] === ':';
+          let decoded = quotedValue;
+          if (closingQuote === '"') {
+            try {
+              decoded = JSON.parse(`"${quotedValue}"`);
+            } catch {
+              decoded = quotedValue;
+            }
+          } else {
+            decoded = quotedValue.replace(/''/g, "'");
+          }
+          result += isMappingKey && decoded === 'uses' ? 'uses' : ' '.repeat(quotedValue.length + 2);
+          quotedValue = '';
+          continue;
+        }
+        quotedValue += char;
         result += ' ';
         continue;
       }
       if (char === '"' || char === "'") {
         quote = char;
-        result += ' ';
+        quotedValue = '';
         continue;
       }
       result += char;
@@ -76,12 +100,19 @@ describe('GitHub workflow node-property uses-key pinning policy', () => {
     expect(() => assertImmutable(unsafe, 'unsafe.yml')).toThrow();
   });
 
+  it('rejects mutable action refs when a node property decorates a quoted uses key', () => {
+    const unsafe = 'jobs: { build: { steps: [{ &uses-key "uses": actions/checkout@v4 }] } }';
+    expect(() => assertImmutable(unsafe, 'quoted-key.yml')).toThrow();
+  });
+
   it('accepts immutable action refs with anchored or tagged uses keys', () => {
     const sha = '0123456789abcdef0123456789abcdef01234567';
     const anchored = `jobs: { build: { steps: [{ &uses-key uses: actions/checkout@${sha} }] } }`;
     const tagged = `jobs: { build: { steps: [{ !!str uses: actions/checkout@${sha} }] } }`;
+    const quoted = `jobs: { build: { steps: [{ &uses-key 'uses': actions/checkout@${sha} }] } }`;
     expect(() => assertImmutable(anchored, 'anchored.yml')).not.toThrow();
     expect(() => assertImmutable(tagged, 'tagged.yml')).not.toThrow();
+    expect(() => assertImmutable(quoted, 'quoted.yml')).not.toThrow();
   });
 
   it('ignores uses-like text inside quoted run scalars', () => {
