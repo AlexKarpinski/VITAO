@@ -65,14 +65,55 @@ const collectDirectTaintedOutputs = (workflow: string) => {
   return tainted;
 };
 
+const collectShellExecutedValues = (workflow: string) => {
+  const values: string[] = [];
+  const lines = workflow.split('\n');
+  let blockIndent: number | null = null;
+  let blockValue = '';
+
+  const flushBlock = () => {
+    if (blockIndent !== null) values.push(blockValue);
+    blockIndent = null;
+    blockValue = '';
+  };
+
+  for (const line of lines) {
+    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    const trimmed = line.trim();
+
+    if (blockIndent !== null) {
+      if (!trimmed || indent > blockIndent) {
+        blockValue += `${line}\n`;
+        continue;
+      }
+      flushBlock();
+    }
+
+    const match = line.match(/^\s*(?:-\s*)?(run|shell)\s*:\s*(.*)$/);
+    if (!match) continue;
+    const value = match[2].trim();
+    if (/^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/.test(value)) {
+      blockIndent = indent;
+      continue;
+    }
+    values.push(value);
+  }
+  flushBlock();
+  return values;
+};
+
 const expectNoDirectEventJobOutputShell = (workflow: string) => {
   const tainted = collectDirectTaintedOutputs(workflow);
+  const shellValues = collectShellExecutedValues(workflow);
   for (const key of tainted) {
     const [job, output] = key.split('.');
     const escapedJob = job.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const escapedOutput = output.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const sink = new RegExp(`needs(?:\\.${escapedJob}|\\[['"]${escapedJob}['"]\\])\\.outputs(?:\\.${escapedOutput}|\\[['"]${escapedOutput}['"]\\])`);
-    expect(sink.test(workflow), `tainted job output ${key} reaches a downstream shell-capable workflow`).toBe(false);
+    expect(
+      shellValues.some((value) => sink.test(value)),
+      `tainted job output ${key} reaches a downstream shell-capable workflow`,
+    ).toBe(false);
   }
 };
 
@@ -92,6 +133,27 @@ describe('GitHub workflow direct event job-output policy', () => {
       '      - run: bash -c "${{ needs.producer.outputs.command }}"',
     ].join('\n');
     expect(() => expectNoDirectEventJobOutputShell(unsafe)).toThrow();
+  });
+
+  it('accepts tainted job outputs consumed only by github-script', () => {
+    const safe = [
+      'on: issue_comment',
+      'jobs:',
+      '  producer:',
+      '    outputs:',
+      '      message: ${{ github.event.comment.body }}',
+      '    steps:',
+      '      - run: echo produce',
+      '  consumer:',
+      '    needs: producer',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        env:',
+      '          MESSAGE: ${{ needs.producer.outputs.message }}',
+      '        with:',
+      '          script: core.info(process.env.MESSAGE)',
+    ].join('\n');
+    expect(() => expectNoDirectEventJobOutputShell(safe)).not.toThrow();
   });
 
   it('accepts constant job outputs', () => {
