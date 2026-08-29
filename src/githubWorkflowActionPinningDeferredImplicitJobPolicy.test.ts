@@ -41,6 +41,7 @@ const collectDeferredImplicitJobRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let jobsIndent: number | null = null;
+  let jobIndent: number | null = null;
   let pendingJobIndent: number | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -51,12 +52,14 @@ const collectDeferredImplicitJobRefs = (workflow: string) => {
 
     if (/^["']?jobs["']?\s*:\s*$/.test(trimmed)) {
       jobsIndent = indent;
+      jobIndent = null;
       pendingJobIndent = null;
       continue;
     }
     if (jobsIndent === null) continue;
     if (indent <= jobsIndent) {
       jobsIndent = null;
+      jobIndent = null;
       pendingJobIndent = null;
       continue;
     }
@@ -70,11 +73,15 @@ const collectDeferredImplicitJobRefs = (workflow: string) => {
         if (ref) refs.push(ref);
         pendingJobIndent = null;
         continue;
+      } else {
+        pendingJobIndent = null;
       }
     }
 
     const jobKey = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*$/);
-    if (jobKey && indent > jobsIndent) pendingJobIndent = indent;
+    if (!jobKey) continue;
+    if (jobIndent === null) jobIndent = indent;
+    if (indent === jobIndent) pendingJobIndent = indent;
   }
   return refs;
 };
