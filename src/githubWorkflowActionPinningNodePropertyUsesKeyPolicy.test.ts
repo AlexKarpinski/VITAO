@@ -9,35 +9,47 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const immutableRef = /^[^\s@]+@(?:[0-9a-fA-F]{40})$/;
 
-const stripQuotedScalars = (value: string) => {
-  let result = '';
+const stripQuotedScalarsByLine = (workflow: string) => {
   let quote: '"' | "'" | null = null;
-  for (let i = 0; i < value.length; i += 1) {
-    const char = value[i];
-    if (quote) {
-      if (quote === '"' && char === '\\') {
-        result += '  ';
-        i += 1;
+  return workflow.split('\n').map((value) => {
+    let result = '';
+    for (let i = 0; i < value.length; i += 1) {
+      const char = value[i];
+      if (quote) {
+        if (quote === '"' && char === '\\') {
+          result += ' ';
+          if (i + 1 < value.length) {
+            result += ' ';
+            i += 1;
+          }
+          continue;
+        }
+        if (quote === "'" && char === "'" && value[i + 1] === "'") {
+          result += '  ';
+          i += 1;
+          continue;
+        }
+        if (char === quote) quote = null;
+        result += ' ';
         continue;
       }
-      if (char === quote) quote = null;
-      result += ' ';
-      continue;
+      if (char === '"' || char === "'") {
+        quote = char;
+        result += ' ';
+        continue;
+      }
+      result += char;
     }
-    if (char === '"' || char === "'") {
-      quote = char;
-      result += ' ';
-      continue;
-    }
-    result += char;
-  }
-  return result;
+    return result;
+  });
 };
 
 const collectNodePropertyUsesRefs = (workflow: string) => {
   const refs: string[] = [];
-  for (const line of workflow.split('\n')) {
-    if (!/\bsteps\s*:/.test(stripQuotedScalars(line))) continue;
+  const strippedLines = stripQuotedScalarsByLine(workflow);
+  for (let index = 0; index < strippedLines.length; index += 1) {
+    const line = strippedLines[index];
+    if (!/\bsteps\s*:/.test(line)) continue;
     const pattern = /(?:^|[,{[])[ \t]*(?:[&!][^\s{}:,]+[ \t]+)+uses[ \t]*:[ \t]*([^\s,}\]]+)/g;
     for (const match of line.matchAll(pattern)) refs.push(match[1].replace(/^['"]|['"]$/g, ''));
   }
@@ -74,6 +86,20 @@ describe('GitHub workflow node-property uses-key pinning policy', () => {
 
   it('ignores uses-like text inside quoted run scalars', () => {
     const safe = 'jobs: { build: { steps: [{ run: "echo &uses-key uses: actions/checkout@v4" }] } }';
+    expect(collectNodePropertyUsesRefs(safe)).toEqual([]);
+  });
+
+  it('ignores decorated uses documentation inside multiline quoted scalars', () => {
+    const safe = [
+      'env:',
+      '  DOC: "first line',
+      '    jobs: { build: { steps: [{ &uses-key uses: actions/checkout@v4 }] } }',
+      '    final line"',
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: echo safe',
+    ].join('\n');
     expect(collectNodePropertyUsesRefs(safe)).toEqual([]);
   });
 });
