@@ -15,6 +15,37 @@ const isEscapedDoubleQuote = (value: string, index: number) => {
   return backslashes % 2 === 1;
 };
 
+const maskQuotedScalars = (value: string) => {
+  const chars = [...value];
+  let quote: 'single' | 'double' | null = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote === 'single') {
+      chars[index] = ' ';
+      if (char === "'" && value[index + 1] === "'") {
+        chars[index + 1] = ' ';
+        index += 1;
+        continue;
+      }
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === 'double') {
+      chars[index] = ' ';
+      if (char === '"' && !isEscapedDoubleQuote(value, index)) quote = null;
+      continue;
+    }
+    if (char === "'") {
+      chars[index] = ' ';
+      quote = 'single';
+    } else if (char === '"') {
+      chars[index] = ' ';
+      quote = 'double';
+    }
+  }
+  return chars.join('');
+};
+
 const extractBalancedFlowMapping = (value: string, start: number) => {
   if (value[start] !== '{') return null;
   let depth = 0;
@@ -105,13 +136,14 @@ const collectAnchoredActionMappings = (workflow: string) => {
   const anchors = new Map<string, string>();
   for (const line of workflow.split('\n')) {
     if (line.trimStart().startsWith('#')) continue;
+    const structuralLine = maskQuotedScalars(line);
     const anchorPattern = new RegExp(`&(${anchorName})\\b`, 'g');
-    for (const anchor of line.matchAll(anchorPattern)) {
+    for (const anchor of structuralLine.matchAll(anchorPattern)) {
       const afterAnchor = anchor.index! + anchor[0].length;
-      const remainder = line.slice(afterAnchor);
+      const remainder = structuralLine.slice(afterAnchor);
       const mappingOffset = remainder.search(/^(?:\s*\[)?\s*\{/);
       if (mappingOffset < 0) continue;
-      const brace = line.indexOf('{', afterAnchor + mappingOffset);
+      const brace = structuralLine.indexOf('{', afterAnchor + mappingOffset);
       const mapping = extractBalancedFlowMapping(line, brace);
       if (mapping === null) continue;
       const uses = directUsesRef(mapping);
@@ -254,11 +286,12 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
       '  build:',
       '    strategy:',
       '      matrix:',
-      '        include: [ &checkout { uses: actions/checkout@v4 } ]',
+      '        include: [ &checkout { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 } ]',
       '    steps:',
-      '      - run: echo *checkout',
+      '      - run: "echo &checkout { uses: actions/checkout@v4 }"',
+      '      - *checkout',
     ].join('\n');
-    expect(() => expectAliasedStepsPinned(safe, 'safe.yml')).not.toThrow();
+    expect(() => expectAliasedStepsPinned(safe, 'quoted-anchor-text.yml')).not.toThrow();
   });
 
   it('enforces aliased action pins across checked-in workflows', () => {
