@@ -7,14 +7,15 @@ const workflowFiles = readdirSync('.github/workflows')
   .sort();
 
 const immutableSha = /^[^\s@]+@[0-9a-f]{40}$/i;
+const anchorName = '[A-Za-z0-9_][A-Za-z0-9_-]*';
 
 const collectAnchoredActionMappings = (workflow: string) => {
   const anchors = new Map<string, string>();
   for (const line of workflow.split('\n')) {
     if (line.trimStart().startsWith('#')) continue;
     const anchoredValues = [
-      ...line.matchAll(/&([A-Za-z_][A-Za-z0-9_-]*)\s*\{([^}]*)\}/g),
-      ...line.matchAll(/&([A-Za-z_][A-Za-z0-9_-]*)\s*\[\s*\{([^}]*)\}\s*\]/g),
+      ...line.matchAll(new RegExp(`&(${anchorName})\\s*\\{([^}]*)\\}`, 'g')),
+      ...line.matchAll(new RegExp(`&(${anchorName})\\s*\\[\\s*\\{([^}]*)\\}\\s*\\]`, 'g')),
     ];
     for (const anchor of anchoredValues) {
       const uses = anchor[2].match(/(?:^|,)\s*["']?uses["']?\s*:\s*["']?([^,"'}\s]+)["']?/);
@@ -31,14 +32,15 @@ const aliasesUsedAsSteps = (workflow: string) => {
 
   const collectInlineStepsAliases = (value: string) => {
     const trimmed = value.trim().replace(/\s+#.*$/, '');
-    if (/^\*[A-Za-z_][A-Za-z0-9_-]*$/.test(trimmed)) {
-      names.add(trimmed.slice(1));
+    const exactAlias = trimmed.match(new RegExp(`^\\*(${anchorName})$`));
+    if (exactAlias) {
+      names.add(exactAlias[1]);
       return;
     }
     const sequence = trimmed.match(/^\[([\s\S]*)\]$/);
     if (!sequence) return;
     for (const item of sequence[1].split(',')) {
-      const alias = item.trim().match(/^\*([A-Za-z_][A-Za-z0-9_-]*)$/);
+      const alias = item.trim().match(new RegExp(`^\\*(${anchorName})$`));
       if (alias) names.add(alias[1]);
     }
   };
@@ -61,7 +63,7 @@ const aliasesUsedAsSteps = (workflow: string) => {
       continue;
     }
 
-    const blockAlias = trimmed.match(/^-\s*\*([A-Za-z_][A-Za-z0-9_-]*)\s*(?:#.*)?$/);
+    const blockAlias = trimmed.match(new RegExp(`^-\\s*\\*(${anchorName})\\s*(?:#.*)?$`));
     if (blockAlias) names.add(blockAlias[1]);
   }
   return names;
@@ -87,6 +89,18 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
       '    steps: [*checkout]',
     ].join('\n');
     expect(() => expectAliasedStepsPinned(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects a mutable action mapping with a digit-leading alias name', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: [ &1checkout { uses: actions/checkout@v4 } ]',
+      '    steps: [*1checkout]',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(unsafe, 'digit-leading-alias.yml')).toThrow();
   });
 
   it('rejects a mutable action sequence aliased as the complete steps value', () => {
