@@ -38,13 +38,15 @@ const collectRunScripts = (workflow: string) => {
 const isPullRequestContext = (workflow: string) =>
   /(?:pull_request_target|pull_request)\s*:/.test(workflow);
 
-const referencesHeadRef = (script: string) =>
-  /(?:\$GITHUB_HEAD_REF|\$\{GITHUB_HEAD_REF\}|%GITHUB_HEAD_REF%|\$env:GITHUB_HEAD_REF|\$\{env:GITHUB_HEAD_REF\}|\$\{\{\s*env\.GITHUB_HEAD_REF\s*\}\})/.test(script);
+const referencesHeadRef = (script: string) => {
+  const normalized = script.replace(/\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\]/g, '.$1');
+  return /(?:\$GITHUB_HEAD_REF|\$\{GITHUB_HEAD_REF\}|%GITHUB_HEAD_REF%|\$env:GITHUB_HEAD_REF|\$\{env:GITHUB_HEAD_REF\}|\$\{\{\s*env\.GITHUB_HEAD_REF\s*\}\}|\$\{\{\s*github\.event\.pull_request\.head\.ref\s*\}\})/.test(normalized);
+};
 
 const expectNoHeadRefShellExecution = (workflow: string, source: string) => {
   if (!isPullRequestContext(workflow)) return;
   for (const script of collectRunScripts(workflow)) {
-    expect(referencesHeadRef(script), `${source}: attacker-controlled GITHUB_HEAD_REF reaches a shell run step`).toBe(false);
+    expect(referencesHeadRef(script), `${source}: attacker-controlled pull-request head ref reaches a shell run step`).toBe(false);
   }
 };
 
@@ -67,6 +69,20 @@ describe('GitHub workflow GITHUB_HEAD_REF shell policy', () => {
       '      - run: bash -c "$GITHUB_HEAD_REF"',
     ].join('\n');
     expect(() => expectNoHeadRefShellExecution(unsafe, 'head-ref.yml')).toThrow();
+  });
+
+  it('rejects pull-request head-ref expressions in privileged shell execution', () => {
+    const unsafe = [
+      'on:',
+      '  pull_request_target:',
+      'jobs:',
+      '  demo:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      "      - run: bash -c '${{ github.event.pull_request.head.ref }}'",
+      "      - run: bash -c '${{ github['event']['pull_request']['head']['ref'] }}'",
+    ].join('\n');
+    expect(() => expectNoHeadRefShellExecution(unsafe, 'head-ref-expression.yml')).toThrow();
   });
 
   it('rejects block-scalar GITHUB_HEAD_REF shell execution', () => {
