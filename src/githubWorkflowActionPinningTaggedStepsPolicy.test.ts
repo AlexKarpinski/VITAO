@@ -20,6 +20,20 @@ const decodeKey = (raw: string) => {
   return key;
 };
 
+const quoteCloses = (text: string, quote: '"' | "'", start = 0) => {
+  for (let index = start; index < text.length; index += 1) {
+    if (text[index] !== quote) continue;
+    if (quote === "'") {
+      if (text[index + 1] === "'") { index += 1; continue; }
+      return true;
+    }
+    let backslashes = 0;
+    for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor -= 1) backslashes += 1;
+    if (backslashes % 2 === 0) return true;
+  }
+  return false;
+};
+
 const splitTopLevel = (body: string) => {
   const entries: string[] = [];
   let start = 0;
@@ -53,8 +67,20 @@ const collectTaggedStepRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let pendingExplicitIndent: number | null = null;
+  let multilineQuote: '"' | "'" | null = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+
+    if (multilineQuote) {
+      if (quoteCloses(line, multilineQuote)) multilineQuote = null;
+      continue;
+    }
+    const scalarValue = line.match(/^\s*(?:-\s*)?(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(["'])(.*)$/);
+    if (scalarValue && !quoteCloses(scalarValue[2], scalarValue[1] as '"' | "'")) {
+      multilineQuote = scalarValue[1] as '"' | "'";
+      continue;
+    }
+
     const explicitKey = line.match(/^(\s*)\?\s+(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*$/);
     if (explicitKey) {
       pendingExplicitIndent = explicitKey[1].length;
@@ -144,6 +170,21 @@ describe('tagged steps action-pinning policy', () => {
     const safe = ['jobs:', '  build:', '    env:', '      ? DOC', '      : |', '        steps: !!seq [{ uses: actions/checkout@v4 }]', '    steps:', '      - run: echo safe'].join('\n');
     expect(collectTaggedStepRefs(safe)).toEqual([]);
     expectImmutableRefs(safe, 'explicit-documentation.yml');
+  });
+
+  it('ignores tagged-step examples inside multiline quoted scalars', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    env:',
+      '      DOC: "first line',
+      '        steps: !!seq [{ uses: actions/checkout@v4 }]',
+      '        final line"',
+      '    steps:',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(collectTaggedStepRefs(safe)).toEqual([]);
+    expectImmutableRefs(safe, 'quoted-documentation.yml');
   });
 
   it('ignores uses-like text outside tagged steps values', () => {
