@@ -9,6 +9,7 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const blockHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
 
 const decodeYamlKey = (raw: string) => {
   const key = raw.trim();
@@ -97,10 +98,23 @@ const collectDeferredStepsRefs = (workflow: string) => {
   let flowDepth = 0;
   let blockStepsIndent: number | null = null;
   let bareStepIndent: number | null = null;
+  let ignoredScalarIndent: number | null = null;
 
   for (const raw of lines) {
     const trimmed = raw.trim();
     const indent = indentOf(raw);
+
+    if (ignoredScalarIndent !== null) {
+      if (!trimmed || indent > ignoredScalarIndent) continue;
+      ignoredScalarIndent = null;
+    }
+
+    const scalarMatch = trimmed.match(/^(?:[^:#]+):\s*(\S+)\s*(?:#.*)?$/);
+    if (scalarMatch && blockHeader.test(scalarMatch[1])) {
+      ignoredScalarIndent = indent;
+      continue;
+    }
+
     const keyMatch = trimmed.match(/^((?:"(?:\\.|[^"])*"|'(?:''|[^'])*'|[A-Za-z0-9_.-]+))\s*:\s*$/);
     const isStepsKey = keyMatch ? decodeYamlKey(keyMatch[1]) === 'steps' : false;
 
@@ -203,5 +217,11 @@ describe('deferred steps flow-sequence immutable pinning', () => {
 
     const mutable = ['jobs:', '  test:', '    steps:', '      -', '        &checkout { uses: actions/checkout@v4 }'].join('\n');
     expect(() => expectDeferredStepsPinned(mutable, 'bare-node-property.yml')).toThrow();
+  });
+
+  it('ignores deferred steps examples inside block scalars', () => {
+    const documented = ['jobs:', '  test:', '    env:', '      DOC: |', '        steps:', '          [', '            { uses: actions/checkout@v4 }', '          ]', '    steps:', '      - run: echo safe'].join('\n');
+    expect(collectDeferredStepsRefs(documented)).toEqual([]);
+    expectDeferredStepsPinned(documented, 'documentation.yml');
   });
 });
