@@ -24,26 +24,40 @@ const aliasesUsedAsSteps = (workflow: string) => {
   const names = new Set<string>();
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
+
+  const collectInlineStepsAliases = (value: string) => {
+    const trimmed = value.trim().replace(/\s+#.*$/, '');
+    if (/^\*[A-Za-z_][A-Za-z0-9_-]*$/.test(trimmed)) {
+      names.add(trimmed.slice(1));
+      return;
+    }
+    if (!trimmed.startsWith('[')) return;
+    for (const item of trimmed.slice(1).split(',')) {
+      const alias = item.trim().match(/^\*([A-Za-z_][A-Za-z0-9_-]*)(?:\s*#.*)?$/);
+      if (alias) names.add(alias[1]);
+    }
+  };
+
   for (const line of lines) {
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
-    if (stepsIndent === null) {
-      if (/^["']?steps["']?\s*:/.test(trimmed)) {
-        stepsIndent = indent;
-        for (const match of trimmed.matchAll(/\*([A-Za-z_][A-Za-z0-9_-]*)/g)) names.add(match[1]);
-      }
+
+    const steps = trimmed.match(/^["']?steps["']?\s*:\s*(.*)$/);
+    if (steps) {
+      stepsIndent = indent;
+      collectInlineStepsAliases(steps[1]);
       continue;
     }
-    if (indent <= stepsIndent && !trimmed.startsWith('-')) {
+
+    if (stepsIndent === null) continue;
+    if (indent <= stepsIndent) {
       stepsIndent = null;
-      if (/^["']?steps["']?\s*:/.test(trimmed)) {
-        stepsIndent = indent;
-        for (const match of trimmed.matchAll(/\*([A-Za-z_][A-Za-z0-9_-]*)/g)) names.add(match[1]);
-      }
       continue;
     }
-    for (const match of trimmed.matchAll(/\*([A-Za-z_][A-Za-z0-9_-]*)/g)) names.add(match[1]);
+
+    const blockAlias = trimmed.match(/^-\s*\*([A-Za-z_][A-Za-z0-9_-]*)\s*(?:#.*)?$/);
+    if (blockAlias) names.add(blockAlias[1]);
   }
   return names;
 };
@@ -79,6 +93,19 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
       '        include: [ &checkout { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 } ]',
       '    steps:',
       '      - *checkout',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(safe, 'safe.yml')).not.toThrow();
+  });
+
+  it('ignores alias-like text inside run scalars', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: [ &checkout { uses: actions/checkout@v4 } ]',
+      '    steps:',
+      '      - run: echo *checkout',
     ].join('\n');
     expect(() => expectAliasedStepsPinned(safe, 'safe.yml')).not.toThrow();
   });
