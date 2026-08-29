@@ -35,6 +35,57 @@ const stripComment = (line: string) => {
   return line;
 };
 
+const splitTopLevelEntries = (mapping: string) => {
+  const body = mapping.trim().replace(/^\{/, '').replace(/\}$/, '');
+  const entries: string[] = [];
+  let start = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let quote: '"' | "'" | null = null;
+
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (quote) {
+      if (quote === "'" && char === "'" && body[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      if (char === quote) {
+        if (quote === '"') {
+          let slashes = 0;
+          for (let cursor = index - 1; cursor >= 0 && body[cursor] === '\\'; cursor -= 1) slashes += 1;
+          if (slashes % 2 === 1) continue;
+        }
+        quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '{') braceDepth += 1;
+    else if (char === '}') braceDepth -= 1;
+    else if (char === '[') bracketDepth += 1;
+    else if (char === ']') bracketDepth -= 1;
+    else if (char === ',' && braceDepth === 0 && bracketDepth === 0) {
+      entries.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  entries.push(body.slice(start));
+  return entries;
+};
+
+const directUsesRef = (mapping: string) => {
+  for (const entry of splitTopLevelEntries(mapping)) {
+    const match = entry.match(/^\s*["']?uses["']?\s*:\s*(.+?)\s*$/);
+    if (!match) continue;
+    return match[1].replace(/^['"]|['"]$/g, '');
+  }
+  return null;
+};
+
 const collectFlowJobRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
@@ -66,8 +117,8 @@ const collectFlowJobRefs = (workflow: string) => {
 
     const value = mapping[1].trim();
     if (!value || !/^\{/.test(value)) continue;
-    const uses = value.match(/\buses\s*:\s*([^,}\s]+)/);
-    if (uses) refs.push(uses[1].replace(/^['"]|['"]$/g, ''));
+    const ref = directUsesRef(value);
+    if (ref) refs.push(ref);
   }
 
   return refs;
@@ -114,5 +165,21 @@ describe('flow job-key node-property action-pinning policy', () => {
       '      - run: echo ok',
     ].join('\n');
     expectImmutableFlowJobs(safe, 'nested-flow-safe.yml');
+  });
+
+  it('ignores nested uses fields inside an anchored flow-style job', () => {
+    const safe = [
+      'jobs:',
+      '  &build-key build: { runs-on: ubuntu-latest, env: { uses: harmless-value@v4 }, steps: [{ run: echo ok }] }',
+    ].join('\n');
+    expectImmutableFlowJobs(safe, 'anchored-flow-job-nested-safe.yml');
+  });
+
+  it('still rejects a direct mutable uses after nested flow mappings', () => {
+    const unsafe = [
+      'jobs:',
+      '  &call-key call: { with: { note: safe }, uses: owner/repo/.github/workflows/build.yml@main }',
+    ].join('\n');
+    expect(() => expectImmutableFlowJobs(unsafe, 'anchored-flow-job-direct-uses.yml')).toThrow();
   });
 });
