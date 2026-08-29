@@ -18,7 +18,8 @@ const collectDecoratedExplicitStepRefs = (workflow: string) => {
   const lines = workflow.split('\n');
   let ignoredScalarIndent: number | null = null;
 
-  for (const raw of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const raw = lines[lineIndex];
     const indent = raw.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = raw.trim();
     if (ignoredScalarIndent !== null) {
@@ -37,7 +38,6 @@ const collectDecoratedExplicitStepRefs = (workflow: string) => {
     const key = stripNodeProperties(explicit[1]).replace(/^['"]|['"]$/g, '');
     if (key !== 'steps') continue;
 
-    const lineIndex = lines.indexOf(raw);
     for (let index = lineIndex + 1; index < lines.length; index += 1) {
       const valueLine = lines[index];
       const valueIndent = valueLine.match(/^\s*/)?.[0].length ?? 0;
@@ -81,6 +81,22 @@ jobs:
     : [{ uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 }]
 `;
     expect(() => assertPinned(safe)).not.toThrow();
+  });
+
+  it('scans repeated decorated explicit steps occurrences independently', () => {
+    const unsafe = `
+name: repeated-explicit-tagged-steps
+jobs:
+  first:
+    runs-on: ubuntu-latest
+    ? !!str steps
+    : [{ uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 }]
+  second:
+    runs-on: ubuntu-latest
+    ? !!str steps
+    : [{ uses: actions/checkout@v4 }]
+`;
+    expect(() => assertPinned(unsafe)).toThrow(/actions\/checkout@v4/);
   });
 
   it('scans every checked-in workflow', () => {
