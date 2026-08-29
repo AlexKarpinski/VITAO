@@ -39,7 +39,7 @@ const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[['"]([A-Za-z_*][A-Za-z0-9_*-]*)['"]\]/g, '.$1');
 
-const wildcardEventBody = /github\.event\.\*\.(?:title|body)\b/;
+const wildcardEventBody = /github\.event\.(?:(?:comment|issue|pull_request|discussion|review|review_comment)\.\*|\*\.(?:title|body))\b/;
 
 const expectNoWildcardEventShell = (workflow: string, source: string) => {
   for (const script of collectRunScripts(workflow)) {
@@ -75,6 +75,17 @@ describe('GitHub workflow wildcard event shell policy', () => {
       `      - run: "bash -c '\${{ join(github['event'].*.body, ' ') }}'"`,
     ].join('\n');
     expect(() => expectNoWildcardEventShell(unsafe, 'mixed-access.yml')).toThrow();
+  });
+
+  it('rejects wildcard serialization beneath untrusted event objects', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'jobs:',
+      '  demo:',
+      '    steps:',
+      `      - run: "bash -c '\${{ toJSON(github.event.comment.*) }}'"`,
+    ].join('\n');
+    expect(() => expectNoWildcardEventShell(unsafe, 'object-wildcard.yml')).toThrow();
   });
 
   it('allows constant shell scripts', () => {
