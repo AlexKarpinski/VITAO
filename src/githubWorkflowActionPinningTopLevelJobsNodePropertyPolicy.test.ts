@@ -58,10 +58,12 @@ const collectRefs = (workflow: string) => {
       continue;
     }
 
+    const directJobKey = trimmed.match(/^(?:(?:&[A-Za-z0-9_-]+|![^\s]+)\s+)*[A-Za-z0-9_-]+\s*:\s*(?:$|[^{}].*$|\{)/);
+    if (directJobIndent === null && directJobKey) directJobIndent = indent;
+    if (directJobIndent === null || indent !== directJobIndent) continue;
+
     const jobMatch = trimmed.match(/^(?:(?:&[A-Za-z0-9_-]+|![^\s]+)\s+)*[A-Za-z0-9_-]+\s*:\s*(?:(?:&[A-Za-z0-9_-]+|![^\s]+)\s+)*\{(.*)\}\s*$/);
     if (!jobMatch) continue;
-    if (directJobIndent === null) directJobIndent = indent;
-    if (indent !== directJobIndent) continue;
 
     const uses = jobMatch[1].match(/(?:^|,)\s*uses\s*:\s*([^,}\s]+)\s*(?:,|$)/);
     if (uses) refs.push(uses[1]);
@@ -93,6 +95,17 @@ describe('GitHub workflow top-level jobs node-property pinning policy', () => {
       '  build:',
       '    runs-on: ubuntu-latest',
       '    env: { uses: actions/checkout@v4 }',
+    ].join('\n');
+    expectPinned(safe, 'safe.yml');
+  });
+
+  it('derives direct job indentation from block-style job keys', () => {
+    const safe = [
+      'jobs: &all',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    env: { uses: actions/checkout@v4 }',
+      '  call: { uses: owner/repo/.github/workflows/build.yml@0123456789abcdef0123456789abcdef01234567 }',
     ].join('\n');
     expectPinned(safe, 'safe.yml');
   });
