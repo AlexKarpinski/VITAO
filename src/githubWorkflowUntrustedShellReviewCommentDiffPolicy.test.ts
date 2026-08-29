@@ -117,6 +117,17 @@ describe('GitHub workflow review-comment shell policy', () => {
     expect(() => expectNoReviewCommentTextInShell(unsafe, 'env-unsafe.yml')).toThrow();
   });
 
+  it('rejects review-comment diff hunks propagated through env into an execution sink', () => {
+    const unsafe = [
+      'env:',
+      '  CMD: ${{ github.event.comment.diff_hunk }}',
+      'steps:',
+      '  - run: bash -c "$CMD"',
+    ].join('\n');
+
+    expect(() => expectNoReviewCommentTextInShell(unsafe, 'diff-env-unsafe.yml')).toThrow();
+  });
+
   it('allows review-comment text in non-shell action configuration', () => {
     const safe = [
       'steps:',
