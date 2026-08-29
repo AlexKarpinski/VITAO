@@ -38,18 +38,52 @@ const containsUntrustedText = (value: string) => {
   return /github\.event\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/.test(normalized);
 };
 
+const isQuotedAt = (line: string, index: number) => {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < index; i += 1) {
+    const char = line[i];
+    if (quote === "'") {
+      if (char === "'" && line[i + 1] === "'") { i += 1; continue; }
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (char === '\\') { i += 1; continue; }
+      if (char === '"') quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+  }
+  return quote !== null;
+};
+
 const extractDirectRunValues = (workflow: string) => {
   const values: string[] = [];
+  const lines = workflow.split('\n');
   const key = '(?:"(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[A-Za-z_][A-Za-z0-9_-]*)';
   const value = '("(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[^,}]+)';
-  // Use a zero-width lookahead so an outer flow mapping (for example `steps:`)
-  // cannot consume and hide a nested step-level `run:` entry. A block sequence
-  // marker is also a structural mapping boundary for `- "r\\u0075n": ...`.
   const mapping = new RegExp(`(?=(?:^|[\\[,{]|-\\s+)\\s*(${key})\\s*:\\s*${value})`, 'g');
 
-  for (const line of workflow.split('\n')) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
     for (const match of line.matchAll(mapping)) {
+      const matchIndex = match.index ?? 0;
+      const keyOffset = match[0].indexOf(match[1]);
+      if (isQuotedAt(line, matchIndex + Math.max(keyOffset, 0))) continue;
       if (decodeYamlKey(match[1]) === 'run') values.push(match[2]);
+    }
+
+    const explicit = line.match(/^(\s*)-?\s*\?\s*(.+?)\s*(?:#.*)?$/);
+    if (!explicit || decodeYamlKey(explicit[2]) !== 'run') continue;
+    const explicitIndent = explicit[1].length;
+    for (let valueIndex = lineIndex + 1; valueIndex < lines.length; valueIndex += 1) {
+      const next = lines[valueIndex];
+      if (!next.trim() || next.trimStart().startsWith('#')) continue;
+      const indent = next.match(/^\s*/)?.[0].length ?? 0;
+      if (indent < explicitIndent) break;
+      const explicitValue = next.match(/^\s*:\s*(.+)$/);
+      if (explicitValue) values.push(explicitValue[1]);
+      break;
     }
   }
   return values;
@@ -79,8 +113,13 @@ describe('direct GitHub workflow run-key security policy', () => {
     expect(() => expectNoDirectUntrustedRun(unsafe, 'escaped-run.yml')).toThrow();
   });
 
+  it('rejects untrusted text behind an explicit YAML run key', () => {
+    const unsafe = `steps:\n  - ? run\n    : bash -c '\${{ github.event.comment.body }}'`;
+    expect(() => expectNoDirectUntrustedRun(unsafe, 'explicit-run.yml')).toThrow();
+  });
+
   it('does not treat unrelated scalar text containing run as a run mapping', () => {
-    const safe = `env: { NOTE: "run: \${{ github.event.comment.body }}" }`;
+    const safe = `env: { NOTE: "prefix {run: '\${{ github.event.comment.body }}'} suffix" }\nsteps:\n  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567`;
     expectNoDirectUntrustedRun(safe, 'metadata.yml');
   });
 });
