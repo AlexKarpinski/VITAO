@@ -28,6 +28,7 @@ const stripComment = (line: string) => {
 
 const nodeProperty = '(?:&[A-Za-z0-9_-]+|!(?:[^\\s{]+)?)';
 const blockScalarValue = new RegExp(`:\\s*(?:${nodeProperty}\\s*)*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\\s*$`);
+const directUsesEntry = new RegExp(`^(?:${nodeProperty}\\s*)*(?:["']?uses["']?)\\s*:\\s*([^\\s,#}]+)`);
 
 const collectDeferredNodePropertyStepRefs = (workflow: string) => {
   const refs: string[] = [];
@@ -64,8 +65,10 @@ const collectDeferredNodePropertyStepRefs = (workflow: string) => {
     if (pendingIndent !== null) {
       if (indent <= pendingIndent) pendingIndent = null;
       else {
-        const mapping = trimmed.match(/^\{\s*(?:["']?uses["']?)\s*:\s*([^,}\s]+)\s*(?:,|})/);
-        if (mapping) refs.push(mapping[1]);
+        const flowMapping = trimmed.match(/^\{\s*(?:["']?uses["']?)\s*:\s*([^,}\s]+)\s*(?:,|})/);
+        const blockMapping = trimmed.match(directUsesEntry);
+        if (flowMapping) refs.push(flowMapping[1]);
+        else if (blockMapping) refs.push(blockMapping[1]);
         pendingIndent = null;
         continue;
       }
@@ -102,6 +105,28 @@ describe('GitHub workflow deferred node-property step pinning policy', () => {
       '        { uses: actions/checkout@v4 }',
     ].join('\n');
     expect(() => expectImmutableDeferredNodePropertySteps(unsafe)).toThrow();
+  });
+
+  it('rejects decorated uses keys in deferred block step mappings', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - &step',
+      '        &uses-key uses: actions/checkout@v4',
+    ].join('\n');
+    expect(() => expectImmutableDeferredNodePropertySteps(unsafe)).toThrow();
+  });
+
+  it('accepts immutable decorated uses keys in deferred block step mappings', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - &step',
+      '        &uses-key uses: actions/checkout@0123456789abcdef0123456789abcdef01234567',
+    ].join('\n');
+    expect(() => expectImmutableDeferredNodePropertySteps(safe)).not.toThrow();
   });
 
   it('rejects mutable action refs behind a bare non-specific tag', () => {
