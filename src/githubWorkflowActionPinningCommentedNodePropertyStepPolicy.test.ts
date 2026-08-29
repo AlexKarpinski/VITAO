@@ -9,6 +9,8 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const fullShaRef = /^[^\s@]+@[0-9a-f]{40}$/i;
 
+type Quote = '"' | "'" | null;
+
 const stripYamlComment = (value: string) => {
   let single = false;
   let double = false;
@@ -31,12 +33,40 @@ const stripYamlComment = (value: string) => {
   return value;
 };
 
+const nextQuoteState = (value: string, initial: Quote): Quote => {
+  let quote = initial;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote === "'") {
+      if (char === "'" && value[index + 1] === "'") index += 1;
+      else if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (char !== '"') continue;
+      let backslashes = 0;
+      for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor -= 1) backslashes += 1;
+      if (backslashes % 2 === 0) quote = null;
+      continue;
+    }
+    if (char === "'") quote = "'";
+    else if (char === '"') quote = '"';
+    else if (char === '#' && (index === 0 || /\s/.test(value[index - 1]))) break;
+  }
+  return quote;
+};
+
 const collectCommentedNodePropertyStepRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
+  let multilineQuote: Quote = null;
 
   for (const raw of lines) {
+    const startedInsideQuote = multilineQuote !== null;
+    multilineQuote = nextQuoteState(raw, multilineQuote);
+    if (startedInsideQuote) continue;
+
     const uncommented = stripYamlComment(raw);
     const trimmed = uncommented.trim();
     const indent = raw.match(/^\s*/)?.[0].length ?? 0;
@@ -88,6 +118,21 @@ describe('GitHub workflow commented node-property step pinning policy', () => {
     ].join('\n');
 
     expectPinned(safe, 'safe.yml');
+  });
+
+  it('ignores commented-step text inside multiline quoted scalars', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - env:',
+      '          NOTE: "documentation',
+      '            - &checkout { uses: actions/checkout@v4 }',
+      '            only"',
+      '        run: echo safe',
+    ].join('\n');
+
+    expectPinned(safe, 'multiline-quoted.yml');
   });
 
   it('enforces the policy across checked-in workflows', () => {
