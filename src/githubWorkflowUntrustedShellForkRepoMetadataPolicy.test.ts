@@ -14,7 +14,7 @@ const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
 
-const forkRepoText = /(?:github\.event\.pull_request\.head\.repo|context\.payload\.pull_request\.head\.repo)\.(?:description|name|full_name|default_branch)\b/;
+const forkRepoText = /(?:github\.event\.pull_request\.head\.repo|context\.payload\.pull_request\.head\.repo)\.(?:description|name|full_name|default_branch|homepage)\b/;
 
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
@@ -104,6 +104,18 @@ describe('GitHub workflow fork-repository metadata shell policy', () => {
     expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-default-branch.yml')).toThrow();
   });
 
+  it('rejects fork repository homepages interpolated into a privileged shell', () => {
+    const unsafe = [
+      'on: pull_request_target',
+      'jobs:',
+      '  demo:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      `      - run: echo "\${{ github.event.pull_request.head.repo.homepage }}"`,
+    ].join('\n');
+    expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-homepage.yml')).toThrow();
+  });
+
   it('rejects bracket and context.payload access to fork repository metadata', () => {
     const unsafe = [
       'on: pull_request_target',
@@ -122,11 +134,11 @@ describe('GitHub workflow fork-repository metadata shell policy', () => {
       'jobs:',
       '  demo:',
       '    env:',
-      `      CMD: "\${{ github.event.pull_request.head.repo.description }}"`,
+      `      CMD: "\${{ github.event.pull_request.head.repo.homepage }}"`,
       '    steps:',
       '      - run: bash -c "$CMD"',
     ].join('\n');
-    expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-env.yml')).toThrow();
+    expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-homepage-env.yml')).toThrow();
   });
 
   it('allows constant commands that do not interpolate fork metadata', () => {
