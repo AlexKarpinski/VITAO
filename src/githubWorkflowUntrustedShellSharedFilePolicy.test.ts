@@ -20,7 +20,7 @@ const collectTaintedFileWrites = (workflow: string) => {
 
 const executesFile = (workflow: string, path: string) => {
   const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?:^|[\\n;]|&&|\\|\\|)\\s*(?:source|\\.)\\s+(?:['"])?${escaped}(?:['"])?(?=\\s|$)`, 'm').test(workflow);
+  return new RegExp(`(?:^|[\\n;]|&&|\\|\\|)\\s*(?:-\\s+)?(?:run:\s*)?(?:source|\\.)\\s+(?:['"])?${escaped}(?:['"])?(?=\\s|$)`, 'm').test(workflow);
 };
 
 const expectNoUntrustedSharedFileExecution = (workflow: string, source: string) => {
