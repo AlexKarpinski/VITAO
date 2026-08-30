@@ -1,0 +1,124 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const workflowsDir = '.github/workflows';
+const workflowFiles = readdirSync(workflowsDir)
+  .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
+  .sort();
+const immutableSha = /^[0-9a-f]{40}$/i;
+
+const decodeKey = (raw: string) => {
+  const key = raw.trim().replace(/^(?:(?:&[^\s]+|![^\s]*|!![^\s]+)\s+)*/, '');
+  if (key.startsWith('"') && key.endsWith('"')) {
+    try { return JSON.parse(key); } catch { return key.slice(1, -1); }
+  }
+  if (key.startsWith("'") && key.endsWith("'")) return key.slice(1, -1).replace(/''/g, "'");
+  return key;
+};
+
+const collectAnchoredBlockActionRefs = (workflow: string) => {
+  const lines = workflow.split('\n');
+  const anchors = new Map<string, string>();
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const head = lines[index].match(/^(\s*)-\s*&([^\s\[\]{},]+)\s*$/);
+    if (!head) continue;
+    const indent = head[1].length;
+
+    for (let child = index + 1; child < lines.length; child += 1) {
+      const raw = lines[child];
+      const trimmed = raw.trim();
+      const childIndent = raw.match(/^\s*/)?.[0].length ?? 0;
+      if (!trimmed) continue;
+      if (childIndent <= indent) break;
+
+      const explicit = trimmed.match(/^\?\s+(.+?)\s*$/);
+      if (explicit && decodeKey(explicit[1]) === 'uses') {
+        const valueLine = lines[child + 1]?.trim() ?? '';
+        const value = valueLine.match(/^:\s*(\S+)\s*$/)?.[1];
+        if (value) anchors.set(head[2], value);
+        break;
+      }
+
+      const implicit = trimmed.match(/^(.+?)\s*:\s*(\S+)\s*$/);
+      if (implicit && decodeKey(implicit[1]) === 'uses') {
+        anchors.set(head[2], implicit[2]);
+        break;
+      }
+    }
+  }
+
+  return anchors;
+};
+
+const collectStepAliases = (workflow: string) => {
+  const aliases = new Set<string>();
+  const lines = workflow.split('\n');
+  let stepsIndent: number | null = null;
+
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    const indent = raw.match(/^\s*/)?.[0].length ?? 0;
+    if (/^steps\s*:/.test(trimmed)) {
+      stepsIndent = indent;
+      for (const match of trimmed.matchAll(/\*([^\s\[\]{},]+)/g)) aliases.add(match[1]);
+      continue;
+    }
+    if (stepsIndent === null) continue;
+    if (trimmed && indent <= stepsIndent) {
+      stepsIndent = null;
+      continue;
+    }
+    const alias = trimmed.match(/^-?\s*\*([^\s\[\]{},]+)\s*,?$/)?.[1];
+    if (alias) aliases.add(alias);
+  }
+  return aliases;
+};
+
+const expectAliasedBlockActionsPinned = (workflow: string, source: string) => {
+  const anchors = collectAnchoredBlockActionRefs(workflow);
+  for (const alias of collectStepAliases(workflow)) {
+    const ref = anchors.get(alias);
+    if (!ref || ref.startsWith('./')) continue;
+    const revision = ref.slice(ref.lastIndexOf('@') + 1);
+    expect(immutableSha.test(revision), `${source}: aliased action ${alias} must use an immutable SHA`).toBe(true);
+  }
+};
+
+describe('GitHub workflow block-mapping aliased step policy', () => {
+  it('enforces immutable refs for every checked-in workflow', () => {
+    expect(workflowFiles.length).toBeGreaterThan(0);
+    for (const workflowFile of workflowFiles) {
+      expectAliasedBlockActionsPinned(readFileSync(join(workflowsDir, workflowFile), 'utf8'), workflowFile);
+    }
+  });
+
+  it('rejects an anchored block mapping with an explicit decorated mutable uses key', () => {
+    const unsafe = [
+      'strategy:',
+      '  matrix:',
+      '    include:',
+      '      - &checkout',
+      '        ? !!str uses',
+      '        : actions/checkout@v4',
+      'steps:',
+      '  - *checkout',
+    ].join('\n');
+    expect(() => expectAliasedBlockActionsPinned(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('accepts the same aliased block mapping when pinned to a full commit SHA', () => {
+    const safe = [
+      'strategy:',
+      '  matrix:',
+      '    include:',
+      '      - &checkout',
+      '        ? !!str uses',
+      '        : actions/checkout@0123456789abcdef0123456789abcdef01234567',
+      'steps:',
+      '  - *checkout',
+    ].join('\n');
+    expect(() => expectAliasedBlockActionsPinned(safe, 'safe.yml')).not.toThrow();
+  });
+});
