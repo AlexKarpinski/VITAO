@@ -8,6 +8,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .sort();
 
 const untrustedPayload = /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/;
+const untrustedEventFileRead = /(?:jq\s+-r\s+['"]\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)['"]\s+['"]?\$GITHUB_EVENT_PATH['"]?)/;
 
 const collectTaintedFileWrites = (workflow: string) => {
   const paths = new Set<string>();
@@ -15,6 +16,14 @@ const collectTaintedFileWrites = (workflow: string) => {
   for (const match of workflow.matchAll(write)) {
     if (untrustedPayload.test(match[2])) paths.add(match[1]);
   }
+
+  const redirectWrite = /^\s*(?:-\s+)?run:\s*(.+)$/gm;
+  for (const match of workflow.matchAll(redirectWrite)) {
+    const script = match[1];
+    const redirect = script.match(/>\s*['"]?([^'"\s;]+)['"]?\s*$/);
+    if (redirect && untrustedEventFileRead.test(script)) paths.add(redirect[1]);
+  }
+
   return paths;
 };
 
@@ -77,6 +86,17 @@ describe('GitHub workflow shared-file shell trust boundary', () => {
       '      - run: bash /tmp/command.sh',
     ].join('\n');
     expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe-interpreter.yml')).toThrow();
+  });
+
+  it('rejects event-file data redirected into a script and executed later', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      `      - run: jq -r '.comment.body' "$GITHUB_EVENT_PATH" > /tmp/command.sh`,
+      '      - run: bash /tmp/command.sh',
+    ].join('\n');
+    expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe-event-file.yml')).toThrow();
   });
 
   it('allows sourcing a file written only with constant data', () => {
