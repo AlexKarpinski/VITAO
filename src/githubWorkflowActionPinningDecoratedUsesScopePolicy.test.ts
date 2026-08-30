@@ -37,6 +37,26 @@ const stripComment = (line: string) => {
   return line;
 };
 
+const decodeSimpleKey = (token: string) => {
+  const trimmed = token.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      return JSON.parse(trimmed) as string;
+    } catch {
+      return trimmed;
+    }
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return trimmed.slice(1, -1).replace(/''/g, "'");
+  }
+  return trimmed;
+};
+
+const mappingKey = (trimmed: string) => {
+  const match = trimmed.match(/^((?:"(?:\\.|[^"])*")|(?:'(?:''|[^'])*')|(?:[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*$/);
+  return match ? decodeSimpleKey(match[1]) : null;
+};
+
 const isBlockScalarHeader = (trimmed: string) =>
   /^(?:-\s+)?[^:]+:\s*(?:[&!][^\s]+\s+)*(?:[>|](?:[+-]?\d*|\d+[+-]?))\s*$/.test(trimmed);
 
@@ -56,7 +76,7 @@ const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
       blockScalarIndent = null;
     }
 
-    if (/^steps\s*:\s*$/.test(trimmed)) {
+    if (mappingKey(trimmed) === 'steps') {
       stepsIndent = indent;
       continue;
     }
@@ -89,6 +109,28 @@ describe('GitHub workflow decorated uses scope policy', () => {
     ].join('\n');
 
     expect(() => expectDecoratedStepUsesPinned(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects a mutable decorated uses key under a quoted steps key', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    "steps":',
+      '      - &uses-key uses: actions/checkout@v4',
+    ].join('\n');
+
+    expect(() => expectDecoratedStepUsesPinned(unsafe, 'quoted-steps.yml')).toThrow();
+  });
+
+  it('accepts an immutable decorated action under a quoted steps key', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      "    'steps':",
+      '      - &uses-key uses: actions/checkout@0123456789abcdef0123456789abcdef01234567',
+    ].join('\n');
+
+    expectDecoratedStepUsesPinned(safe, 'quoted-steps-pinned.yml');
   });
 
   it('ignores decorated uses examples inside YAML comments', () => {
