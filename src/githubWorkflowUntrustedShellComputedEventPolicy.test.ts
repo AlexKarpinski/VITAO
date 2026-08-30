@@ -16,6 +16,29 @@ const parseSingleQuoted = (raw: string) => {
   return match ? match[1].replace(/''/g, "'") : null;
 };
 
+const parseExpressionString = (raw: string) => {
+  const trimmed = raw.trim();
+  const single = parseSingleQuoted(trimmed);
+  if (single !== null) return single;
+  if (!/^"(?:\\.|[^"\\])*"$/.test(trimmed)) return null;
+  try {
+    return JSON.parse(trimmed) as string;
+  } catch {
+    return null;
+  }
+};
+
+const resolveFromJson = (raw: string) => {
+  const encoded = parseExpressionString(raw);
+  if (encoded === null) return null;
+  try {
+    const value = JSON.parse(encoded) as unknown;
+    return typeof value === 'string' ? value : null;
+  } catch {
+    return null;
+  }
+};
+
 const splitArguments = (value: string) => {
   const args: string[] = [];
   let start = 0;
@@ -61,9 +84,16 @@ const computedEventObjects = (script: string) => {
 
 const computedEventLeaves = (script: string) => {
   const leaves: Array<{ object: string; leaf: string }> = [];
-  const pattern = /github(?:\.event|\[['"]event['"]\])(?:\.([A-Za-z_][A-Za-z0-9_-]*)|\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\])\s*\[\s*format\s*\(((?:'(?:''|[^'])*'\s*,?\s*)+)\)\s*\]/gi;
-  for (const match of script.matchAll(pattern)) {
+  const formatPattern = /github(?:\.event|\[['"]event['"]\])(?:\.([A-Za-z_][A-Za-z0-9_-]*)|\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\])\s*\[\s*format\s*\(((?:'(?:''|[^'])*'\s*,?\s*)+)\)\s*\]/gi;
+  for (const match of script.matchAll(formatPattern)) {
     const leaf = resolveFormat(match[3]);
+    const object = match[1] ?? match[2];
+    if (object && leaf) leaves.push({ object, leaf });
+  }
+
+  const fromJsonPattern = /github(?:\.event|\[['"]event['"]\])(?:\.([A-Za-z_][A-Za-z0-9_-]*)|\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\])\s*\[\s*fromJSON\s*\(\s*((?:'(?:''|[^'])*')|(?:"(?:\\.|[^"\\])*"))\s*\)\s*\]/gi;
+  for (const match of script.matchAll(fromJsonPattern)) {
+    const leaf = resolveFromJson(match[3]);
     const object = match[1] ?? match[2];
     if (object && leaf) leaves.push({ object, leaf });
   }
@@ -117,11 +147,20 @@ describe('computed GitHub event shell-boundary policy', () => {
     expect(() => expectNoComputedUntrustedEventShellUse(unsafe, 'computed-leaf.yml')).toThrow();
   });
 
-  it('allows a computed trusted event property when it is not user-authored text', () => {
+  it('rejects a fromJSON-computed leaf beneath an untrusted event object', () => {
+    const unsafe = [
+      'steps:',
+      `  - run: bash -c "${{ github.event.comment[fromJSON('\"body\"')] }}"`,
+    ].join('\n');
+    expect(() => expectNoComputedUntrustedEventShellUse(unsafe, 'computed-fromjson-leaf.yml')).toThrow();
+  });
+
+  it('allows computed trusted event properties when they are not user-authored text', () => {
     const safe = [
       'steps:',
       "  - run: echo '${{ github.event[format('{0}', 'action')] }}'",
       "  - run: echo '${{ github.event.comment[format('{0}', 'id')] }}'",
+      `  - run: echo "${{ github.event.comment[fromJSON('\"id\"')] }}"`,
     ].join('\n');
     expectNoComputedUntrustedEventShellUse(safe, 'computed-event-safe.yml');
   });
