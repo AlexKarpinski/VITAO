@@ -46,10 +46,21 @@ const collectGithubScriptBlocks = (workflow: string) => {
   return scripts;
 };
 
+const collectGithubEnvWriteValues = (script: string) => {
+  const values: string[] = [];
+  const writeCall = /(?:appendFileSync|writeFileSync|appendFile|writeFile)\s*\(\s*process\.env\.GITHUB_ENV\s*,\s*([^\n;]+?)(?:\s*,\s*[^\n;]+)?\s*\)\s*;?/g;
+
+  for (const match of script.matchAll(writeCall)) {
+    values.push(match[1].trim());
+  }
+  return values;
+};
+
 const expectNoUntrustedGithubEnvWrite = (workflow: string, source: string) => {
   for (const script of collectGithubScriptBlocks(workflow)) {
-    if (!/process\.env\.GITHUB_ENV/.test(script)) continue;
-    expect(containsUntrustedPayload(script), `${source}: untrusted payload written to GITHUB_ENV`).toBe(false);
+    for (const value of collectGithubEnvWriteValues(script)) {
+      expect(containsUntrustedPayload(value), `${source}: untrusted payload written to GITHUB_ENV`).toBe(false);
+    }
   }
 };
 
@@ -105,5 +116,20 @@ describe('GitHub workflow GITHUB_ENV trust boundary', () => {
       "            fs.appendFileSync(process.env.GITHUB_ENV, 'MODE=safe\\n');",
     ].join('\n');
     expectNoUntrustedGithubEnvWrite(safe, 'safe.yml');
+  });
+
+  it('allows unrelated payload reads beside constant GITHUB_ENV writes', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const fs = require('node:fs');",
+      '            core.info(context.payload.comment.body);',
+      "            fs.appendFileSync(process.env.GITHUB_ENV, 'MODE=safe\\n');",
+    ].join('\n');
+    expectNoUntrustedGithubEnvWrite(safe, 'safe-unrelated-read.yml');
   });
 });
