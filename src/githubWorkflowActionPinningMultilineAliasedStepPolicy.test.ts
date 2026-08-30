@@ -19,6 +19,33 @@ const collectAnchoredRefs = (workflow: string) => {
   return refs;
 };
 
+const bracketDeltaOutsideQuotes = (value: string) => {
+  let delta = 0;
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (char !== quote) continue;
+      if (quote === "'") {
+        if (value[index + 1] === "'") index += 1;
+        else quote = null;
+        continue;
+      }
+      let backslashes = 0;
+      for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor -= 1) backslashes += 1;
+      if (backslashes % 2 === 0) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '[') delta += 1;
+    if (char === ']') delta -= 1;
+  }
+  return delta;
+};
+
 const collectMultilineStepAliases = (workflow: string) => {
   const aliases = new Set<string>();
   const lines = workflow.split('\n');
@@ -37,13 +64,13 @@ const collectMultilineStepAliases = (workflow: string) => {
       depth = 1;
       const sameLine = steps[1];
       for (const match of sameLine.matchAll(new RegExp(`\\*(${anchorName})\\b`, 'g'))) aliases.add(match[1]);
-      depth += (sameLine.match(/\[/g) ?? []).length - (sameLine.match(/\]/g) ?? []).length;
+      depth += bracketDeltaOutsideQuotes(sameLine);
       if (depth <= 0) inSteps = false;
       continue;
     }
 
     for (const match of trimmed.matchAll(new RegExp(`(?:^|[,\\s])\\*(${anchorName})\\b`, 'g'))) aliases.add(match[1]);
-    depth += (trimmed.match(/\[/g) ?? []).length - (trimmed.match(/\]/g) ?? []).length;
+    depth += bracketDeltaOutsideQuotes(trimmed);
     if (depth <= 0) inSteps = false;
   }
   return aliases;
@@ -73,6 +100,21 @@ describe('GitHub workflow multiline aliased-step pinning policy', () => {
     expect(() => expectMultilineAliasedStepsPinned(unsafe, 'unsafe.yml')).toThrow();
   });
 
+  it('ignores quoted closing brackets before a mutable alias item', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: [ &checkout { uses: actions/checkout@v4 } ]',
+      '    steps: [',
+      '      { run: "echo ]" },',
+      '      *checkout',
+      '    ]',
+    ].join('\n');
+    expect(() => expectMultilineAliasedStepsPinned(unsafe, 'quoted-bracket.yml')).toThrow();
+  });
+
   it('accepts an immutable alias item in a multiline steps sequence', () => {
     const safe = [
       'jobs:',
@@ -81,6 +123,7 @@ describe('GitHub workflow multiline aliased-step pinning policy', () => {
       '      matrix:',
       '        include: [ &checkout { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 } ]',
       '    steps: [',
+      '      { run: "echo ]" },',
       '      *checkout',
       '    ]',
     ].join('\n');
