@@ -8,6 +8,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .sort();
 
 const immutableRef = /^[^\s@]+@(?:[0-9a-fA-F]{40})$/;
+const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 
 const stripQuotedScalarsByLine = (workflow: string) => {
   let quote: '"' | "'" | null = null;
@@ -68,9 +69,29 @@ const stripQuotedScalarsByLine = (workflow: string) => {
   });
 };
 
+const stripPlainScalarContinuations = (lines: string[]) => {
+  let scalarIndent: number | null = null;
+  return lines.map((line) => {
+    const trimmed = line.trim();
+    const indent = indentOf(line);
+    if (scalarIndent !== null) {
+      if (!trimmed) return line;
+      if (indent > scalarIndent) return ' '.repeat(line.length);
+      scalarIndent = null;
+    }
+
+    const mapping = line.match(/^\s*(?!-)([^:#][^:]*):[ \t]+(.+)$/);
+    if (mapping) {
+      const value = mapping[2].trim();
+      if (value && !/^[{[\]|>&!*]/.test(value) && !value.startsWith('#')) scalarIndent = indent;
+    }
+    return line;
+  });
+};
+
 const collectNodePropertyUsesRefs = (workflow: string) => {
   const refs: string[] = [];
-  const strippedLines = stripQuotedScalarsByLine(workflow);
+  const strippedLines = stripPlainScalarContinuations(stripQuotedScalarsByLine(workflow));
   for (let index = 0; index < strippedLines.length; index += 1) {
     const line = strippedLines[index];
     if (!/\bsteps\s*:/.test(line)) continue;
@@ -126,6 +147,19 @@ describe('GitHub workflow node-property uses-key pinning policy', () => {
       '  DOC: "first line',
       '    jobs: { build: { steps: [{ &uses-key uses: actions/checkout@v4 }] } }',
       '    final line"',
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(collectNodePropertyUsesRefs(safe)).toEqual([]);
+  });
+
+  it('ignores decorated uses documentation inside multiline plain scalars', () => {
+    const safe = [
+      'env:',
+      '  DOC: This documentation spans',
+      '    jobs: { build: { steps:[{ &uses-key uses:actions/checkout@v4 }] } }',
       'jobs:',
       '  build:',
       '    steps:',
