@@ -27,6 +27,7 @@ const stripComment = (line: string) => {
 };
 
 const nodeProperty = '(?:&[A-Za-z0-9_-]+|!(?:[^\\s{]+)?)';
+const nodePropertiesOnly = new RegExp(`^(?:${nodeProperty}\\s*)+$`);
 const blockScalarValue = new RegExp(`:\\s*(?:${nodeProperty}\\s*)*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\\s*$`);
 const directUsesEntry = new RegExp(`^(?:${nodeProperty}\\s*)*(?:["']?uses["']?)\\s*:\\s*([^\\s,#}]+)`);
 
@@ -65,6 +66,7 @@ const collectDeferredNodePropertyStepRefs = (workflow: string) => {
     if (pendingIndent !== null) {
       if (indent <= pendingIndent) pendingIndent = null;
       else {
+        if (nodePropertiesOnly.test(trimmed)) continue;
         const flowMapping = trimmed.match(/^\{\s*(?:["']?uses["']?)\s*:\s*([^,}\s]+)\s*(?:,|})/);
         const blockMapping = trimmed.match(directUsesEntry);
         if (flowMapping) refs.push(flowMapping[1]);
@@ -125,6 +127,30 @@ describe('GitHub workflow deferred node-property step pinning policy', () => {
       '    steps:',
       '      - &step',
       '        &uses-key uses: actions/checkout@0123456789abcdef0123456789abcdef01234567',
+    ].join('\n');
+    expect(() => expectImmutableDeferredNodePropertySteps(safe)).not.toThrow();
+  });
+
+  it('preserves deferred step state across additional node-property lines', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - &action',
+      '        !!map',
+      '        { uses: actions/checkout@v4 }',
+    ].join('\n');
+    expect(() => expectImmutableDeferredNodePropertySteps(unsafe)).toThrow();
+  });
+
+  it('accepts immutable refs after multiple deferred node-property lines', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - &action',
+      '        !!map',
+      '        { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 }',
     ].join('\n');
     expect(() => expectImmutableDeferredNodePropertySteps(safe)).not.toThrow();
   });
