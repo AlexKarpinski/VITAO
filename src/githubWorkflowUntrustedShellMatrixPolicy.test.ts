@@ -19,6 +19,18 @@ const isUntrustedMatrixSource = (value: string) => {
 };
 
 const runUsesMatrix = (value: string) => /\$\{\{[\s\S]*\bmatrix\.[A-Za-z_][A-Za-z0-9_-]*\b[\s\S]*\}\}/.test(normalizeAccess(value));
+const isExecutionSink = (value: string) => /(?:\b(?:bash|sh|dash|ksh|zsh)\s+-c\b|\beval\b|\bInvoke-Expression\b|\bcall\b)/i.test(value);
+const referencesEnvironment = (value: string, name: string) => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return [
+    new RegExp('\\$' + escaped + '\\b'),
+    new RegExp('\\$\\{' + escaped + '(?::[^}]*)?\\}'),
+    new RegExp('\\$env:' + escaped + '\\b', 'i'),
+    new RegExp('\\$\\{env:' + escaped + '\\}', 'i'),
+    new RegExp('%' + escaped + '%', 'i'),
+    new RegExp('\\$\\{\\{\\s*env\\.' + escaped + '\\s*\\}\\}', 'i'),
+  ].some((pattern) => pattern.test(value));
+};
 const isBlockHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(value.trim());
 
 const collectIndentedValue = (lines: string[], start: number, parentIndent: number) => {
@@ -40,7 +52,9 @@ const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
   let jobsIndent: number | null = null;
   let jobIndent: number | null = null;
   let matrixIndent: number | null = null;
+  let envIndent: number | null = null;
   let matrixTainted = false;
+  let matrixTaintedEnv = new Set<string>();
 
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
@@ -52,7 +66,9 @@ const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
       jobsIndent = indent;
       jobIndent = null;
       matrixIndent = null;
+      envIndent = null;
       matrixTainted = false;
+      matrixTaintedEnv = new Set<string>();
       continue;
     }
     if (jobsIndent === null) continue;
@@ -60,19 +76,25 @@ const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
       jobsIndent = null;
       jobIndent = null;
       matrixIndent = null;
+      envIndent = null;
       matrixTainted = false;
+      matrixTaintedEnv = new Set<string>();
       continue;
     }
 
     if (jobIndent === null && indent > jobsIndent && /^[A-Za-z_][A-Za-z0-9_-]*\s*:\s*$/.test(trimmed)) {
       jobIndent = indent;
       matrixIndent = null;
+      envIndent = null;
       matrixTainted = false;
+      matrixTaintedEnv = new Set<string>();
       continue;
     }
     if (jobIndent !== null && indent === jobIndent && /^[A-Za-z_][A-Za-z0-9_-]*\s*:\s*$/.test(trimmed)) {
       matrixIndent = null;
+      envIndent = null;
       matrixTainted = false;
+      matrixTaintedEnv = new Set<string>();
       continue;
     }
     if (jobIndent === null || indent <= jobIndent) continue;
@@ -92,6 +114,33 @@ const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
       }
     }
 
+    if (envIndent !== null && indent <= envIndent) envIndent = null;
+
+    const env = trimmed.match(/^(?:-\s*)?env\s*:\s*(.*)$/);
+    if (env) {
+      const effectiveIndent = indent + (/^-\s+env\b/.test(trimmed) ? 2 : 0);
+      const inline = env[1].trim();
+      if (!inline) {
+        envIndent = effectiveIndent;
+      } else if (matrixTainted && inline.startsWith('{') && inline.endsWith('}')) {
+        for (const entry of inline.slice(1, -1).split(',')) {
+          const match = entry.trim().match(/^["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.*)$/);
+          if (match && runUsesMatrix(match[2])) matrixTaintedEnv.add(match[1]);
+        }
+      }
+    } else if (envIndent !== null && indent > envIndent) {
+      const entry = trimmed.match(/^["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*:\s*(.*)$/);
+      if (entry && matrixTainted) {
+        let envValue = entry[2];
+        if (isBlockHeader(envValue)) {
+          const collected = collectIndentedValue(lines, index, indent);
+          envValue = collected.value;
+          index = collected.end;
+        }
+        if (runUsesMatrix(envValue)) matrixTaintedEnv.add(entry[1]);
+      }
+    }
+
     const run = trimmed.match(/^(?:-\s*)?["']?run["']?\s*:\s*(.*)$/);
     if (matrixTainted && run) {
       let runValue = run[1];
@@ -102,6 +151,9 @@ const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
       }
       if (runUsesMatrix(runValue)) {
         throw new Error(`${source}: untrusted strategy.matrix value reaches shell`);
+      }
+      if (isExecutionSink(runValue) && [...matrixTaintedEnv].some((name) => referencesEnvironment(runValue, name))) {
+        throw new Error(`${source}: untrusted strategy.matrix value reaches shell through env`);
       }
     }
   }
@@ -154,6 +206,36 @@ describe('GitHub workflow matrix-to-shell trust boundary', () => {
       "          bash -c '${{ matrix.command }}'",
     ].join('\n');
     expect(() => expectNoUntrustedMatrixShell(unsafe, 'block-run.yml')).toThrow();
+  });
+
+  it('rejects tainted matrix values routed through step env into shell execution', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix: ${{ fromJSON(github.event.issue.body) }}',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - env:',
+      '          CMD: ${{ matrix.command }}',
+      '        run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => expectNoUntrustedMatrixShell(unsafe, 'matrix-env-shell.yml')).toThrow();
+  });
+
+  it('allows tainted matrix values consumed only as quoted data', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix: ${{ fromJSON(github.event.issue.body) }}',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - env:',
+      '          BODY: ${{ matrix.command }}',
+      "        run: printf '%s\\n' \"$BODY\"",
+    ].join('\n');
+    expectNoUntrustedMatrixShell(safe, 'matrix-env-data.yml');
   });
 
   it('allows a constant matrix used by a shell step', () => {
