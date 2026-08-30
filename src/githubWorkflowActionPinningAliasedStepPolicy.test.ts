@@ -126,8 +126,10 @@ const splitTopLevelFlowEntries = (mapping: string) => {
 
 const directUsesRef = (mapping: string) => {
   for (const entry of splitTopLevelFlowEntries(mapping)) {
-    const match = entry.match(/^["']?uses["']?\s*:\s*["']?([^,"'}\s]+)["']?\s*$/);
-    if (match) return match[1];
+    const explicit = entry.match(/^\?\s*(?:(?:&[A-Za-z0-9_][A-Za-z0-9_-]*|!![^\s]+|![^\s]*)\s+)*["']?uses["']?\s*:\s*["']?([^,"'}\s]+)["']?\s*$/);
+    if (explicit) return explicit[1];
+    const canonical = entry.match(/^["']?uses["']?\s*:\s*["']?([^,"'}\s]+)["']?\s*$/);
+    if (canonical) return canonical[1];
   }
   return null;
 };
@@ -219,6 +221,18 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
     expect(() => expectAliasedStepsPinned(unsafe, 'unsafe.yml')).toThrow();
   });
 
+  it('rejects an anchored action mapping with an explicit mutable uses key', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: [ &checkout { ? uses : actions/checkout@v4 } ]',
+      '    steps: [*checkout]',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(unsafe, 'explicit-uses.yml')).toThrow();
+  });
+
   it('rejects a mutable direct uses after a nested mapping in an anchored step', () => {
     const unsafe = [
       'jobs:',
@@ -266,6 +280,18 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
       '      - *checkout',
     ].join('\n');
     expect(() => expectAliasedStepsPinned(safe, 'safe.yml')).not.toThrow();
+  });
+
+  it('accepts an anchored action mapping with an explicit immutable uses key', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: [ &checkout { ? uses : actions/checkout@0123456789abcdef0123456789abcdef01234567 } ]',
+      '    steps: [*checkout]',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(safe, 'explicit-uses-safe.yml')).not.toThrow();
   });
 
   it('accepts an immutable action sequence aliased as the complete steps value', () => {
