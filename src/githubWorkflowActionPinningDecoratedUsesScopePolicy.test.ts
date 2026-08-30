@@ -58,7 +58,7 @@ const mappingKey = (trimmed: string) => {
 };
 
 const isBlockScalarHeader = (trimmed: string) =>
-  /^(?:-\s+)?[^:]+:\s*(?:[&!][^\s]+\s+)*(?:[>|](?:[+-]?\d*|\d+[+-]?))\s*$/.test(trimmed);
+  /^(?:-\s+)?[^:]+:\s*(?:(?:&[^\s]+|![^\s]*)\s+)*(?:[>|](?:[+-]?\d*|\d+[+-]?))\s*$/.test(trimmed);
 
 const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
   const lines = workflow.split('\n');
@@ -88,7 +88,7 @@ const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
       continue;
     }
 
-    const match = trimmed.match(/^-\s+(?:[&!][^\s]+\s+)+uses\s*:\s*([^\s]+)\s*$/);
+    const match = trimmed.match(/^-\s+(?:(?:&[^\s]+|![^\s]*)\s+)+uses\s*:\s*([^\s]+)\s*$/);
     if (!match) continue;
 
     const ref = match[1];
@@ -109,6 +109,28 @@ describe('GitHub workflow decorated uses scope policy', () => {
     ].join('\n');
 
     expect(() => expectDecoratedStepUsesPinned(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects a mutable uses key with a bare non-specific tag', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - ! uses: actions/checkout@v4',
+    ].join('\n');
+
+    expect(() => expectDecoratedStepUsesPinned(unsafe, 'bare-tag.yml')).toThrow();
+  });
+
+  it('accepts an immutable uses key with a bare non-specific tag', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - ! uses: actions/checkout@0123456789abcdef0123456789abcdef01234567',
+    ].join('\n');
+
+    expectDecoratedStepUsesPinned(safe, 'bare-tag-pinned.yml');
   });
 
   it('rejects a mutable decorated uses key under a quoted steps key', () => {
