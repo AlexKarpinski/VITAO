@@ -40,7 +40,7 @@ const isPullRequestContext = (workflow: string) =>
 
 const referencesHeadRef = (script: string) => {
   const normalized = script.replace(/\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\]/g, '.$1');
-  return /(?:\$GITHUB_HEAD_REF|\$\{GITHUB_HEAD_REF\}|%GITHUB_HEAD_REF%|\$env:GITHUB_HEAD_REF|\$\{env:GITHUB_HEAD_REF\}|\$\{\{\s*env\.GITHUB_HEAD_REF\s*\}\}|\$\{\{\s*github\.event\.pull_request\.head\.ref\s*\}\})/.test(normalized);
+  return /(?:\$GITHUB_HEAD_REF|\$\{GITHUB_HEAD_REF\}|%GITHUB_HEAD_REF%|\$env:GITHUB_HEAD_REF|\$\{env:GITHUB_HEAD_REF\}|\$\{\{\s*env\.GITHUB_HEAD_REF\s*\}\}|\$\{\{\s*github\.head_ref\s*\}\}|\$\{\{\s*github\.event\.pull_request\.head\.ref\s*\}\})/.test(normalized);
 };
 
 const expectNoHeadRefShellExecution = (workflow: string, source: string) => {
@@ -83,6 +83,20 @@ describe('GitHub workflow GITHUB_HEAD_REF shell policy', () => {
       "      - run: bash -c '${{ github['event']['pull_request']['head']['ref'] }}'",
     ].join('\n');
     expect(() => expectNoHeadRefShellExecution(unsafe, 'head-ref-expression.yml')).toThrow();
+  });
+
+  it('rejects top-level github.head_ref in privileged shell execution', () => {
+    const unsafe = [
+      'on:',
+      '  pull_request_target:',
+      'jobs:',
+      '  demo:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      "      - run: bash -c '${{ github.head_ref }}'",
+      "      - run: bash -c '${{ github['head_ref'] }}'",
+    ].join('\n');
+    expect(() => expectNoHeadRefShellExecution(unsafe, 'top-level-head-ref.yml')).toThrow();
   });
 
   it('rejects block-scalar GITHUB_HEAD_REF shell execution', () => {
