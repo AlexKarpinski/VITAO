@@ -100,14 +100,43 @@ const computedEventLeaves = (script: string) => {
   return leaves;
 };
 
-const inlineRunValues = (workflow: string) =>
-  workflow
-    .split('\n')
-    .map((line) => line.match(/^\s*(?:-\s*)?(?:run|["']run["'])\s*:\s*(.+)$/)?.[1] ?? null)
-    .filter((value): value is string => value !== null && !/^[>|]/.test(value.trim()));
+const runScripts = (workflow: string) => {
+  const scripts: string[] = [];
+  const lines = workflow.split('\n');
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const match = line.match(/^(\s*)(?:-\s*)?(?:run|["']run["'])\s*:\s*(.*)$/);
+    if (!match) continue;
+
+    const value = match[2].trim();
+    if (!/^[>|](?:[+-]?\d?|\d?[+-]?)?$/.test(value)) {
+      scripts.push(match[2]);
+      continue;
+    }
+
+    const runIndent = match[1].length;
+    const body: string[] = [];
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      const bodyLine = lines[cursor];
+      if (!bodyLine.trim()) {
+        body.push('');
+        index = cursor;
+        continue;
+      }
+      const bodyIndent = bodyLine.match(/^\s*/)?.[0].length ?? 0;
+      if (bodyIndent <= runIndent) break;
+      body.push(bodyLine.slice(Math.min(bodyLine.length, runIndent + 1)));
+      index = cursor;
+    }
+    scripts.push(body.join('\n'));
+  }
+
+  return scripts;
+};
 
 const expectNoComputedUntrustedEventShellUse = (workflow: string, source: string) => {
-  for (const script of inlineRunValues(workflow)) {
+  for (const script of runScripts(workflow)) {
     for (const object of computedEventObjects(script)) {
       expect(
         untrustedEventObjects.has(object),
@@ -147,6 +176,15 @@ describe('computed GitHub event shell-boundary policy', () => {
     expect(() => expectNoComputedUntrustedEventShellUse(unsafe, 'computed-leaf.yml')).toThrow();
   });
 
+  it('rejects a computed leaf in a block run script', () => {
+    const unsafe = [
+      'steps:',
+      '  - run: |',
+      '      bash -c "${{ github.event.comment[format(\'{0}{1}\', \'bo\', \'dy\')] }}"',
+    ].join('\n');
+    expect(() => expectNoComputedUntrustedEventShellUse(unsafe, 'computed-block-run.yml')).toThrow();
+  });
+
   it('rejects a fromJSON-computed leaf beneath an untrusted event object', () => {
     const unsafe = [
       'steps:',
@@ -161,6 +199,8 @@ describe('computed GitHub event shell-boundary policy', () => {
       "  - run: echo '${{ github.event[format('{0}', 'action')] }}'",
       "  - run: echo '${{ github.event.comment[format('{0}', 'id')] }}'",
       "  - run: echo \"${{ github.event.comment[fromJSON('\"id\"')] }}\"",
+      '  - run: >-',
+      '      echo "${{ github.event.comment[format(\'{0}\', \'id\')] }}"',
     ].join('\n');
     expectNoComputedUntrustedEventShellUse(safe, 'computed-event-safe.yml');
   });
