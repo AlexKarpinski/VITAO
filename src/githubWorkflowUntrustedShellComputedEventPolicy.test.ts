@@ -150,7 +150,7 @@ describe('computed GitHub event shell-boundary policy', () => {
   it('rejects a fromJSON-computed leaf beneath an untrusted event object', () => {
     const unsafe = [
       'steps:',
-      `  - run: bash -c "${{ github.event.comment[fromJSON('\"body\"')] }}"`,
+      "  - run: bash -c \"${{ github.event.comment[fromJSON('\"body\"')] }}\"",
     ].join('\n');
     expect(() => expectNoComputedUntrustedEventShellUse(unsafe, 'computed-fromjson-leaf.yml')).toThrow();
   });
@@ -160,7 +160,7 @@ describe('computed GitHub event shell-boundary policy', () => {
       'steps:',
       "  - run: echo '${{ github.event[format('{0}', 'action')] }}'",
       "  - run: echo '${{ github.event.comment[format('{0}', 'id')] }}'",
-      `  - run: echo "${{ github.event.comment[fromJSON('\"id\"')] }}"`,
+      "  - run: echo \"${{ github.event.comment[fromJSON('\"id\"')] }}\"",
     ].join('\n');
     expectNoComputedUntrustedEventShellUse(safe, 'computed-event-safe.yml');
   });
