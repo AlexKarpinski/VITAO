@@ -20,8 +20,15 @@ const containsUntrustedPayloadText = (script: string) => {
     || /github\.event\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body))/.test(normalized);
 };
 
+const shellExecutable = String.raw`(?:\/bin\/)?(?:bash|sh|dash|ksh|zsh)|(?:cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)`;
+
 const hasShellExecutionSink = (script: string) => {
   if (/\b(?:exec|execSync)\s*\(/.test(script)) return true;
+  const explicitShell = new RegExp(
+    String.raw`\b(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*['"](?:${shellExecutable})['"]\s*,\s*\[[\s\S]*?['"](?:-c|\/c|-Command)['"]`,
+    'i',
+  );
+  if (explicitShell.test(script)) return true;
   if (/\b(?:spawn|spawnSync)\s*\([\s\S]*?\{[\s\S]*?\bshell\s*:\s*true\b[\s\S]*?\}/.test(script)) return true;
   if (/\b(?:execa|execaSync)\s*\([\s\S]*?\{[\s\S]*?\bshell\s*:\s*true\b[\s\S]*?\}/.test(script)) return true;
   return false;
@@ -104,6 +111,45 @@ describe('GitHub Script shell execution trust boundary', () => {
       "            require('node:child_process').spawn(command, [], { shell: true });",
     ].join('\n');
     expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'spawn.yml')).toThrow();
+  });
+
+  it('rejects execFileSync when it explicitly launches Bash with attacker text', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            require('node:child_process').execFileSync('/bin/bash', ['-c', context.payload.comment.body]);",
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'exec-file.yml')).toThrow();
+  });
+
+  it('rejects spawnSync of an explicit shell even without shell true', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            require('node:child_process').spawnSync('bash', ['-c', context.payload.issue.body]);",
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'spawn-shell.yml')).toThrow();
+  });
+
+  it('allows execFileSync of a non-shell executable with payload as an argument', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            require('node:child_process').execFileSync('/usr/bin/printf', ['%s', context.payload.comment.body]);",
+    ].join('\n');
+    expectNoUntrustedGithubScriptShellExecution(safe, 'exec-file-safe.yml');
   });
 
   it('allows payload text used only as data', () => {
