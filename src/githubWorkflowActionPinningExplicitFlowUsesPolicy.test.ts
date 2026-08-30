@@ -113,7 +113,7 @@ const blockScalarHeader = (line: string) => /:\s*(?:(?:&[^\s]+|![^\s]*)\s+)*[|>]
 
 const collectExplicitFlowUses = (workflow: string) => {
   const refs: string[] = [];
-  const pattern = /\?\s*(?:"uses"|'uses'|uses)\s*:\s*("[^"]+"|'[^']+'|[^,}\]\s]+)/g;
+  const pattern = /\?\s*(?:(?:&[^\s]+|![^\s]*)\s+)*(?:"uses"|'uses'|uses)\s*:\s*("[^"]+"|'[^']+'|[^,}\]\s]+)/g;
   let stepsDepth = 0;
   let stepsIndent: number | null = null;
   let flowQuote: Quote = null;
@@ -205,6 +205,19 @@ jobs:
     ).toThrow(/Expected immutable action pin/);
   });
 
+  it('rejects node-property decorated explicit uses keys', () => {
+    expect(() =>
+      assertExplicitFlowUsesPinned(`
+name: decorated-explicit-flow-uses
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - { ? !!str uses : actions/checkout@v4 }
+`),
+    ).toThrow(/Expected immutable action pin/);
+  });
+
   it('rejects explicit uses keys after a multiline flow sequence opener', () => {
     expect(() =>
       assertExplicitFlowUsesPinned(`
@@ -254,6 +267,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps: [ { ? uses : actions/checkout@0123456789abcdef0123456789abcdef01234567 } ]
+`),
+    ).not.toThrow();
+  });
+
+  it('accepts immutable node-property decorated explicit uses keys', () => {
+    expect(() =>
+      assertExplicitFlowUsesPinned(`
+name: decorated-explicit-flow-uses-pinned
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - { ? !!str uses : actions/checkout@0123456789abcdef0123456789abcdef01234567 }
 `),
     ).not.toThrow();
   });
