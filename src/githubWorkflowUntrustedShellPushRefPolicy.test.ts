@@ -13,6 +13,11 @@ const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const envReference = (name: string) =>
   new RegExp(`(?:\\$${name}(?![A-Za-z0-9_])|\\$\\{${name}(?:[^}]*)?\\}|%${name}%|\\$env:${name}(?![A-Za-z0-9_])|\\$\\{env:${name}\\}|\\$\\{\\{\\s*env\\.${name}\\s*\\}\\})`);
 
+const hasPushTrigger = (workflow: string) => {
+  if (/^\s*["']?push["']?\s*:/m.test(workflow)) return true;
+  return /^\s*["']?on["']?\s*:\s*(?:["']?push["']?|\[[^\]\n]*["']?push["']?[^\]\n]*\])\s*(?:#.*)?$/m.test(workflow);
+};
+
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
   const lines = workflow.split('\n');
@@ -59,7 +64,7 @@ const collectPushRefEnvNames = (workflow: string) => {
 };
 
 const expectNoPushRefShellExecution = (workflow: string, source: string) => {
-  if (!/^\s*push\s*:/m.test(workflow)) return;
+  if (!hasPushTrigger(workflow)) return;
   const taintedEnv = collectPushRefEnvNames(workflow);
   for (const script of collectRunScripts(workflow)) {
     expect(pushRefSource.test(script), `${source}: attacker-controlled push ref reaches a shell run step`).toBe(false);
@@ -80,6 +85,16 @@ describe('GitHub push ref shell policy', () => {
   it('rejects direct github.ref_name shell execution on push', () => {
     const unsafe = ['on:', '  push:', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.ref_name }}'}'"`].join('\n');
     expect(() => expectNoPushRefShellExecution(unsafe, 'push-ref-name.yml')).toThrow();
+  });
+
+  it('rejects direct github.ref_name shell execution with scalar push trigger', () => {
+    const unsafe = ['on: push', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.ref_name }}'}'"`].join('\n');
+    expect(() => expectNoPushRefShellExecution(unsafe, 'scalar-push.yml')).toThrow();
+  });
+
+  it('rejects direct github.ref_name shell execution with flow push trigger', () => {
+    const unsafe = ['on: [workflow_dispatch, push]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.ref_name }}'}'"`].join('\n');
+    expect(() => expectNoPushRefShellExecution(unsafe, 'flow-push.yml')).toThrow();
   });
 
   it('rejects bracket-access push refs propagated through env', () => {
