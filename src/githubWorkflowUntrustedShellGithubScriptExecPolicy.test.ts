@@ -21,16 +21,151 @@ const containsUntrustedPayloadText = (script: string) => {
 };
 
 const shellExecutable = String.raw`(?:\/bin\/)?(?:bash|sh|dash|ksh|zsh)|(?:cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)`;
+const shellExecutablePattern = new RegExp(`^(?:${shellExecutable})$`, 'i');
 
-const hasShellExecutionSink = (script: string) => {
-  if (/\b(?:exec|execSync)\s*\(/.test(script)) return true;
-  const explicitShell = new RegExp(
-    String.raw`\b(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*['"](?:${shellExecutable})['"]\s*,\s*\[[\s\S]*?['"](?:-c|\/c|-Command)['"]`,
-    'i',
-  );
-  if (explicitShell.test(script)) return true;
-  if (/\b(?:spawn|spawnSync)\s*\([\s\S]*?\{[\s\S]*?\bshell\s*:\s*true\b[\s\S]*?\}/.test(script)) return true;
-  if (/\b(?:execa|execaSync)\s*\([\s\S]*?\{[\s\S]*?\bshell\s*:\s*true\b[\s\S]*?\}/.test(script)) return true;
+type Call = { name: string; args: string };
+type Quote = "'" | '"' | '`' | null;
+
+const extractCalls = (script: string, names: string[]): Call[] => {
+  const calls: Call[] = [];
+  const matcher = new RegExp(`\\b(${names.join('|')})\\s*\\(`, 'g');
+  for (let match = matcher.exec(script); match; match = matcher.exec(script)) {
+    const open = matcher.lastIndex - 1;
+    let depth = 1;
+    let quote: Quote = null;
+    for (let index = open + 1; index < script.length; index += 1) {
+      const char = script[index];
+      if (quote) {
+        if (char === '\\') {
+          index += 1;
+          continue;
+        }
+        if (char === quote) quote = null;
+        continue;
+      }
+      if (char === "'" || char === '"' || char === '`') {
+        quote = char;
+        continue;
+      }
+      if (char === '(') depth += 1;
+      if (char !== ')') continue;
+      depth -= 1;
+      if (depth !== 0) continue;
+      calls.push({ name: match[1], args: script.slice(open + 1, index) });
+      matcher.lastIndex = index + 1;
+      break;
+    }
+  }
+  return calls;
+};
+
+const splitTopLevelArgs = (value: string) => {
+  const args: string[] = [];
+  let start = 0;
+  let quote: Quote = null;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let braceDepth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (char === '\\') {
+        index += 1;
+        continue;
+      }
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '(') parenDepth += 1;
+    else if (char === ')') parenDepth -= 1;
+    else if (char === '[') bracketDepth += 1;
+    else if (char === ']') bracketDepth -= 1;
+    else if (char === '{') braceDepth += 1;
+    else if (char === '}') braceDepth -= 1;
+    else if (char === ',' && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      args.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  args.push(value.slice(start).trim());
+  return args;
+};
+
+const unquoteLiteral = (value: string) => {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return null;
+};
+
+const collectTaintedIdentifiers = (script: string) => {
+  const tainted = new Set<string>();
+  const declarations = [...script.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g)];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of declarations) {
+      const [, name, expression] = declaration;
+      if (tainted.has(name)) continue;
+      const referencesTainted = [...tainted].some((identifier) =>
+        new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(expression),
+      );
+      if (!containsUntrustedPayloadText(expression) && !referencesTainted) continue;
+      tainted.add(name);
+      changed = true;
+    }
+  }
+  return tainted;
+};
+
+const containsTaintedValue = (value: string, tainted: Set<string>) =>
+  containsUntrustedPayloadText(value)
+  || [...tainted].some((identifier) => new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(value));
+
+const hasUntrustedShellExecution = (script: string) => {
+  const tainted = collectTaintedIdentifiers(script);
+  const calls = extractCalls(script, [
+    'exec',
+    'execSync',
+    'execFile',
+    'execFileSync',
+    'spawn',
+    'spawnSync',
+    'execa',
+    'execaSync',
+  ]);
+
+  for (const call of calls) {
+    const args = splitTopLevelArgs(call.args);
+    const first = args[0] ?? '';
+
+    if (call.name === 'exec' || call.name === 'execSync') {
+      if (containsTaintedValue(first, tainted)) return true;
+      continue;
+    }
+
+    const executable = unquoteLiteral(first);
+    const explicitlyLaunchesShell = executable !== null && shellExecutablePattern.test(executable);
+    if (explicitlyLaunchesShell) {
+      const shellArgs = args[1] ?? '';
+      if (/['"](?:-c|\/c|-Command)['"]/i.test(shellArgs) && containsTaintedValue(shellArgs, tainted)) return true;
+    }
+
+    const usesShellOption = /\bshell\s*:\s*true\b/.test(call.args);
+    if (usesShellOption) {
+      const commandArgs = args.slice(0, Math.max(1, args.length - 1)).join(', ');
+      if (containsTaintedValue(commandArgs, tainted)) return true;
+    }
+  }
+
   return false;
 };
 
@@ -72,7 +207,7 @@ const collectGithubScriptBodies = (workflow: string) => {
 const expectNoUntrustedGithubScriptShellExecution = (workflow: string, source: string) => {
   for (const script of collectGithubScriptBodies(workflow)) {
     expect(
-      containsUntrustedPayloadText(script) && hasShellExecutionSink(script),
+      hasUntrustedShellExecution(script),
       `${source}: GitHub Script executes attacker-controlled event text through a shell API`,
     ).toBe(false);
   }
@@ -99,7 +234,7 @@ describe('GitHub Script shell execution trust boundary', () => {
     expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'unsafe.yml')).toThrow();
   });
 
-  it('rejects spawn with shell true when its script reads attacker text', () => {
+  it('rejects spawn with shell true when its command is attacker controlled', () => {
     const unsafe = [
       'jobs:',
       '  test:',
@@ -150,6 +285,20 @@ describe('GitHub Script shell execution trust boundary', () => {
       "            require('node:child_process').execFileSync('/usr/bin/printf', ['%s', context.payload.comment.body]);",
     ].join('\n');
     expectNoUntrustedGithubScriptShellExecution(safe, 'exec-file-safe.yml');
+  });
+
+  it('allows unrelated payload reads beside a constant shell command', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            core.info(context.payload.comment.body);',
+      "            require('node:child_process').execSync('printf safe');",
+    ].join('\n');
+    expectNoUntrustedGithubScriptShellExecution(safe, 'unrelated-shell.yml');
   });
 
   it('allows payload text used only as data', () => {
