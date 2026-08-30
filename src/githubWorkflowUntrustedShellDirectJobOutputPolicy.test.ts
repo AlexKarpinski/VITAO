@@ -109,9 +109,10 @@ const expectNoDirectEventJobOutputShell = (workflow: string) => {
     const [job, output] = key.split('.');
     const escapedJob = job.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const escapedOutput = output.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const sink = new RegExp(`needs(?:\\.${escapedJob}|\\[['"]${escapedJob}['"]\\])\\.outputs(?:\\.${escapedOutput}|\\[['"]${escapedOutput}['"]\\])`);
+    const directSink = new RegExp(`needs(?:\\.${escapedJob}|\\[['"]${escapedJob}['"]\\])\\.outputs(?:\\.${escapedOutput}|\\[['"]${escapedOutput}['"]\\])`);
+    const wildcardSink = new RegExp(`needs\\.\\*\\.outputs(?:\\.${escapedOutput}|\\[['"]${escapedOutput}['"]\\])`);
     expect(
-      shellValues.some((value) => sink.test(value)),
+      shellValues.some((value) => directSink.test(value) || wildcardSink.test(value)),
       `tainted job output ${key} reaches a downstream shell-capable workflow`,
     ).toBe(false);
   }
@@ -133,6 +134,41 @@ describe('GitHub workflow direct event job-output policy', () => {
       '      - run: bash -c "${{ needs.producer.outputs.command }}"',
     ].join('\n');
     expect(() => expectNoDirectEventJobOutputShell(unsafe)).toThrow();
+  });
+
+  it('rejects wildcard aggregation of a tainted job output', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'jobs:',
+      '  producer:',
+      '    outputs:',
+      '      command: ${{ github.event.comment.body }}',
+      '    steps:',
+      '      - run: echo produce',
+      '  consumer:',
+      '    needs: producer',
+      '    steps:',
+      "      - run: bash -c \"${{ join(needs.*.outputs.command, ' ') }}\"",
+    ].join('\n');
+    expect(() => expectNoDirectEventJobOutputShell(unsafe)).toThrow();
+  });
+
+  it('accepts wildcard aggregation of an unrelated constant output', () => {
+    const safe = [
+      'on: issue_comment',
+      'jobs:',
+      '  producer:',
+      '    outputs:',
+      '      message: ${{ github.event.comment.body }}',
+      '      command: echo-safe',
+      '    steps:',
+      '      - run: echo produce',
+      '  consumer:',
+      '    needs: producer',
+      '    steps:',
+      "      - run: printf '%s\\n' \"${{ join(needs.*.outputs.command, ' ') }}\"",
+    ].join('\n');
+    expect(() => expectNoDirectEventJobOutputShell(safe)).not.toThrow();
   });
 
   it('accepts tainted job outputs consumed only by github-script', () => {
