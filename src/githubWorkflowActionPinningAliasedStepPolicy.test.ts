@@ -7,7 +7,7 @@ const workflowFiles = readdirSync('.github/workflows')
   .sort();
 
 const immutableSha = /^[^\s@]+@[0-9a-f]{40}$/i;
-const anchorName = '[A-Za-z0-9_][A-Za-z0-9_-]*';
+const anchorName = '[A-Za-z0-9_-]+';
 
 const isEscapedDoubleQuote = (value: string, index: number) => {
   let backslashes = 0;
@@ -257,6 +257,18 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
     expect(() => expectAliasedStepsPinned(unsafe, 'digit-leading-alias.yml')).toThrow();
   });
 
+  it('rejects a mutable action mapping with a hyphen-leading alias name', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: [ &-checkout { uses: actions/checkout@v4 } ]',
+      '    steps: [*-checkout]',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(unsafe, 'hyphen-leading-alias.yml')).toThrow();
+  });
+
   it('rejects a mutable action sequence aliased as the complete steps value', () => {
     const unsafe = [
       'jobs:',
@@ -280,6 +292,18 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
       '      - *checkout',
     ].join('\n');
     expect(() => expectAliasedStepsPinned(safe, 'safe.yml')).not.toThrow();
+  });
+
+  it('accepts an immutable action mapping with a hyphen-leading alias name', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        include: [ &-checkout { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 } ]',
+      '    steps: [*-checkout]',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(safe, 'hyphen-leading-alias-safe.yml')).not.toThrow();
   });
 
   it('accepts an anchored action mapping with an explicit immutable uses key', () => {
