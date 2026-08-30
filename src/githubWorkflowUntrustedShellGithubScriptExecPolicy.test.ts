@@ -23,12 +23,12 @@ const containsUntrustedPayloadText = (script: string) => {
 const shellExecutable = String.raw`(?:\/bin\/)?(?:bash|sh|dash|ksh|zsh)|(?:cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?)`;
 const shellExecutablePattern = new RegExp(`^(?:${shellExecutable})$`, 'i');
 
-type Call = { name: string; args: string };
+type Call = { name: string; receiver: string | null; args: string };
 type Quote = "'" | '"' | '`' | null;
 
 const extractCalls = (script: string, names: string[]): Call[] => {
   const calls: Call[] = [];
-  const matcher = new RegExp(`\\b(${names.join('|')})\\s*\\(`, 'g');
+  const matcher = new RegExp(`(?:(\\b[A-Za-z_$][\\w$]*)\\s*\\.\\s*)?\\b(${names.join('|')})\\s*\\(`, 'g');
   for (let match = matcher.exec(script); match; match = matcher.exec(script)) {
     const open = matcher.lastIndex - 1;
     let depth = 1;
@@ -51,7 +51,7 @@ const extractCalls = (script: string, names: string[]): Call[] => {
       if (char !== ')') continue;
       depth -= 1;
       if (depth !== 0) continue;
-      calls.push({ name: match[1], args: script.slice(open + 1, index) });
+      calls.push({ name: match[2], receiver: match[1] ?? null, args: script.slice(open + 1, index) });
       matcher.lastIndex = index + 1;
       break;
     }
@@ -146,14 +146,21 @@ const hasUntrustedShellExecution = (script: string) => {
   for (const call of calls) {
     const args = splitTopLevelArgs(call.args);
     const first = args[0] ?? '';
+    const executable = unquoteLiteral(first);
+    const explicitlyLaunchesShell = executable !== null && shellExecutablePattern.test(executable);
+    const toolkitExec = call.receiver === 'exec' && call.name === 'exec';
+
+    if (toolkitExec && explicitlyLaunchesShell) {
+      const shellArgs = args[1] ?? '';
+      if (/['"](?:-c|\/c|-Command)['"]/i.test(shellArgs) && containsTaintedValue(shellArgs, tainted)) return true;
+      continue;
+    }
 
     if (call.name === 'exec' || call.name === 'execSync') {
       if (containsTaintedValue(first, tainted)) return true;
       continue;
     }
 
-    const executable = unquoteLiteral(first);
-    const explicitlyLaunchesShell = executable !== null && shellExecutablePattern.test(executable);
     if (explicitlyLaunchesShell) {
       const shellArgs = args[1] ?? '';
       if (/['"](?:-c|\/c|-Command)['"]/i.test(shellArgs) && containsTaintedValue(shellArgs, tainted)) return true;
@@ -272,6 +279,34 @@ describe('GitHub Script shell execution trust boundary', () => {
       "            require('node:child_process').spawnSync('bash', ['-c', context.payload.issue.body]);",
     ].join('\n');
     expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'spawn-shell.yml')).toThrow();
+  });
+
+  it('rejects actions toolkit exec when it launches a shell with attacker text', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const exec = require('@actions/exec');",
+      "            await exec.exec('bash', ['-c', context.payload.comment.body]);",
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'toolkit-exec.yml')).toThrow();
+  });
+
+  it('allows actions toolkit exec when payload is passed to a non-shell executable', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const exec = require('@actions/exec');",
+      "            await exec.exec('/usr/bin/printf', ['%s', context.payload.comment.body]);",
+    ].join('\n');
+    expectNoUntrustedGithubScriptShellExecution(safe, 'toolkit-exec-safe.yml');
   });
 
   it('allows execFileSync of a non-shell executable with payload as an argument', () => {
