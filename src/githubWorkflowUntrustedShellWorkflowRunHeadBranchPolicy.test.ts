@@ -7,7 +7,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
-const workflowRunTextSource = /github\.event\.workflow_run\.(?:head_branch|display_title|head_repository\.description)|github\[['"]event['"]\]\[['"]workflow_run['"]\](?:\[['"](?:head_branch|display_title)['"]\]|\[['"]head_repository['"]\]\[['"]description['"]\])/;
+const workflowRunTextSource = /github\.event\.workflow_run\.(?:head_branch|display_title|head_repository\.(?:description|homepage))|github\[['"]event['"]\]\[['"]workflow_run['"]\](?:\[['"](?:head_branch|display_title)['"]\]|\[['"]head_repository['"]\]\[['"](?:description|homepage)['"]\])/;
 const envReference = (name: string) =>
   new RegExp(`(?:\\$${name}(?![A-Za-z0-9_])|\\$\\{${name}(?:[^}]*)?\\}|%${name}%|\\$env:${name}(?![A-Za-z0-9_])|\\$\\{env:${name}\\}|\\$\\{\\{\\s*env\\.${name}\\s*\\}\\})`);
 
@@ -95,6 +95,21 @@ describe('GitHub workflow_run text shell policy', () => {
   it('rejects workflow_run head repository descriptions propagated through env', () => {
     const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github.event.workflow_run.head_repository.description }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-repo-env.yml')).toThrow();
+  });
+
+  it('rejects workflow_run head repository homepages in shell execution', () => {
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "echo \"${'${{ github.event.workflow_run.head_repository.homepage }}'}\""`].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-repo-homepage.yml')).toThrow();
+  });
+
+  it('rejects workflow_run head repository homepages propagated through env', () => {
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github.event.workflow_run.head_repository.homepage }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-repo-homepage-env.yml')).toThrow();
+  });
+
+  it('rejects bracket-access workflow_run head repository homepages', () => {
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "echo \"${'${{ github[\'event\'][\'workflow_run\'][\'head_repository\'][\'homepage\'] }}'}\""`].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-repo-homepage-bracket.yml')).toThrow();
   });
 
   it('allows workflow_run workflows that use only constant shell commands', () => {
