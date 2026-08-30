@@ -60,16 +60,24 @@ const collectCommentedNodePropertyStepRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
   let multilineQuote: Quote = null;
 
   for (const raw of lines) {
+    const indent = raw.match(/^\s*/)?.[0].length ?? 0;
+    const rawTrimmed = raw.trim();
+
+    if (blockScalarIndent !== null) {
+      if (!rawTrimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+
     const startedInsideQuote = multilineQuote !== null;
     multilineQuote = nextQuoteState(raw, multilineQuote);
     if (startedInsideQuote) continue;
 
     const uncommented = stripYamlComment(raw);
     const trimmed = uncommented.trim();
-    const indent = raw.match(/^\s*/)?.[0].length ?? 0;
 
     if (/^steps\s*:\s*$/.test(trimmed)) {
       stepsIndent = indent;
@@ -77,6 +85,11 @@ const collectCommentedNodePropertyStepRefs = (workflow: string) => {
     }
     if (stepsIndent !== null && trimmed && indent <= stepsIndent) stepsIndent = null;
     if (stepsIndent === null) continue;
+
+    if (/:(?:\s*)[>|](?:[+-]?\d?|\d?[+-]?)?\s*$/.test(trimmed)) {
+      blockScalarIndent = indent;
+      continue;
+    }
 
     const step = trimmed.match(/^-\s+(?:&[^\s]+\s+|![^\s{]*\s+|!\s+)*\{([\s\S]*)\}$/);
     if (!step) continue;
@@ -133,6 +146,20 @@ describe('GitHub workflow commented node-property step pinning policy', () => {
     ].join('\n');
 
     expectPinned(safe, 'multiline-quoted.yml');
+  });
+
+  it('ignores flow-step examples inside block run scalars', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: |',
+      '          echo documentation',
+      '          - &checkout { uses: actions/checkout@v4 }',
+      '      - run: echo safe',
+    ].join('\n');
+
+    expectPinned(safe, 'block-run-example.yml');
   });
 
   it('enforces the policy across checked-in workflows', () => {
