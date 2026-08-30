@@ -8,6 +8,8 @@ const workflowFiles = readdirSync(workflowsDir)
   .sort();
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/i;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const nodeProperty = String.raw`(?:&[^\s\[\]{},]+|!(?:!|[^\s\[\]{},]*)?)`;
+const nodePropertiesOnly = new RegExp(`^(?:${nodeProperty}\\s*)+$`);
 
 const directUses = (mapping: string) => {
   const body = mapping.trim().replace(/^\{/, '').replace(/\}$/, '');
@@ -67,6 +69,8 @@ const collectDeferredImplicitJobRefs = (workflow: string) => {
     if (pendingJobIndent !== null) {
       if (indent <= pendingJobIndent) {
         pendingJobIndent = null;
+      } else if (nodePropertiesOnly.test(trimmed)) {
+        continue;
       } else if (/^\{[\s\S]*\}\s*(?:#.*)?$/.test(trimmed)) {
         const clean = trimmed.replace(/\s+#.*$/, '');
         const ref = directUses(clean);
@@ -78,7 +82,7 @@ const collectDeferredImplicitJobRefs = (workflow: string) => {
       }
     }
 
-    const jobKey = trimmed.match(/^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*$/);
+    const jobKey = trimmed.match(new RegExp(`^(?:"(?:\\\\.|[^"\\\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\\s*:\\s*(?:${nodeProperty}\\s*)*$`));
     if (!jobKey) continue;
     if (jobIndent === null) jobIndent = indent;
     if (indent === jobIndent) pendingJobIndent = indent;
@@ -110,6 +114,26 @@ describe('GitHub workflow deferred implicit-job action pinning policy', () => {
       '    { uses: owner/repo/.github/workflows/build.yml@0123456789abcdef0123456789abcdef01234567 }',
     ].join('\n');
     expectDeferredImplicitJobsPinned(safe, 'safe.yml');
+  });
+
+  it('preserves a deferred job across value node-property lines', () => {
+    const unsafe = [
+      'jobs:',
+      '  call: &job',
+      '    !!map',
+      '    { uses: owner/repo/.github/workflows/build.yml@main }',
+    ].join('\n');
+    expect(() => expectDeferredImplicitJobsPinned(unsafe, 'node-properties.yml')).toThrow();
+  });
+
+  it('accepts a property-decorated deferred job pinned to a full SHA', () => {
+    const safe = [
+      'jobs:',
+      '  call: &job',
+      '    !!map',
+      '    { uses: owner/repo/.github/workflows/build.yml@0123456789abcdef0123456789abcdef01234567 }',
+    ].join('\n');
+    expectDeferredImplicitJobsPinned(safe, 'node-properties-safe.yml');
   });
 
   it('does not treat nested deferred mappings as direct reusable-workflow jobs', () => {
