@@ -7,7 +7,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
-const workflowRunTextSource = /github\.event\.workflow_run\.(?:head_branch|display_title|head_repository\.(?:description|homepage))|github\[['"]event['"]\]\[['"]workflow_run['"]\](?:\[['"](?:head_branch|display_title)['"]\]|\[['"]head_repository['"]\]\[['"](?:description|homepage)['"]\])/;
+const workflowRunTextSource = /github\.event\.workflow_run\.(?:head_branch|display_title|pull_requests\[\d+\]\.head\.ref|head_repository\.(?:description|homepage))|github\[['"]event['"]\]\[['"]workflow_run['"]\](?:\[['"](?:head_branch|display_title)['"]\]|\[['"]pull_requests['"]\]\[\d+\]\[['"]head['"]\]\[['"]ref['"]\]|\[['"]head_repository['"]\]\[['"](?:description|homepage)['"]\])/;
 const envReference = (name: string) =>
   new RegExp(`(?:\\$${name}(?![A-Za-z0-9_])|\\$\\{${name}(?:[^}]*)?\\}|%${name}%|\\$env:${name}(?![A-Za-z0-9_])|\\$\\{env:${name}\\}|\\$\\{\\{\\s*env\\.${name}\\s*\\}\\})`);
 
@@ -75,6 +75,16 @@ describe('GitHub workflow_run text shell policy', () => {
   it('rejects workflow_run head branch propagated through env', () => {
     const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github.event.workflow_run.head_branch }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-env.yml')).toThrow();
+  });
+
+  it('rejects workflow_run pull-request head refs in shell execution', () => {
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.event.workflow_run.pull_requests[0].head.ref }}'}'"`].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-pr-head-ref.yml')).toThrow();
+  });
+
+  it('rejects bracket-access workflow_run pull-request head refs propagated through env', () => {
+    const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github[\'event\'][\'workflow_run\'][\'pull_requests\'][0][\'head\'][\'ref\'] }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-pr-head-ref-env.yml')).toThrow();
   });
 
   it('rejects direct workflow_run display-title shell execution', () => {
