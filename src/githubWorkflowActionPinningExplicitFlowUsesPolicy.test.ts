@@ -112,6 +112,7 @@ const collectExplicitFlowUses = (workflow: string) => {
   const refs: string[] = [];
   const pattern = /\?\s*(?:"uses"|'uses'|uses)\s*:\s*("[^"]+"|'[^']+'|[^,}\]\s]+)/g;
   let stepsDepth = 0;
+  let stepsIndent: number | null = null;
   let flowQuote: Quote = null;
   let blockScalarIndent: number | null = null;
 
@@ -132,16 +133,30 @@ const collectExplicitFlowUses = (workflow: string) => {
       continue;
     }
 
+    if (stepsDepth === 0 && stepsIndent !== null && indent <= stepsIndent) {
+      stepsIndent = null;
+    }
+
     let segment = line;
     let initialQuote: Quote = stepsDepth > 0 ? flowQuote : null;
 
     if (stepsDepth === 0) {
       const stepsIndex = line.indexOf('steps:');
-      if (stepsIndex < 0 || !isOutsideQuotedScalar(line, stepsIndex)) continue;
-      const opener = line.indexOf('[', stepsIndex);
-      if (opener < 0 || !isOutsideQuotedScalar(line, opener)) continue;
-      segment = line.slice(opener);
-      initialQuote = null;
+      if (stepsIndex >= 0 && isOutsideQuotedScalar(line, stepsIndex)) {
+        const opener = line.indexOf('[', stepsIndex);
+        if (opener >= 0 && isOutsideQuotedScalar(line, opener)) {
+          segment = line.slice(opener);
+          initialQuote = null;
+        } else {
+          stepsIndent = indent;
+          continue;
+        }
+      } else if (stepsIndent !== null && indent > stepsIndent && /^\s*-\s*\{/.test(line)) {
+        segment = line.slice(line.indexOf('{'));
+        initialQuote = null;
+      } else {
+        continue;
+      }
     }
 
     for (const match of segment.matchAll(pattern)) {
@@ -150,9 +165,11 @@ const collectExplicitFlowUses = (workflow: string) => {
       refs.push(unquote(match[1]));
     }
 
-    const structure = flowDelta(segment, initialQuote);
-    stepsDepth = Math.max(0, stepsDepth + structure.delta);
-    flowQuote = stepsDepth > 0 ? structure.quote : null;
+    if (stepsDepth > 0 || segment.trimStart().startsWith('[')) {
+      const structure = flowDelta(segment, initialQuote);
+      stepsDepth = Math.max(0, stepsDepth + structure.delta);
+      flowQuote = stepsDepth > 0 ? structure.quote : null;
+    }
   }
 
   return refs;
@@ -191,6 +208,19 @@ jobs:
     ).toThrow(/Expected immutable action pin/);
   });
 
+  it('rejects explicit uses keys in block-sequence flow steps', () => {
+    expect(() =>
+      assertExplicitFlowUsesPinned(`
+name: block-sequence-explicit-flow-uses
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - { ? uses : actions/checkout@v4 }
+`),
+    ).toThrow(/Expected immutable action pin/);
+  });
+
   it('accepts immutable explicit uses keys inside flow-style steps', () => {
     expect(() =>
       assertExplicitFlowUsesPinned(`
@@ -199,6 +229,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps: [ { ? uses : actions/checkout@0123456789abcdef0123456789abcdef01234567 } ]
+`),
+    ).not.toThrow();
+  });
+
+  it('accepts immutable explicit uses keys in block-sequence flow steps', () => {
+    expect(() =>
+      assertExplicitFlowUsesPinned(`
+name: block-sequence-explicit-flow-uses-pinned
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - { ? uses : actions/checkout@0123456789abcdef0123456789abcdef01234567 }
 `),
     ).not.toThrow();
   });
