@@ -76,7 +76,7 @@ const stripYamlComment = (line: string) => {
   return line;
 };
 
-const flowDelta = (line: string, initial: Quote = null) => {
+const structuralDelta = (line: string, open: string, close: string, initial: Quote = null) => {
   let quote = initial;
   let delta = 0;
   for (let i = 0; i < line.length; i += 1) {
@@ -84,9 +84,9 @@ const flowDelta = (line: string, initial: Quote = null) => {
     if (!quote) {
       if (char === '"' || char === "'") {
         quote = char;
-      } else if (char === '[') {
+      } else if (char === open) {
         delta += 1;
-      } else if (char === ']') {
+      } else if (char === close) {
         delta -= 1;
       }
       continue;
@@ -106,6 +106,9 @@ const flowDelta = (line: string, initial: Quote = null) => {
   return { delta, quote };
 };
 
+const flowDelta = (line: string, initial: Quote = null) => structuralDelta(line, '[', ']', initial);
+const mappingDelta = (line: string, initial: Quote = null) => structuralDelta(line, '{', '}', initial);
+
 const blockScalarHeader = (line: string) => /:\s*(?:(?:&[^\s]+|![^\s]*)\s+)*[|>](?:[+-]?[1-9]?|[1-9][+-]?)?\s*$/.test(stripYamlComment(line));
 
 const collectExplicitFlowUses = (workflow: string) => {
@@ -114,6 +117,8 @@ const collectExplicitFlowUses = (workflow: string) => {
   let stepsDepth = 0;
   let stepsIndent: number | null = null;
   let flowQuote: Quote = null;
+  let blockStepDepth = 0;
+  let blockStepQuote: Quote = null;
   let blockScalarIndent: number | null = null;
 
   for (const rawLine of workflow.split('\n')) {
@@ -128,19 +133,20 @@ const collectExplicitFlowUses = (workflow: string) => {
     const line = stripYamlComment(rawLine);
     if (!line.trim()) continue;
 
-    if (stepsDepth === 0 && blockScalarHeader(line)) {
+    if (stepsDepth === 0 && blockStepDepth === 0 && blockScalarHeader(line)) {
       blockScalarIndent = indent;
       continue;
     }
 
-    if (stepsDepth === 0 && stepsIndent !== null && indent <= stepsIndent) {
+    if (stepsDepth === 0 && blockStepDepth === 0 && stepsIndent !== null && indent <= stepsIndent) {
       stepsIndent = null;
     }
 
     let segment = line;
-    let initialQuote: Quote = stepsDepth > 0 ? flowQuote : null;
+    let initialQuote: Quote = stepsDepth > 0 ? flowQuote : blockStepDepth > 0 ? blockStepQuote : null;
+    let startsBlockFlowStep = false;
 
-    if (stepsDepth === 0) {
+    if (stepsDepth === 0 && blockStepDepth === 0) {
       const stepsIndex = line.indexOf('steps:');
       if (stepsIndex >= 0 && isOutsideQuotedScalar(line, stepsIndex)) {
         const opener = line.indexOf('[', stepsIndex);
@@ -154,6 +160,7 @@ const collectExplicitFlowUses = (workflow: string) => {
       } else if (stepsIndent !== null && indent > stepsIndent && /^\s*-\s*\{/.test(line)) {
         segment = line.slice(line.indexOf('{'));
         initialQuote = null;
+        startsBlockFlowStep = true;
       } else {
         continue;
       }
@@ -169,6 +176,10 @@ const collectExplicitFlowUses = (workflow: string) => {
       const structure = flowDelta(segment, initialQuote);
       stepsDepth = Math.max(0, stepsDepth + structure.delta);
       flowQuote = stepsDepth > 0 ? structure.quote : null;
+    } else if (blockStepDepth > 0 || startsBlockFlowStep) {
+      const structure = mappingDelta(segment, initialQuote);
+      blockStepDepth = Math.max(0, blockStepDepth + structure.delta);
+      blockStepQuote = blockStepDepth > 0 ? structure.quote : null;
     }
   }
 
@@ -221,6 +232,20 @@ jobs:
     ).toThrow(/Expected immutable action pin/);
   });
 
+  it('rejects explicit uses keys in multiline block-sequence flow steps', () => {
+    expect(() =>
+      assertExplicitFlowUsesPinned(`
+name: multiline-block-sequence-explicit-flow-uses
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - { name: Checkout,
+          ? uses : actions/checkout@v4 }
+`),
+    ).toThrow(/Expected immutable action pin/);
+  });
+
   it('accepts immutable explicit uses keys inside flow-style steps', () => {
     expect(() =>
       assertExplicitFlowUsesPinned(`
@@ -242,6 +267,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - { ? uses : actions/checkout@0123456789abcdef0123456789abcdef01234567 }
+`),
+    ).not.toThrow();
+  });
+
+  it('accepts immutable explicit uses keys in multiline block-sequence flow steps', () => {
+    expect(() =>
+      assertExplicitFlowUsesPinned(`
+name: multiline-block-sequence-explicit-flow-uses-pinned
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - { name: Checkout,
+          ? uses : actions/checkout@0123456789abcdef0123456789abcdef01234567 }
 `),
     ).not.toThrow();
   });
