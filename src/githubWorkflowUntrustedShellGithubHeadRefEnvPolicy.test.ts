@@ -45,12 +45,13 @@ const collectJobs = (workflow: string) => {
   let currentStart = -1;
   let jobIndent: number | null = null;
 
-  for (let index = jobsIndex + 1; index <= lines.length; index += 1) {
-    const raw = lines[index] ?? '';
+  for (let index = jobsIndex + 1; index < lines.length; index += 1) {
+    const raw = lines[index];
     const trimmed = raw.trim();
     const indent = indentOf(raw);
-    if (index < lines.length && trimmed && indent <= jobsIndent) {
+    if (trimmed && indent <= jobsIndent) {
       if (currentStart >= 0) jobs.push(lines.slice(currentStart, index).join('\n'));
+      currentStart = -1;
       break;
     }
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -60,8 +61,8 @@ const collectJobs = (workflow: string) => {
       if (currentStart >= 0) jobs.push(lines.slice(currentStart, index).join('\n'));
       currentStart = index;
     }
-    if (index === lines.length && currentStart >= 0) jobs.push(lines.slice(currentStart).join('\n'));
   }
+  if (currentStart >= 0) jobs.push(lines.slice(currentStart).join('\n'));
   return jobs;
 };
 
