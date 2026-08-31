@@ -8,6 +8,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .sort();
 
 const immutableSha = /^[0-9a-f]{40}$/i;
+const scalarHeader = /^([|>])(?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
 
 const stripComment = (line: string) => {
   let quote: '"' | "'" | null = null;
@@ -39,6 +40,31 @@ const decodeKey = (raw: string) => {
   return key;
 };
 
+const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+
+const collectScalarValue = (lines: string[], headerIndex: number, headerIndent: number, style: string) => {
+  const body: string[] = [];
+  let end = headerIndex;
+  for (let index = headerIndex + 1; index < lines.length; index += 1) {
+    const raw = lines[index];
+    if (raw.trim() && indentOf(raw) <= headerIndent) break;
+    body.push(raw.trim());
+    end = index;
+  }
+  return {
+    value: style === '>' ? body.join(' ').trim() : body.join('\n').trim(),
+    end,
+  };
+};
+
+const validateRef = (rawRef: string, source: string) => {
+  const ref = rawRef.replace(/[,}]\s*$/, '').trim().replace(/^['"]|['"]$/g, '');
+  if (ref.startsWith('./') || ref.startsWith('docker://')) return;
+  const at = ref.lastIndexOf('@');
+  expect(at).toBeGreaterThan(0);
+  expect(immutableSha.test(ref.slice(at + 1)), `${source}: mutable deferred decorated action ref ${ref}`).toBe(true);
+};
+
 const expectDeferredDecoratedUsesPinned = (workflow: string, source: string) => {
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
@@ -49,7 +75,7 @@ const expectDeferredDecoratedUsesPinned = (workflow: string, source: string) => 
     const line = stripComment(raw);
     const trimmed = line.trim();
     if (!trimmed) continue;
-    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    const indent = indentOf(line);
 
     if (blockScalarIndent !== null) {
       if (indent > blockScalarIndent) continue;
@@ -77,14 +103,18 @@ const expectDeferredDecoratedUsesPinned = (workflow: string, source: string) => 
       const childRaw = lines[child];
       const childValue = stripComment(childRaw).trim();
       if (!childValue) continue;
-      const childIndent = childRaw.match(/^\s*/)?.[0].length ?? 0;
+      const childIndent = indentOf(childRaw);
       if (childIndent <= indent) break;
 
-      const ref = childValue.replace(/[,}]\s*$/, '').trim().replace(/^['"]|['"]$/g, '');
-      if (ref.startsWith('./') || ref.startsWith('docker://')) break;
-      const at = ref.lastIndexOf('@');
-      expect(at).toBeGreaterThan(0);
-      expect(immutableSha.test(ref.slice(at + 1)), `${source}: mutable deferred decorated action ref ${ref}`).toBe(true);
+      const header = childValue.match(scalarHeader);
+      if (header) {
+        const scalar = collectScalarValue(lines, child, childIndent, header[1]);
+        validateRef(scalar.value, source);
+        index = Math.max(index, scalar.end);
+        break;
+      }
+
+      validateRef(childValue, source);
       break;
     }
   }
@@ -113,6 +143,22 @@ describe('GitHub workflow deferred decorated uses policy', () => {
     ].join('\n');
 
     expectDeferredDecoratedUsesPinned(safe, 'deferred-pinned.yml');
+  });
+
+  it('parses folded block-scalar action refs before validating the pin', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - &uses-key uses:',
+      '          >-',
+      `            actions/checkout@${sha}`,
+    ].join('\n');
+    expectDeferredDecoratedUsesPinned(safe, 'deferred-folded-pinned.yml');
+
+    const unsafe = safe.replace(sha, 'v4');
+    expect(() => expectDeferredDecoratedUsesPinned(unsafe, 'deferred-folded-mutable.yml')).toThrow();
   });
 
   it('ignores uses-like documentation inside run block scalars and scans checked-in workflows', () => {
