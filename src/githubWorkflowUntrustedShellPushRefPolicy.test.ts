@@ -15,6 +15,7 @@ const envReference = (name: string) =>
 
 const hasPushTrigger = (workflow: string) => {
   if (/^\s*["']?push["']?\s*:/m.test(workflow)) return true;
+  if (/^\s*["']?on["']?\s*:\s*\{[^}\n]*(?:["']?push["']?)\s*:/m.test(workflow)) return true;
   return /^\s*["']?on["']?\s*:\s*(?:["']?push["']?|\[[^\]\n]*["']?push["']?[^\]\n]*\])\s*(?:#.*)?$/m.test(workflow);
 };
 
@@ -95,6 +96,11 @@ describe('GitHub push ref shell policy', () => {
   it('rejects direct github.ref_name shell execution with flow push trigger', () => {
     const unsafe = ['on: [workflow_dispatch, push]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.ref_name }}'}'"`].join('\n');
     expect(() => expectNoPushRefShellExecution(unsafe, 'flow-push.yml')).toThrow();
+  });
+
+  it('rejects direct github.ref_name shell execution with flow-mapping push trigger', () => {
+    const unsafe = ['on: { workflow_dispatch: null, push: null }', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.ref_name }}'}'"`].join('\n');
+    expect(() => expectNoPushRefShellExecution(unsafe, 'flow-mapping-push.yml')).toThrow();
   });
 
   it('rejects bracket-access push refs propagated through env', () => {
