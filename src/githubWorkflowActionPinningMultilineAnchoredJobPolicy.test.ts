@@ -9,6 +9,27 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const immutableSha = /^[0-9a-f]{40}$/i;
 
+const stripBlockScalarBodies = (workflow: string) => {
+  const lines = workflow.split('\n');
+  let scalarIndent: number | null = null;
+
+  return lines
+    .map((line) => {
+      const indent = line.match(/^\s*/)?.[0].length ?? 0;
+      if (scalarIndent !== null) {
+        if (line.trim() === '' || indent > scalarIndent) return ' '.repeat(line.length);
+        scalarIndent = null;
+      }
+
+      const structural = line.replace(/\s+#.*$/, '');
+      if (/^\s*(?:-\s+)?(?:[^:#]+|['"][^'"]+['"]):\s*(?:[&!][^\s]+\s*)*[|>][+-]?[1-9]?\s*$/.test(structural)) {
+        scalarIndent = indent;
+      }
+      return line;
+    })
+    .join('\n');
+};
+
 const reusableRefFromMapping = (mapping: string) => {
   const implicit = mapping.match(/\buses\s*:\s*['"]?([^\s,'"}]+)['"]?/);
   if (implicit) return implicit[1];
@@ -17,14 +38,15 @@ const reusableRefFromMapping = (mapping: string) => {
 };
 
 const collectAnchoredReusableJobs = (workflow: string) => {
+  const structuralWorkflow = stripBlockScalarBodies(workflow);
   const anchors = new Map<string, string>();
-  const starts = [...workflow.matchAll(/&([A-Za-z0-9_-]+)\s*\{/g)];
+  const starts = [...structuralWorkflow.matchAll(/&([A-Za-z0-9_-]+)\s*\{/g)];
   for (const start of starts) {
     const open = (start.index ?? 0) + start[0].lastIndexOf('{');
     let depth = 0;
     let quote: "'" | '"' | null = null;
-    for (let index = open; index < workflow.length; index += 1) {
-      const char = workflow[index];
+    for (let index = open; index < structuralWorkflow.length; index += 1) {
+      const char = structuralWorkflow[index];
       if (quote) {
         if (char === '\\' && quote === '"') {
           index += 1;
@@ -41,7 +63,7 @@ const collectAnchoredReusableJobs = (workflow: string) => {
       if (char !== '}') continue;
       depth -= 1;
       if (depth !== 0) continue;
-      const mapping = workflow.slice(open + 1, index);
+      const mapping = structuralWorkflow.slice(open + 1, index);
       const ref = reusableRefFromMapping(mapping);
       if (ref?.includes('/.github/workflows/')) anchors.set(start[1], ref);
       break;
@@ -52,9 +74,10 @@ const collectAnchoredReusableJobs = (workflow: string) => {
 
 const expectPinnedAnchoredReusableJobs = (workflow: string, source: string) => {
   const anchors = collectAnchoredReusableJobs(workflow);
+  const structuralWorkflow = stripBlockScalarBodies(workflow);
   for (const [anchor, reusable] of anchors) {
     const alias = new RegExp(`(?:^|\\n)\\s*[A-Za-z0-9_-]+\\s*:\\s*\\*${anchor}(?:\\s*(?:#.*)?)?(?:\\n|$)`);
-    if (!alias.test(workflow)) continue;
+    if (!alias.test(structuralWorkflow)) continue;
     const at = reusable.lastIndexOf('@');
     expect(at, `${source}: reusable workflow alias *${anchor} must use an immutable ref`).toBeGreaterThan(0);
     expect(
@@ -94,5 +117,18 @@ describe('multiline anchored reusable workflow job pinning', () => {
       '  call: *call-job',
     ].join('\n');
     expectPinnedAnchoredReusableJobs(safe, 'safe.yml');
+  });
+
+  it('ignores anchored reusable-job examples inside block scalars', () => {
+    const documented = [
+      'jobs:',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: |',
+      '          x-job: &call-job { uses: owner/repo/.github/workflows/reusable.yml@main }',
+      '          call: *call-job',
+    ].join('\n');
+    expectPinnedAnchoredReusableJobs(documented, 'documented.yml');
   });
 });
