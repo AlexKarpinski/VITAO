@@ -103,6 +103,9 @@ const unquoteLiteral = (value: string) => {
   ) {
     return trimmed.slice(1, -1);
   }
+  if (trimmed.startsWith('`') && trimmed.endsWith('`') && !trimmed.includes('${')) {
+    return trimmed.slice(1, -1);
+  }
   return null;
 };
 
@@ -279,6 +282,19 @@ describe('GitHub Script shell execution trust boundary', () => {
       "            require('node:child_process').spawnSync('bash', ['-c', context.payload.issue.body]);",
     ].join('\n');
     expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'spawn-shell.yml')).toThrow();
+  });
+
+  it('rejects spawnSync of a constant template-literal shell', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            require('node:child_process').spawnSync(`bash`, ['-c', context.payload.comment.body]);",
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'template-shell.yml')).toThrow();
   });
 
   it('rejects actions toolkit exec when it launches a shell with attacker text', () => {
