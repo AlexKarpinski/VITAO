@@ -10,39 +10,49 @@ const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const blockScalarHeader = /:\s*[|>](?:[+-]?\d?|\d[+-])?\s*(?:#.*)?$/;
 
-const squareDelta = (line: string) => {
+const squareDelta = (text: string) => {
   let quote: '"' | "'" | null = null;
   let delta = 0;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
     if (quote) {
       if (char === quote) {
         let backslashes = 0;
-        for (let previous = index - 1; previous >= 0 && line[previous] === '\\'; previous -= 1) backslashes += 1;
+        for (let previous = index - 1; previous >= 0 && text[previous] === '\\'; previous -= 1) backslashes += 1;
         if (quote === "'" || backslashes % 2 === 0) quote = null;
       }
       continue;
     }
     if (char === '"' || char === "'") { quote = char; continue; }
-    if (char === '#') break;
+    if (char === '#') {
+      while (index < text.length && text[index] !== '\n') index += 1;
+      continue;
+    }
     if (char === '[') delta += 1;
     else if (char === ']') delta -= 1;
   }
   return delta;
 };
 
-const collectUses = (line: string) => {
+const collectUses = (text: string) => {
   const refs: string[] = [];
   let quote: '"' | "'" | null = null;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
     if (quote) {
-      if (char === quote && line[index - 1] !== '\\') quote = null;
+      if (char === quote) {
+        let backslashes = 0;
+        for (let previous = index - 1; previous >= 0 && text[previous] === '\\'; previous -= 1) backslashes += 1;
+        if (quote === "'" || backslashes % 2 === 0) quote = null;
+      }
       continue;
     }
     if (char === '"' || char === "'") { quote = char; continue; }
-    if (char === '#') break;
-    const match = line.slice(index).match(/^(?:\{|,|\[)?\s*uses\s*:\s*([^,}\]]+)/);
+    if (char === '#') {
+      while (index < text.length && text[index] !== '\n') index += 1;
+      continue;
+    }
+    const match = text.slice(index).match(/^(?:\{|,|\[)?\s*uses\s*:\s*([^,}\]]+)/);
     if (match) {
       refs.push(match[1].trim().replace(/^['"]|['"]$/g, ''));
       index += match[0].length - 1;
@@ -57,7 +67,15 @@ const extractDeferredExplicitStepRefs = (workflow: string) => {
   let explicitKeyIndent: number | null = null;
   let pendingValueIndent: number | null = null;
   let ignoredScalarIndent: number | null = null;
-  let flowDepth = 0;
+  let flowBuffer: string | null = null;
+
+  const startFlow = (text: string) => {
+    flowBuffer = text;
+    if (1 + squareDelta(flowBuffer) <= 0) {
+      refs.push(...collectUses(flowBuffer));
+      flowBuffer = null;
+    }
+  };
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -68,17 +86,19 @@ const extractDeferredExplicitStepRefs = (workflow: string) => {
       ignoredScalarIndent = null;
     }
 
+    if (flowBuffer !== null) {
+      flowBuffer += `\n${line}`;
+      if (1 + squareDelta(flowBuffer) <= 0) {
+        refs.push(...collectUses(flowBuffer));
+        flowBuffer = null;
+      }
+      continue;
+    }
+
     if (blockScalarHeader.test(trimmed)) {
       ignoredScalarIndent = indent;
       explicitKeyIndent = null;
       pendingValueIndent = null;
-      continue;
-    }
-
-    if (flowDepth > 0) {
-      refs.push(...collectUses(line));
-      flowDepth += squareDelta(line);
-      if (flowDepth <= 0) flowDepth = 0;
       continue;
     }
 
@@ -87,11 +107,7 @@ const extractDeferredExplicitStepRefs = (workflow: string) => {
       if (indent <= pendingValueIndent) { pendingValueIndent = null; }
       else {
         const opening = line.indexOf('[');
-        if (opening >= 0) {
-          const remainder = line.slice(opening + 1);
-          refs.push(...collectUses(remainder));
-          flowDepth = 1 + squareDelta(remainder);
-        }
+        if (opening >= 0) startFlow(line.slice(opening + 1));
         pendingValueIndent = null;
         continue;
       }
@@ -112,11 +128,7 @@ const extractDeferredExplicitStepRefs = (workflow: string) => {
         pendingValueIndent = indent;
       } else {
         const opening = value[1].indexOf('[');
-        if (opening >= 0) {
-          const remainder = value[1].slice(opening + 1);
-          refs.push(...collectUses(remainder));
-          flowDepth = 1 + squareDelta(remainder);
-        }
+        if (opening >= 0) startFlow(value[1].slice(opening + 1));
       }
       explicitKeyIndent = null;
     }
@@ -157,6 +169,23 @@ describe('GitHub workflow deferred explicit steps action-pinning policy', () => 
       '  build:',
       '    steps:',
       '      - run: echo safe',
+    ].join('\n');
+    expectPinned(extractDeferredExplicitStepRefs(safe));
+  });
+
+  it('preserves quote state across deferred flow-sequence lines', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    ? steps',
+      '    :',
+      '      [',
+      '        { run: "documentation continues',
+      '          { uses: actions/checkout@v4 }',
+      '          and remains inert" },',
+      `        { uses: actions/checkout@${sha} },`,
+      '      ]',
     ].join('\n');
     expectPinned(extractDeferredExplicitStepRefs(safe));
   });
