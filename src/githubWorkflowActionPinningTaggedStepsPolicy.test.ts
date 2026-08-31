@@ -63,6 +63,42 @@ const splitTopLevel = (body: string) => {
   return entries;
 };
 
+const structuralSquareDelta = (text: string) => {
+  let delta = 0;
+  let quote: '"' | "'" | null = null;
+  let backslashes = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote) {
+      if (char === '\\' && quote === '"') { backslashes += 1; continue; }
+      if (char === quote) {
+        if (quote === "'" && text[index + 1] === "'") { index += 1; continue; }
+        if (quote === "'" || backslashes % 2 === 0) quote = null;
+      }
+      backslashes = 0;
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; backslashes = 0; continue; }
+    if (char === '[') delta += 1;
+    else if (char === ']') delta -= 1;
+  }
+  return delta;
+};
+
+const refsFromTaggedSequence = (body: string) => {
+  const refs: string[] = [];
+  for (const stepEntry of splitTopLevel(body)) {
+    const step = stepEntry.match(/^\s*\{([\s\S]*)\}\s*$/);
+    if (!step) continue;
+    for (const entry of splitTopLevel(step[1])) {
+      const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
+      if (!mapping || decodeKey(mapping[1]) !== 'uses') continue;
+      refs.push(mapping[2].trim().replace(/^['"]|['"]$/g, ''));
+    }
+  }
+  return refs;
+};
+
 const collectTaggedStepRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
@@ -112,17 +148,42 @@ const collectTaggedStepRefs = (workflow: string) => {
       continue;
     }
 
-    const match = line.match(/^\s*(?:["']?steps["']?)\s*:\s*(?:(?:![^\s]+|&[^\s]+)\s+)+\[([\s\S]*)\]\s*$/);
-    if (!match) continue;
-    for (const stepEntry of splitTopLevel(match[1])) {
-      const step = stepEntry.match(/^\s*\{([\s\S]*)\}\s*$/);
-      if (!step) continue;
-      for (const entry of splitTopLevel(step[1])) {
-        const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
-        if (!mapping || decodeKey(mapping[1]) !== 'uses') continue;
-        refs.push(mapping[2].trim().replace(/^['"]|['"]$/g, ''));
+    const taggedStart = line.match(/^\s*(?:["']?steps["']?)\s*:\s*(?:(?:![^\s]+|&[^\s]+)\s+)+\[([\s\S]*)$/);
+    if (!taggedStart) continue;
+
+    let body = taggedStart[1];
+    let depth = 1 + structuralSquareDelta(body);
+    while (depth > 0 && index + 1 < lines.length) {
+      index += 1;
+      const next = lines[index];
+      body += `\n${next}`;
+      depth += structuralSquareDelta(next);
+    }
+    if (depth !== 0) continue;
+
+    let quote: '"' | "'" | null = null;
+    let backslashes = 0;
+    let closing = -1;
+    for (let cursor = 0; cursor < body.length; cursor += 1) {
+      const char = body[cursor];
+      if (quote) {
+        if (char === '\\' && quote === '"') { backslashes += 1; continue; }
+        if (char === quote) {
+          if (quote === "'" && body[cursor + 1] === "'") { cursor += 1; continue; }
+          if (quote === "'" || backslashes % 2 === 0) quote = null;
+        }
+        backslashes = 0;
+        continue;
+      }
+      if (char === '"' || char === "'") { quote = char; backslashes = 0; continue; }
+      if (char === '[') depth += 1;
+      else if (char === ']') {
+        if (depth === 0) { closing = cursor; break; }
+        depth -= 1;
       }
     }
+    const sequenceBody = closing >= 0 ? body.slice(0, closing) : body.replace(/\]\s*$/, '');
+    refs.push(...refsFromTaggedSequence(sequenceBody));
   }
   return refs;
 };
@@ -145,6 +206,18 @@ describe('tagged steps action-pinning policy', () => {
   it('rejects a mutable action in a standard tagged steps sequence', () => {
     const unsafe = ['jobs:', '  build:', '    steps: !!seq [{ uses: actions/checkout@v4 }]'].join('\n');
     expect(() => expectImmutableRefs(unsafe, 'tagged.yml')).toThrow();
+  });
+
+  it('rejects a mutable action in a multiline tagged steps sequence', () => {
+    const unsafe = ['jobs:', '  build:', '    steps: !!seq [', '      { uses: actions/checkout@v4 }', '    ]'].join('\n');
+    expect(() => expectImmutableRefs(unsafe, 'tagged-multiline.yml')).toThrow();
+  });
+
+  it('accepts an immutable action in a multiline tagged steps sequence', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const safe = ['jobs:', '  build:', '    steps: !!seq [', `      { uses: actions/checkout@${sha} }`, '    ]'].join('\n');
+    expect(collectTaggedStepRefs(safe)).toEqual([`actions/checkout@${sha}`]);
+    expectImmutableRefs(safe, 'tagged-multiline-pinned.yml');
   });
 
   it('accepts an immutable action in a standard tagged steps sequence', () => {
