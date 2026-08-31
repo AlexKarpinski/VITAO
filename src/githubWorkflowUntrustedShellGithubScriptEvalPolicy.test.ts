@@ -57,13 +57,23 @@ const collectTaintedIdentifiers = (script: string) => {
   return tainted;
 };
 
-const hasTaintedEval = (script: string) => {
+const hasTaintedCodeExecution = (script: string) => {
   const tainted = collectTaintedIdentifiers(script);
+  const argumentIsTainted = (argument: string) => containsUntrustedPayloadText(argument)
+    || [...tainted].some((identifier) => new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(argument));
+
   for (const match of script.matchAll(/(?:^|[^\w$.])eval\s*\(([^)]+)\)/g)) {
-    const argument = match[1];
-    if (containsUntrustedPayloadText(argument)) return true;
-    if ([...tainted].some((identifier) => new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(argument))) return true;
+    if (argumentIsTainted(match[1])) return true;
   }
+
+  for (const match of script.matchAll(/(?:^|[^\w$.])(Function|AsyncFunction)\s*\(([^)]*)\)/g)) {
+    const args = match[2]
+      .split(',')
+      .map((argument) => argument.trim())
+      .filter(Boolean);
+    if (args.some(argumentIsTainted)) return true;
+  }
+
   return false;
 };
 
@@ -99,16 +109,16 @@ const collectGithubScriptBodies = (workflow: string) => {
   return bodies;
 };
 
-const expectNoTaintedEval = (workflow: string, source: string) => {
+const expectNoTaintedCodeExecution = (workflow: string, source: string) => {
   for (const script of collectGithubScriptBodies(workflow)) {
-    expect(hasTaintedEval(script), `${source}: GitHub Script eval executes attacker-controlled text`).toBe(false);
+    expect(hasTaintedCodeExecution(script), `${source}: GitHub Script evaluates attacker-controlled code`).toBe(false);
   }
 };
 
-describe('GitHub Script eval policy', () => {
+describe('GitHub Script executable-code policy', () => {
   it('scans every checked-in workflow', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
-    for (const file of workflowFiles) expectNoTaintedEval(readFileSync(join(workflowsDir, file), 'utf8'), file);
+    for (const file of workflowFiles) expectNoTaintedCodeExecution(readFileSync(join(workflowsDir, file), 'utf8'), file);
   });
 
   it('rejects direct eval of attacker-controlled payload text', () => {
@@ -121,7 +131,7 @@ describe('GitHub Script eval policy', () => {
       '          script: |',
       '            eval(context.payload.comment.body);',
     ].join('\n');
-    expect(() => expectNoTaintedEval(unsafe, 'eval.yml')).toThrow();
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'eval.yml')).toThrow();
   });
 
   it('rejects eval through a local tainted alias', () => {
@@ -135,10 +145,37 @@ describe('GitHub Script eval policy', () => {
       '            const code = context.payload.issue.body;',
       '            eval(code);',
     ].join('\n');
-    expect(() => expectNoTaintedEval(unsafe, 'eval-alias.yml')).toThrow();
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'eval-alias.yml')).toThrow();
   });
 
-  it('allows eval of a constant expression', () => {
+  it('rejects Function constructors of attacker-controlled payload text', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            Function(context.payload.comment.body)();',
+    ].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'function.yml')).toThrow();
+  });
+
+  it('rejects Function constructors through a local tainted alias', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const code = context.payload.issue.body;',
+      '            Function(code)();',
+    ].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'function-alias.yml')).toThrow();
+  });
+
+  it('allows code execution constructors with constant code', () => {
     const safe = [
       'jobs:',
       '  test:',
@@ -147,8 +184,9 @@ describe('GitHub Script eval policy', () => {
       '        with:',
       '          script: |',
       "            const result = eval('1 + 1');",
-      '            core.info(String(result));',
+      "            const fn = Function('return 2');",
+      '            core.info(String(result + fn()));',
     ].join('\n');
-    expectNoTaintedEval(safe, 'eval-safe.yml');
+    expectNoTaintedCodeExecution(safe, 'eval-safe.yml');
   });
 });
