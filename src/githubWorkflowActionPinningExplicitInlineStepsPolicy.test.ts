@@ -7,6 +7,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
+const blockScalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?(?:\s+#.*)?\s*$/;
 
 const splitTopLevel = (body: string) => {
   const entries: string[] = [];
@@ -80,8 +81,20 @@ const collectStepRefs = (sequenceBody: string) => {
 const collectJobsMappings = (workflow: string) => {
   const blocks: string[] = [];
   const lines = workflow.split('\n');
+  let ignoredBlockIndent: number | null = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    const trimmed = line.trim();
+    if (ignoredBlockIndent !== null) {
+      if (!trimmed || indent > ignoredBlockIndent) continue;
+      ignoredBlockIndent = null;
+    }
+    const scalar = line.match(/:\s*([^:]*)$/)?.[1]?.trim();
+    if (scalar && blockScalarHeader.test(scalar)) {
+      ignoredBlockIndent = indent;
+      continue;
+    }
     if (!/^\s*(?:"jobs"|'jobs'|jobs)\s*:\s*\{/.test(line)) continue;
     const collected = [line];
     let depth = curlyDelta(line);
@@ -157,6 +170,18 @@ describe('explicit inline steps immutable-action policy', () => {
       '}',
     ].join('\n');
     expect(() => expectPinned(mutable, 'multiline-explicit-steps.yml')).toThrow();
+  });
+
+  it('ignores jobs-like explicit steps inside block scalar scripts', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: |',
+      '          jobs: { build: { ? steps : [{ uses: actions/checkout@v4 }] } }',
+    ].join('\n');
+    expect(collectExplicitInlineStepsRefs(safe)).toEqual([]);
+    expectPinned(safe, 'block-script.yml');
   });
 
   it('ignores uses-like keys outside the explicit steps sequence', () => {
