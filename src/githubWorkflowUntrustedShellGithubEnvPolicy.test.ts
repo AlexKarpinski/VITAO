@@ -74,7 +74,11 @@ const collectGithubScriptBlocks = (workflow: string) => {
 
 const collectGithubEnvWriteValues = (script: string) => {
   const values: string[] = [];
-  const writeCall = /(?:appendFileSync|writeFileSync|appendFile|writeFile)\s*\(\s*process\.env\.GITHUB_ENV\s*,\s*([^\n;]+?)(?:\s*,\s*[^\n;]+)?\s*\)\s*;?/g;
+  const githubEnvAccess = String.raw`process\.env(?:\.GITHUB_ENV|\[\s*['"]GITHUB_ENV['"]\s*\])`;
+  const writeCall = new RegExp(
+    String.raw`(?:appendFileSync|writeFileSync|appendFile|writeFile)\s*\(\s*${githubEnvAccess}\s*,\s*([^\n;]+?)(?:\s*,\s*[^\n;]+)?\s*\)\s*;?`,
+    'g',
+  );
 
   for (const match of script.matchAll(writeCall)) {
     values.push(match[1].trim());
@@ -113,6 +117,21 @@ describe('GitHub workflow GITHUB_ENV trust boundary', () => {
       '      - run: bash -c "$CMD"',
     ].join('\n');
     expect(() => expectNoUntrustedGithubEnvWrite(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects bracket access to GITHUB_ENV', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const fs = require('node:fs');",
+      "            fs.appendFileSync(process.env['GITHUB_ENV'], `CMD=${context.payload.comment.body}\\n`);",
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubEnvWrite(unsafe, 'bracket-github-env.yml')).toThrow();
   });
 
   it('rejects untrusted GITHUB_ENV writes in chomping and indentation block scalars', () => {
