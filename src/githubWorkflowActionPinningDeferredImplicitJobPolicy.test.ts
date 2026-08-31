@@ -10,6 +10,7 @@ const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/i;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const nodeProperty = String.raw`(?:&[^\s\[\]{},]+|!(?:!|[^\s\[\]{},]*)?)`;
 const nodePropertiesOnly = new RegExp(`^(?:${nodeProperty}\\s*)+$`);
+const blockScalarHeader = /:\s*(?:[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?)\s*(?:#.*)?$/;
 
 const directUses = (mapping: string) => {
   const body = mapping.trim().replace(/^\{/, '').replace(/\}$/, '');
@@ -45,12 +46,23 @@ const collectDeferredImplicitJobRefs = (workflow: string) => {
   let jobsIndent: number | null = null;
   let jobIndent: number | null = null;
   let pendingJobIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
     const trimmed = raw.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
     const indent = indentOf(raw);
+
+    if (blockScalarIndent !== null) {
+      if (!trimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    if (blockScalarHeader.test(trimmed)) {
+      blockScalarIndent = indent;
+    }
 
     if (/^["']?jobs["']?\s*:\s*$/.test(trimmed)) {
       jobsIndent = indent;
@@ -147,6 +159,33 @@ describe('GitHub workflow deferred implicit-job action pinning policy', () => {
       '      - run: echo ok',
     ].join('\n');
     expect(collectDeferredImplicitJobRefs(safe)).toEqual([]);
+  });
+
+  it('ignores jobs-like deferred mappings inside block scalar scripts', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: |',
+      '          jobs:',
+      '            call:',
+      '              { uses: owner/repo/.github/workflows/build.yml@main }',
+      '          echo done',
+    ].join('\n');
+    expect(collectDeferredImplicitJobRefs(safe)).toEqual([]);
+  });
+
+  it('resumes structural scanning after a block scalar ends', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: |-',
+      '          echo safe',
+      '  call:',
+      '    { uses: owner/repo/.github/workflows/build.yml@main }',
+    ].join('\n');
+    expect(() => expectDeferredImplicitJobsPinned(unsafe, 'after-block.yml')).toThrow();
   });
 
   it('scans every checked-in workflow', () => {
