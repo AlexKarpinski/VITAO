@@ -9,6 +9,7 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const immutableRef = /^[^\s@]+@[0-9a-f]{40}$/i;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const blockScalarHeader = /^(?:(?:&[A-Za-z0-9_-]+|!![^\s]+|![^\s]*)\s+)*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*$/;
 
 const stripComment = (line: string) => {
   let quote: "'" | '"' | null = null;
@@ -50,6 +51,7 @@ const collectBlockSequenceAnchors = (workflow: string) => {
     if (!declaration) continue;
     const anchorIndent = declaration[1].length;
     const refs: string[] = [];
+    let ignoredScalarIndent: number | null = null;
 
     for (let child = index + 1; child < lines.length; child += 1) {
       const raw = stripComment(lines[child]);
@@ -57,6 +59,17 @@ const collectBlockSequenceAnchors = (workflow: string) => {
       if (!trimmed) continue;
       const indent = indentOf(raw);
       if (indent <= anchorIndent) break;
+
+      if (ignoredScalarIndent !== null) {
+        if (indent > ignoredScalarIndent) continue;
+        ignoredScalarIndent = null;
+      }
+
+      const scalar = trimmed.match(/^-?\s*(?:[^:#][^:]*):\s*(.+)$/);
+      if (scalar && blockScalarHeader.test(scalar[1].trim())) {
+        ignoredScalarIndent = indent;
+        continue;
+      }
 
       const implicit = trimmed.match(/^-?\s*(?:(?:&[A-Za-z0-9_-]+|!![^\s]+|![^\s]*)\s+)*['"]?uses['"]?\s*:\s*(.+)$/);
       if (implicit) {
@@ -134,6 +147,21 @@ describe('action pinning for block-sequence aliases used as steps', () => {
       '    steps: *common',
     ].join('\n');
     expectPinnedBlockSequenceAliases(safe, 'safe.yml');
+  });
+
+  it('ignores uses-like text inside a run block scalar in an aliased sequence', () => {
+    const safe = [
+      'x-matrix:',
+      '  include: &common',
+      '    - run: |',
+      '        echo documentation',
+      '        uses: actions/checkout@v4',
+      'jobs:',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    steps: *common',
+    ].join('\n');
+    expectPinnedBlockSequenceAliases(safe, 'scalar-doc.yml');
   });
 
   it('does not enforce a block sequence that is never used as executable steps', () => {
