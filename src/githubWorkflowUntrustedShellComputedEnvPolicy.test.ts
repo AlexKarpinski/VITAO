@@ -55,11 +55,27 @@ const resolveFormat = (call: string) => {
   return result;
 };
 
+const resolveFromJson = (argument: string) => {
+  const literal = parseSingleQuoted(argument);
+  if (literal === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(literal);
+    return typeof parsed === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
 const computedEnvNames = (workflow: string) => {
   const names: string[] = [];
-  const pattern = /env\s*\[\s*format\s*\(((?:'(?:''|[^'])*'\s*,?\s*)+)\)\s*\]/gi;
-  for (const match of workflow.matchAll(pattern)) {
+  const formatPattern = /env\s*\[\s*format\s*\(((?:'(?:''|[^'])*'\s*,?\s*)+)\)\s*\]/gi;
+  for (const match of workflow.matchAll(formatPattern)) {
     const resolved = resolveFormat(match[1]);
+    if (resolved) names.push(resolved);
+  }
+  const fromJsonPattern = /env\s*\[\s*fromJSON\s*\(\s*('(?:''|[^'])*')\s*\)\s*\]/gi;
+  for (const match of workflow.matchAll(fromJsonPattern)) {
+    const resolved = resolveFromJson(match[1]);
     if (resolved) names.push(resolved);
   }
   return names;
@@ -90,12 +106,23 @@ describe('computed GitHub env shell-boundary policy', () => {
     expect(() => expectNoComputedTaintedEnv(unsafe, 'computed-env.yml')).toThrow();
   });
 
-  it('allows format-computed access to a constant environment variable', () => {
+  it('rejects fromJSON-computed access to a tainted environment variable', () => {
+    const unsafe = [
+      'env:',
+      '  CMD: ${{ github.event.comment.body }}',
+      'steps:',
+      `  - run: bash -c "\${{ env[fromJSON('\"CMD\"')] }}"`,
+    ].join('\n');
+    expect(() => expectNoComputedTaintedEnv(unsafe, 'computed-env-from-json.yml')).toThrow();
+  });
+
+  it('allows computed access to a constant environment variable', () => {
     const safe = [
       'env:',
       '  CMD: echo safe',
       'steps:',
       `  - run: bash -c "\${{ env[format('C{0}D', 'M')] }}"`,
+      `  - run: bash -c "\${{ env[fromJSON('\"CMD\"')] }}"`,
     ].join('\n');
     expectNoComputedTaintedEnv(safe, 'computed-env-safe.yml');
   });
