@@ -17,8 +17,33 @@ const decodeKey = (raw: string) => {
   return key;
 };
 
-const collectAnchoredBlockActionRefs = (workflow: string) => {
+const withoutBlockScalarBodies = (workflow: string) => {
   const lines = workflow.split('\n');
+  const structural: string[] = [];
+  let scalarIndent: number | null = null;
+
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    const indent = raw.match(/^\s*/)?.[0].length ?? 0;
+
+    if (scalarIndent !== null) {
+      if (!trimmed || indent > scalarIndent) {
+        structural.push('');
+        continue;
+      }
+      scalarIndent = null;
+    }
+
+    structural.push(raw);
+    const scalarHeader = trimmed.match(/:\s*(?:(?:&[^\s]+|![^\s]*|!![^\s]+)\s+)*(?:[|>](?:[1-9]?[+-]?|[+-]?[1-9]?))\s*(?:#.*)?$/);
+    if (scalarHeader) scalarIndent = indent;
+  }
+
+  return structural.join('\n');
+};
+
+const collectAnchoredBlockActionRefs = (workflow: string) => {
+  const lines = withoutBlockScalarBodies(workflow).split('\n');
   const anchors = new Map<string, string>();
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -54,7 +79,7 @@ const collectAnchoredBlockActionRefs = (workflow: string) => {
 
 const collectStepAliases = (workflow: string) => {
   const aliases = new Set<string>();
-  const lines = workflow.split('\n');
+  const lines = withoutBlockScalarBodies(workflow).split('\n');
   let stepsIndent: number | null = null;
 
   for (const raw of lines) {
@@ -120,5 +145,21 @@ describe('GitHub workflow block-mapping aliased step policy', () => {
       '  - *checkout',
     ].join('\n');
     expect(() => expectAliasedBlockActionsPinned(safe, 'safe.yml')).not.toThrow();
+  });
+
+  it('ignores action-shaped anchors and aliases inside block-scalar scripts', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: |',
+      "          cat <<'YAML'",
+      '          - &checkout',
+      '            uses: actions/checkout@v4',
+      '          steps: [*checkout]',
+      '          YAML',
+    ].join('\n');
+    expect(() => expectAliasedBlockActionsPinned(safe, 'script.yml')).not.toThrow();
   });
 });
