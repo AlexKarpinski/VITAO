@@ -17,6 +17,9 @@ const decodeKey = (raw: string) => {
   return key;
 };
 
+const isBlockScalarHeader = (raw: string) =>
+  /^(?:(?:&[^\s]+|![^\s]*|!![^\s]+)\s+)*(?:[|>](?:[1-9]?[+-]?|[+-]?[1-9]?))\s*(?:#.*)?$/.test(raw.trim());
+
 const withoutBlockScalarBodies = (workflow: string) => {
   const lines = workflow.split('\n');
   const structural: string[] = [];
@@ -42,6 +45,26 @@ const withoutBlockScalarBodies = (workflow: string) => {
   return structural.join('\n');
 };
 
+const collectBlockScalarExplicitKey = (lines: string[], keyIndex: number, keyIndent: number) => {
+  const body: string[] = [];
+  let valueIndex = -1;
+
+  for (let index = keyIndex + 1; index < lines.length; index += 1) {
+    const raw = lines[index];
+    const trimmed = raw.trim();
+    const indent = raw.match(/^\s*/)?.[0].length ?? 0;
+    if (!trimmed) continue;
+    if (indent > keyIndent) {
+      body.push(trimmed);
+      continue;
+    }
+    if (indent === keyIndent && /^:\s*/.test(trimmed)) valueIndex = index;
+    break;
+  }
+
+  return { key: body.join('\n').trim(), valueIndex };
+};
+
 const collectAnchoredBlockActionRefs = (workflow: string) => {
   const lines = withoutBlockScalarBodies(workflow).split('\n');
   const anchors = new Map<string, string>();
@@ -59,11 +82,20 @@ const collectAnchoredBlockActionRefs = (workflow: string) => {
       if (childIndent <= indent) break;
 
       const explicit = trimmed.match(/^\?\s+(.+?)\s*$/);
-      if (explicit && decodeKey(explicit[1]) === 'uses') {
-        const valueLine = lines[child + 1]?.trim() ?? '';
-        const value = valueLine.match(/^:\s*(\S+)\s*$/)?.[1];
-        if (value) anchors.set(head[2], value);
-        break;
+      if (explicit) {
+        let key = decodeKey(explicit[1]);
+        let valueIndex = child + 1;
+        if (isBlockScalarHeader(explicit[1])) {
+          const scalarKey = collectBlockScalarExplicitKey(lines, child, childIndent);
+          key = scalarKey.key;
+          valueIndex = scalarKey.valueIndex;
+        }
+        if (key === 'uses' && valueIndex >= 0) {
+          const valueLine = lines[valueIndex]?.trim() ?? '';
+          const value = valueLine.match(/^:\s*(\S+)\s*$/)?.[1];
+          if (value) anchors.set(head[2], value);
+          break;
+        }
       }
 
       const implicit = trimmed.match(/^(.+?)\s*:\s*(\S+)\s*$/);
@@ -131,6 +163,21 @@ describe('GitHub workflow block-mapping aliased step policy', () => {
       '  - *checkout',
     ].join('\n');
     expect(() => expectAliasedBlockActionsPinned(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects an aliased step whose explicit block-scalar key decodes to uses', () => {
+    const unsafe = [
+      'strategy:',
+      '  matrix:',
+      '    include:',
+      '      - &checkout',
+      '        ? |-',
+      '          uses',
+      '        : actions/checkout@v4',
+      'steps:',
+      '  - *checkout',
+    ].join('\n');
+    expect(() => expectAliasedBlockActionsPinned(unsafe, 'block-key.yml')).toThrow();
   });
 
   it('accepts the same aliased block mapping when pinned to a full commit SHA', () => {
