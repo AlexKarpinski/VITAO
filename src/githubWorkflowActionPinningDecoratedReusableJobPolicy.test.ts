@@ -11,6 +11,7 @@ const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const keyPattern = '(?:"(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[A-Za-z_][A-Za-z0-9_-]*)';
 const nodeProperty = '(?:(?:&[^\\s]+|!(?:[^\\s]+)?)\\s+)+';
+const blockScalarHeader = /:\s*(?:(?:&[^\s]+|!(?:[^\s]+)?)\s+)*(?:[|>](?:[1-9][+-]?|[+-][1-9]?|[+-])?)\s*(?:#.*)?$/;
 
 const decodeKey = (raw: string) => {
   const key = raw.trim();
@@ -35,11 +36,22 @@ const collectDecoratedReusableRefs = (workflow: string) => {
   let jobsIndent: number | null = null;
   let jobIndent: number | null = null;
   let fieldIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
     const indent = indentOf(line);
+
+    if (blockScalarIndent !== null) {
+      if (!trimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (blockScalarHeader.test(line)) {
+      blockScalarIndent = indent;
+      continue;
+    }
 
     if (jobsIndent === null) {
       const section = line.match(new RegExp(`^\\s*(${keyPattern})\\s*:\\s*$`));
@@ -98,5 +110,22 @@ describe('decorated reusable-job action-pinning policy', () => {
   it('does not treat nested decorated data keys as reusable-job uses fields', () => {
     const safe = ['jobs:', '  build:', '    env:', '      ! uses: actions/checkout@v4', '    steps:', '      - run: echo safe'].join('\n');
     expect(collectDecoratedReusableRefs(safe)).toEqual([]);
+  });
+
+  it('ignores decorated reusable-job examples inside block scalars', () => {
+    const safe = [
+      'name: |',
+      '  jobs:',
+      '    call:',
+      '      ! uses: owner/repo/.github/workflows/build.yml@main',
+      'on: push',
+      'jobs:',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(collectDecoratedReusableRefs(safe)).toEqual([]);
+    expectImmutableRefs(safe, 'block-scalar-doc.yml');
   });
 });
