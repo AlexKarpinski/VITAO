@@ -74,6 +74,14 @@ const hasTaintedCodeExecution = (script: string) => {
     if (args.some(argumentIsTainted)) return true;
   }
 
+  for (const match of script.matchAll(/(?:require\(\s*['"](?:node:)?vm['"]\s*\)|\bvm)\.(?:runInThisContext|runInNewContext|runInContext|compileFunction)\s*\(([^)]*)\)/g)) {
+    const args = match[1]
+      .split(',')
+      .map((argument) => argument.trim())
+      .filter(Boolean);
+    if (args.some(argumentIsTainted)) return true;
+  }
+
   return false;
 };
 
@@ -175,6 +183,33 @@ describe('GitHub Script executable-code policy', () => {
     expect(() => expectNoTaintedCodeExecution(unsafe, 'function-alias.yml')).toThrow();
   });
 
+  it('rejects Node VM execution of attacker-controlled payload text', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            require('node:vm').runInThisContext(context.payload.comment.body);",
+    ].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'vm.yml')).toThrow();
+  });
+
+  it('rejects Node VM execution through a local tainted alias', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const code = context.payload.issue.body;',
+      '            vm.runInNewContext(code, {});',
+    ].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'vm-alias.yml')).toThrow();
+  });
+
   it('allows code execution constructors with constant code', () => {
     const safe = [
       'jobs:',
@@ -185,7 +220,8 @@ describe('GitHub Script executable-code policy', () => {
       '          script: |',
       "            const result = eval('1 + 1');",
       "            const fn = Function('return 2');",
-      '            core.info(String(result + fn()));',
+      "            const vmResult = require('node:vm').runInThisContext('1 + 2');",
+      '            core.info(String(result + fn() + vmResult));',
     ].join('\n');
     expectNoTaintedCodeExecution(safe, 'eval-safe.yml');
   });
