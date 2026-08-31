@@ -33,6 +33,32 @@ const stripYamlComment = (line: string) => {
   return line;
 };
 
+const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+const blockHeader = /(?:^|:\s*)[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*$/;
+
+const stripBlockScalarBodies = (workflow: string) => {
+  const lines = workflow.split('\n');
+  const visible: string[] = [];
+  let scalarIndent: number | null = null;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    const indent = indentOf(rawLine);
+    if (scalarIndent !== null) {
+      if (!trimmed || indent > scalarIndent) {
+        visible.push('');
+        continue;
+      }
+      scalarIndent = null;
+    }
+
+    visible.push(rawLine);
+    if (blockHeader.test(stripYamlComment(rawLine).trimEnd())) scalarIndent = indent;
+  }
+
+  return visible.join('\n');
+};
+
 const splitTopLevel = (body: string) => {
   const entries: string[] = [];
   let start = 0;
@@ -95,7 +121,7 @@ const stripNodeProperties = (value: string) => {
 
 const collectRefs = (workflow: string) => {
   const refs: string[] = [];
-  for (const rawLine of workflow.split('\n')) {
+  for (const rawLine of stripBlockScalarBodies(workflow).split('\n')) {
     const line = stripYamlComment(rawLine);
     const jobsMatch = line.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
     if (!jobsMatch || decodeKey(jobsMatch[1]) !== 'jobs') continue;
@@ -142,5 +168,18 @@ describe('decorated inline jobs pinning policy', () => {
     const sha = '0123456789abcdef0123456789abcdef01234567';
     const safe = `jobs: &all { call: { env: { uses: harmless-value@v4 }, uses: owner/repo/.github/workflows/build.yml@${sha} } }`;
     expectImmutableInlineJobRefs(safe, 'safe.yml');
+  });
+
+  it('ignores jobs-like text inside block scalar scripts', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: |',
+      '          cat <<\'EOF\'',
+      '          jobs: &all { call: { uses: owner/repo/.github/workflows/build.yml@main } }',
+      '          EOF',
+    ].join('\n');
+    expectImmutableInlineJobRefs(safe, 'block-scalar.yml');
   });
 });
