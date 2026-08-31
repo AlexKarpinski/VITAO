@@ -13,6 +13,36 @@ const keyPattern = '(?:"(?:\\\\.|[^"\\\\])*"|\'(?:\'\'|[^\'])*\'|[A-Za-z_][A-Za-
 const nodeProperty = '(?:(?:&[^\\s]+|!(?:[^\\s]+)?)\\s+)+';
 const blockScalarHeader = /:\s*(?:(?:&[^\s]+|!(?:[^\s]+)?)\s+)*(?:[|>](?:[1-9][+-]?|[+-][1-9]?|[+-])?)\s*(?:#.*)?$/;
 
+type Quote = '"' | "'" | null;
+
+const quoteIsEscaped = (line: string, index: number) => {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && line[cursor] === '\\'; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+};
+
+const advanceQuoteState = (line: string, initial: Quote): Quote => {
+  let quote = initial;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote === '"') {
+      if (char === '"' && !quoteIsEscaped(line, index)) quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      if (char !== "'") continue;
+      if (line[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+  }
+  return quote;
+};
+
 const decodeKey = (raw: string) => {
   const key = raw.trim();
   if (key.startsWith('"') && key.endsWith('"')) {
@@ -37,10 +67,14 @@ const collectDecoratedReusableRefs = (workflow: string) => {
   let jobIndent: number | null = null;
   let fieldIndent: number | null = null;
   let blockScalarIndent: number | null = null;
+  let quoteState: Quote = null;
 
   for (const line of lines) {
     const trimmed = line.trim();
     const indent = indentOf(line);
+    const startedInsideQuote = quoteState !== null;
+    quoteState = advanceQuoteState(line, quoteState);
+    if (startedInsideQuote) continue;
 
     if (blockScalarIndent !== null) {
       if (!trimmed || indent > blockScalarIndent) continue;
@@ -127,5 +161,23 @@ describe('decorated reusable-job action-pinning policy', () => {
     ].join('\n');
     expect(collectDecoratedReusableRefs(safe)).toEqual([]);
     expectImmutableRefs(safe, 'block-scalar-doc.yml');
+  });
+
+  it('ignores decorated reusable-job examples inside multiline quoted scalars', () => {
+    const safe = [
+      'name: "documentation begins',
+      '  jobs:',
+      '    call:',
+      '      ! uses: owner/repo/.github/workflows/build.yml@main',
+      '  documentation ends"',
+      'on: push',
+      'jobs:',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(collectDecoratedReusableRefs(safe)).toEqual([]);
+    expectImmutableRefs(safe, 'quoted-scalar-doc.yml');
   });
 });
