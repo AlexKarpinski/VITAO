@@ -20,10 +20,14 @@ const decodeKey = (raw: string) => {
 const isBlockScalarHeader = (raw: string) =>
   /^(?:(?:&[^\s]+|![^\s]*|!![^\s]+)\s+)*(?:[|>](?:[1-9]?[+-]?|[+-]?[1-9]?))\s*(?:#.*)?$/.test(raw.trim());
 
+const isNodePropertiesOnly = (raw: string) =>
+  /^(?:(?:&[^\s]+|![^\s]*|!![^\s]+)\s*)+$/.test(raw.trim());
+
 const withoutBlockScalarBodies = (workflow: string) => {
   const lines = workflow.split('\n');
   const structural: string[] = [];
   let scalarIndent: number | null = null;
+  let pendingScalarKeyIndent: number | null = null;
 
   for (const raw of lines) {
     const trimmed = raw.trim();
@@ -37,9 +41,29 @@ const withoutBlockScalarBodies = (workflow: string) => {
       scalarIndent = null;
     }
 
+    if (pendingScalarKeyIndent !== null) {
+      if (!trimmed) {
+        structural.push(raw);
+        continue;
+      }
+      if (indent > pendingScalarKeyIndent && isBlockScalarHeader(trimmed)) {
+        structural.push(raw);
+        scalarIndent = indent;
+        pendingScalarKeyIndent = null;
+        continue;
+      }
+      pendingScalarKeyIndent = null;
+    }
+
     structural.push(raw);
     const scalarHeader = trimmed.match(/:\s*(?:(?:&[^\s]+|![^\s]*|!![^\s]+)\s+)*(?:[|>](?:[1-9]?[+-]?|[+-]?[1-9]?))\s*(?:#.*)?$/);
-    if (scalarHeader) scalarIndent = indent;
+    if (scalarHeader) {
+      scalarIndent = indent;
+      continue;
+    }
+
+    const deferredScalar = trimmed.match(/:\s*(.+?)\s*(?:#.*)?$/)?.[1];
+    if (deferredScalar && isNodePropertiesOnly(deferredScalar)) pendingScalarKeyIndent = indent;
   }
 
   return structural.join('\n');
@@ -208,5 +232,22 @@ describe('GitHub workflow block-mapping aliased step policy', () => {
       '          YAML',
     ].join('\n');
     expect(() => expectAliasedBlockActionsPinned(safe, 'script.yml')).not.toThrow();
+  });
+
+  it('ignores alias-shaped content when a block-scalar header follows node properties', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: &script',
+      '        |',
+      "          cat <<'YAML'",
+      '          - &checkout',
+      '            uses: actions/checkout@v4',
+      '          steps: [*checkout]',
+      '          YAML',
+    ].join('\n');
+    expect(() => expectAliasedBlockActionsPinned(safe, 'split-script.yml')).not.toThrow();
   });
 });
