@@ -49,8 +49,8 @@ const quoteStateAt = (line: string, end: number, initial: Quote = null) => {
 const isOutsideQuotedScalar = (line: string, index: number, initial: Quote = null) =>
   quoteStateAt(line, index, initial) === null;
 
-const stripYamlComment = (line: string) => {
-  let quote: Quote = null;
+const stripYamlComment = (line: string, initial: Quote = null) => {
+  let quote: Quote = initial;
   for (let i = 0; i < line.length; i += 1) {
     const char = line[i];
     if (!quote) {
@@ -120,18 +120,22 @@ const collectExplicitFlowUses = (workflow: string) => {
   let blockStepDepth = 0;
   let blockStepQuote: Quote = null;
   let blockScalarIndent: number | null = null;
+  let yamlQuote: Quote = null;
 
   for (const rawLine of workflow.split('\n')) {
     const indent = indentOf(rawLine);
-    const trimmed = rawLine.trim();
+    const rawTrimmed = rawLine.trim();
 
     if (blockScalarIndent !== null) {
-      if (!trimmed || indent > blockScalarIndent) continue;
+      if (!rawTrimmed || indent > blockScalarIndent) continue;
       blockScalarIndent = null;
     }
 
-    const line = stripYamlComment(rawLine);
-    if (!line.trim()) continue;
+    const initialYamlQuote = yamlQuote;
+    const line = stripYamlComment(rawLine, initialYamlQuote);
+    yamlQuote = quoteStateAt(line, line.length, initialYamlQuote);
+    const trimmed = line.trim();
+    if (!trimmed) continue;
 
     if (stepsDepth === 0 && blockStepDepth === 0 && blockScalarHeader(line)) {
       blockScalarIndent = indent;
@@ -143,14 +147,14 @@ const collectExplicitFlowUses = (workflow: string) => {
     }
 
     let segment = line;
-    let initialQuote: Quote = stepsDepth > 0 ? flowQuote : blockStepDepth > 0 ? blockStepQuote : null;
+    let initialQuote: Quote = stepsDepth > 0 ? flowQuote : blockStepDepth > 0 ? blockStepQuote : initialYamlQuote;
     let startsBlockFlowStep = false;
 
     if (stepsDepth === 0 && blockStepDepth === 0) {
       const stepsIndex = line.indexOf('steps:');
-      if (stepsIndex >= 0 && isOutsideQuotedScalar(line, stepsIndex)) {
+      if (stepsIndex >= 0 && isOutsideQuotedScalar(line, stepsIndex, initialYamlQuote)) {
         const opener = line.indexOf('[', stepsIndex);
-        if (opener >= 0 && isOutsideQuotedScalar(line, opener)) {
+        if (opener >= 0 && isOutsideQuotedScalar(line, opener, initialYamlQuote)) {
           segment = line.slice(opener);
           initialQuote = null;
         } else {
@@ -333,6 +337,24 @@ env:
     steps: [
       { ? uses : actions/checkout@v4 }
     ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo safe
+`),
+    ).not.toThrow();
+  });
+
+  it('ignores explicit uses examples inside multiline quoted scalars', () => {
+    expect(() =>
+      assertExplicitFlowUsesPinned(`
+name: explicit-flow-quoted-documentation
+env:
+  DOC: "prefix
+    steps: [
+      { ? uses : actions/checkout@v4 }
+    ] suffix"
 jobs:
   build:
     runs-on: ubuntu-latest
