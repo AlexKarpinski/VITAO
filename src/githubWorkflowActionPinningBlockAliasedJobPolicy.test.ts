@@ -11,6 +11,35 @@ const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const nodeProperties = /^(?:(?:&[^\s]+|![^\s]*|!![^\s]+)\s+)*/;
 
+const stripYamlComment = (value: string) => {
+  let quote: "'" | '"' | null = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote === "'") {
+      if (char === "'" && value[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (char === '\\') {
+        index += 1;
+        continue;
+      }
+      if (char === '"') quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /\s/.test(value[index - 1]))) return value.slice(0, index).trimEnd();
+  }
+  return value.trimEnd();
+};
+
 const decodeKey = (raw: string) => {
   const stripped = raw.trim().replace(nodeProperties, '').trim();
   if (stripped.startsWith('"') && stripped.endsWith('"')) {
@@ -19,6 +48,8 @@ const decodeKey = (raw: string) => {
   if (stripped.startsWith("'") && stripped.endsWith("'")) return stripped.slice(1, -1).replace(/''/g, "'");
   return stripped;
 };
+
+const decodeRef = (raw: string) => stripYamlComment(raw).trim().replace(/^['"]|['"]$/g, '');
 
 const collectBlockAnchoredJobRefs = (workflow: string) => {
   const lines = workflow.split('\n');
@@ -42,7 +73,7 @@ const collectBlockAnchoredJobRefs = (workflow: string) => {
       if (pendingExplicitUses) {
         const value = line.match(/^\s*:\s*(\S.*?)\s*$/);
         if (value) {
-          anchoredRefs.set(anchorHead[1], value[1].replace(/^['"]|['"]$/g, ''));
+          anchoredRefs.set(anchorHead[1], decodeRef(value[1]));
           break;
         }
         pendingExplicitUses = false;
@@ -50,7 +81,7 @@ const collectBlockAnchoredJobRefs = (workflow: string) => {
 
       const direct = line.match(/^\s*(.+?)\s*:\s*(\S.*?)\s*$/);
       if (direct && decodeKey(direct[1]) === 'uses') {
-        anchoredRefs.set(anchorHead[1], direct[2].replace(/^['"]|['"]$/g, ''));
+        anchoredRefs.set(anchorHead[1], decodeRef(direct[2]));
         break;
       }
     }
@@ -118,5 +149,29 @@ describe('block-mapping aliased reusable-workflow pinning policy', () => {
       '  call: *call-job',
     ].join('\n');
     expectImmutableRefs(safe, 'block-aliased-job-pinned.yml');
+  });
+
+  it('strips trailing YAML comments from aliased reusable workflow refs', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const safe = [
+      'templates:',
+      '  - &call-job',
+      '    ? !!str uses',
+      `    : owner/repo/.github/workflows/build.yml@${sha} # pinned build workflow`,
+      'jobs:',
+      '  call: *call-job',
+    ].join('\n');
+    expectImmutableRefs(safe, 'block-aliased-job-commented.yml');
+  });
+
+  it('preserves hashes inside quoted reusable workflow refs', () => {
+    const unsafe = [
+      'templates:',
+      '  - &call-job',
+      "    uses: 'owner/repo/.github/workflows/build.yml@main#fragment'",
+      'jobs:',
+      '  call: *call-job',
+    ].join('\n');
+    expect(() => expectImmutableRefs(unsafe, 'block-aliased-job-quoted-hash.yml')).toThrow();
   });
 });
