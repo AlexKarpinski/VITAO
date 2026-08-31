@@ -15,6 +15,32 @@ const containsUntrustedPayload = (value: string) =>
   /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/
     .test(normalizeAccess(value));
 
+const collectTaintedIdentifiers = (script: string) => {
+  const assignments: Array<{ name: string; value: string }> = [];
+  const declaration = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g;
+  for (const match of script.matchAll(declaration)) assignments.push({ name: match[1], value: match[2].trim() });
+
+  const tainted = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const assignment of assignments) {
+      if (tainted.has(assignment.name)) continue;
+      const referencesTainted = [...tainted].some((name) =>
+        new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(assignment.value));
+      if (containsUntrustedPayload(assignment.value) || referencesTainted) {
+        tainted.add(assignment.name);
+        changed = true;
+      }
+    }
+  }
+  return tainted;
+};
+
+const valueUsesTaintedIdentifier = (value: string, tainted: Set<string>) =>
+  [...tainted].some((name) =>
+    new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(value));
+
 const collectGithubScriptBlocks = (workflow: string) => {
   const lines = workflow.split('\n');
   const scripts: string[] = [];
@@ -58,8 +84,10 @@ const collectGithubEnvWriteValues = (script: string) => {
 
 const expectNoUntrustedGithubEnvWrite = (workflow: string, source: string) => {
   for (const script of collectGithubScriptBlocks(workflow)) {
+    const tainted = collectTaintedIdentifiers(script);
     for (const value of collectGithubEnvWriteValues(script)) {
-      expect(containsUntrustedPayload(value), `${source}: untrusted payload written to GITHUB_ENV`).toBe(false);
+      const untrusted = containsUntrustedPayload(value) || valueUsesTaintedIdentifier(value, tainted);
+      expect(untrusted, `${source}: untrusted payload written to GITHUB_ENV`).toBe(false);
     }
   }
 };
@@ -102,6 +130,23 @@ describe('GitHub workflow GITHUB_ENV trust boundary', () => {
       ].join('\n');
       expect(() => expectNoUntrustedGithubEnvWrite(unsafe, `${header}.yml`)).toThrow();
     }
+  });
+
+  it('rejects payload text routed through local aliases before GITHUB_ENV writes', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const fs = require('node:fs');",
+      '            const raw = context.payload.comment.body;',
+      '            const command = raw;',
+      "            fs.appendFileSync(process.env.GITHUB_ENV, `CMD=${command}\\n`);",
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubEnvWrite(unsafe, 'local-alias.yml')).toThrow();
   });
 
   it('allows constant data to be written to GITHUB_ENV', () => {
