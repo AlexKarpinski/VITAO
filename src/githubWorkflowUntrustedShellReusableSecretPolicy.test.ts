@@ -54,6 +54,11 @@ const normalizeAccess = (value: string) => value
 const isUntrusted = (value: string) =>
   /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.(?:body|path|diff_hunk)|pull_request\.(?:title|body)|review(?:_comment)?\.body|discussion\.(?:title|body)|changes\.(?:title|body)\.from)/.test(normalizeAccess(value));
 
+const secretReferences = (value: string) => {
+  const normalized = normalizeAccess(value);
+  return [...normalized.matchAll(/\bsecrets\.([A-Za-z_][A-Za-z0-9_-]*)\b/g)].map((match) => match[1]);
+};
+
 const collectIndentedBlock = (lines: string[], start: number, indent: number) => {
   const block = [lines[start]];
   let end = start;
@@ -127,13 +132,40 @@ const runUsesSecret = (workflow: string, name: string) => {
 };
 
 const expectNoReusableSecretShellBypass = (workflows: Map<string, string>) => {
-  for (const edge of extractSecretEdges(workflows)) {
-    const callee = workflows.get(edge.callee);
-    if (!callee) continue;
+  const edges = extractSecretEdges(workflows);
+  const taintedSecrets = new Map<string, Set<string>>();
+  const markTainted = (workflow: string, name: string) => {
+    const names = taintedSecrets.get(workflow) ?? new Set<string>();
+    const size = names.size;
+    names.add(name);
+    taintedSecrets.set(workflow, names);
+    return names.size !== size;
+  };
+
+  for (const edge of edges) {
     for (const [name, value] of edge.secrets) {
-      if (isUntrusted(value)) {
-        expect(runUsesSecret(callee, name), `${edge.caller} passes untrusted secret ${name} into shell in ${edge.callee}`).toBe(false);
+      if (isUntrusted(value)) markTainted(edge.callee, name);
+    }
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const edge of edges) {
+      const callerTaint = taintedSecrets.get(edge.caller) ?? new Set<string>();
+      for (const [name, value] of edge.secrets) {
+        if (secretReferences(value).some((source) => callerTaint.has(source))) {
+          changed = markTainted(edge.callee, name) || changed;
+        }
       }
+    }
+  }
+
+  for (const [workflowName, names] of taintedSecrets) {
+    const workflow = workflows.get(workflowName);
+    if (!workflow) continue;
+    for (const name of names) {
+      expect(runUsesSecret(workflow, name), `${workflowName} executes tainted reusable secret ${name} in shell`).toBe(false);
     }
   }
 };
@@ -148,6 +180,15 @@ describe('GitHub reusable-workflow secret shell boundary policy', () => {
   it('rejects attacker-controlled text mapped through a reusable-workflow secret into run', () => {
     const workflows = new Map<string, string>([
       ['caller.yml', ['jobs:', '  call:', '    uses: ./.github/workflows/callee.yml', '    secrets:', '      command: ${{ github.event.comment.body }}'].join('\n')],
+      ['callee.yml', ['jobs:', '  execute:', '    steps:', '      - run: bash -c "${{ secrets.command }}"'].join('\n')],
+    ]);
+    expect(() => expectNoReusableSecretShellBypass(workflows)).toThrow();
+  });
+
+  it('rejects attacker-controlled secrets relayed through multiple reusable workflows', () => {
+    const workflows = new Map<string, string>([
+      ['caller.yml', ['jobs:', '  call:', '    uses: ./.github/workflows/relay.yml', '    secrets:', '      command: ${{ github.event.comment.body }}'].join('\n')],
+      ['relay.yml', ['jobs:', '  relay:', '    uses: ./.github/workflows/callee.yml', '    secrets:', '      command: ${{ secrets.command }}'].join('\n')],
       ['callee.yml', ['jobs:', '  execute:', '    steps:', '      - run: bash -c "${{ secrets.command }}"'].join('\n')],
     ]);
     expect(() => expectNoReusableSecretShellBypass(workflows)).toThrow();
