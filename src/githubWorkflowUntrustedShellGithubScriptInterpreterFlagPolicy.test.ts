@@ -62,7 +62,7 @@ const githubScriptBodies = (workflow: string) => {
   return scripts;
 };
 
-const directPayload = (value: string) => /context\.payload\.(?:comment|issue|pull_request|review|discussion)(?:\?\.)?(?:body|title|diff_hunk|path)\b/.test(value);
+const directPayload = (value: string) => /context\.payload\.(?:comment|issue|pull_request|review|discussion)(?:\.|\?\.)(?:body|title|diff_hunk|path)\b/.test(value);
 
 const taintedIdentifiers = (script: string) => {
   const tainted = new Set<string>();
