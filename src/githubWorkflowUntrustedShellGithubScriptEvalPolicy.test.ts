@@ -62,7 +62,7 @@ const hasTaintedCodeExecution = (script: string) => {
   const argumentIsTainted = (argument: string) => containsUntrustedPayloadText(argument)
     || [...tainted].some((identifier) => new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(argument));
 
-  for (const match of script.matchAll(/(?:^|[^\w$.])eval\s*\(([^)]+)\)/g)) {
+  for (const match of script.matchAll(/(?:^|[^\w$])(?:(?:globalThis|global|window|self)\s*(?:\.\s*eval|\[\s*['"]eval['"]\s*\])|eval)\s*\(([^)]+)\)/g)) {
     if (argumentIsTainted(match[1])) return true;
   }
 
@@ -130,99 +130,47 @@ describe('GitHub Script executable-code policy', () => {
   });
 
   it('rejects direct eval of attacker-controlled payload text', () => {
-    const unsafe = [
-      'jobs:',
-      '  test:',
-      '    steps:',
-      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: |',
-      '            eval(context.payload.comment.body);',
-    ].join('\n');
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            eval(context.payload.comment.body);'].join('\n');
     expect(() => expectNoTaintedCodeExecution(unsafe, 'eval.yml')).toThrow();
   });
 
+  it('rejects member-invoked eval of attacker-controlled payload text', () => {
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            globalThis.eval(context.payload.comment.body);'].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'member-eval.yml')).toThrow();
+  });
+
+  it('rejects computed member eval of attacker-controlled payload text', () => {
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', "            globalThis['eval'](context.payload.comment.body);"].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'computed-eval.yml')).toThrow();
+  });
+
   it('rejects eval through a local tainted alias', () => {
-    const unsafe = [
-      'jobs:',
-      '  test:',
-      '    steps:',
-      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: |',
-      '            const code = context.payload.issue.body;',
-      '            eval(code);',
-    ].join('\n');
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            const code = context.payload.issue.body;', '            eval(code);'].join('\n');
     expect(() => expectNoTaintedCodeExecution(unsafe, 'eval-alias.yml')).toThrow();
   });
 
   it('rejects Function constructors of attacker-controlled payload text', () => {
-    const unsafe = [
-      'jobs:',
-      '  test:',
-      '    steps:',
-      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: |',
-      '            Function(context.payload.comment.body)();',
-    ].join('\n');
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            Function(context.payload.comment.body)();'].join('\n');
     expect(() => expectNoTaintedCodeExecution(unsafe, 'function.yml')).toThrow();
   });
 
   it('rejects Function constructors through a local tainted alias', () => {
-    const unsafe = [
-      'jobs:',
-      '  test:',
-      '    steps:',
-      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: |',
-      '            const code = context.payload.issue.body;',
-      '            Function(code)();',
-    ].join('\n');
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            const code = context.payload.issue.body;', '            Function(code)();'].join('\n');
     expect(() => expectNoTaintedCodeExecution(unsafe, 'function-alias.yml')).toThrow();
   });
 
   it('rejects Node VM execution of attacker-controlled payload text', () => {
-    const unsafe = [
-      'jobs:',
-      '  test:',
-      '    steps:',
-      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: |',
-      "            require('node:vm').runInThisContext(context.payload.comment.body);",
-    ].join('\n');
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', "            require('node:vm').runInThisContext(context.payload.comment.body);"].join('\n');
     expect(() => expectNoTaintedCodeExecution(unsafe, 'vm.yml')).toThrow();
   });
 
   it('rejects Node VM execution through a local tainted alias', () => {
-    const unsafe = [
-      'jobs:',
-      '  test:',
-      '    steps:',
-      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: |',
-      '            const code = context.payload.issue.body;',
-      '            vm.runInNewContext(code, {});',
-    ].join('\n');
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            const code = context.payload.issue.body;', '            vm.runInNewContext(code, {});'].join('\n');
     expect(() => expectNoTaintedCodeExecution(unsafe, 'vm-alias.yml')).toThrow();
   });
 
   it('allows code execution constructors with constant code', () => {
-    const safe = [
-      'jobs:',
-      '  test:',
-      '    steps:',
-      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with:',
-      '          script: |',
-      "            const result = eval('1 + 1');",
-      "            const fn = Function('return 2');",
-      "            const vmResult = require('node:vm').runInThisContext('1 + 2');",
-      '            core.info(String(result + fn() + vmResult));',
-    ].join('\n');
+    const safe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', "            const result = eval('1 + 1');", "            const memberResult = globalThis.eval('2 + 2');", "            const fn = Function('return 2');", "            const vmResult = require('node:vm').runInThisContext('1 + 2');", '            core.info(String(result + memberResult + fn() + vmResult));'].join('\n');
     expectNoTaintedCodeExecution(safe, 'eval-safe.yml');
   });
 });
