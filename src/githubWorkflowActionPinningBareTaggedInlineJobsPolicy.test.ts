@@ -97,20 +97,43 @@ const unquote = (raw: string) => {
   return value;
 };
 
+const collectInlineJobRefs = (body: string, refs: string[]) => {
+  for (const jobEntry of splitTopLevelFlowEntries(body)) {
+    const job = jobEntry.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\{([\s\S]*)\}\s*$/);
+    if (!job) continue;
+    for (const entry of splitTopLevelFlowEntries(job[1])) {
+      const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
+      if (mapping && decodeKey(mapping[1]) === 'uses') refs.push(unquote(mapping[2]));
+    }
+  }
+};
+
 const collectBareTaggedInlineJobRefs = (workflow: string) => {
   const refs: string[] = [];
-  for (const rawLine of workflow.split('\n')) {
+  const lines = workflow.split('\n');
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
     const line = stripYamlComment(rawLine);
     const jobs = line.match(/^\s*(?:jobs|"jobs"|'jobs')\s*:\s*!\s*\{(.*)\}\s*$/);
-    if (!jobs) continue;
+    if (jobs) {
+      collectInlineJobRefs(jobs[1], refs);
+      continue;
+    }
 
-    for (const jobEntry of splitTopLevelFlowEntries(jobs[1])) {
-      const job = jobEntry.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\{([\s\S]*)\}\s*$/);
-      if (!job) continue;
-      for (const entry of splitTopLevelFlowEntries(job[1])) {
-        const mapping = entry.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(.+?)\s*$/);
-        if (mapping && decodeKey(mapping[1]) === 'uses') refs.push(unquote(mapping[2]));
+    if (!/^\s*(?:jobs|"jobs"|'jobs')\s*:\s*!\s*$/.test(line)) continue;
+    const jobsIndent = rawLine.match(/^\s*/)?.[0].length ?? 0;
+    for (let child = index + 1; child < lines.length; child += 1) {
+      const childLine = stripYamlComment(lines[child]);
+      if (!childLine.trim()) continue;
+      const childIndent = lines[child].match(/^\s*/)?.[0].length ?? 0;
+      if (childIndent <= jobsIndent) break;
+      const mapping = childLine.match(/^\s*\{(.*)\}\s*$/);
+      if (mapping) {
+        collectInlineJobRefs(mapping[1], refs);
+        index = child;
       }
+      break;
     }
   }
   return refs;
@@ -134,6 +157,20 @@ describe('GitHub action pinning for bare-tagged inline jobs', () => {
       expectImmutableExternalRefs(
         'jobs: ! { call: { uses: owner/repo/.github/workflows/build.yml@main } }',
         'mutable.yml',
+      ),
+    ).toThrow();
+  });
+
+  it('enforces immutable refs when a bare-tagged jobs mapping is deferred', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    expectImmutableExternalRefs(
+      ['jobs: !', `  { call: { uses: owner/repo/.github/workflows/build.yml@${sha} } }`].join('\n'),
+      'deferred-pinned.yml',
+    );
+    expect(() =>
+      expectImmutableExternalRefs(
+        ['jobs: !', '  { call: { uses: owner/repo/.github/workflows/build.yml@main } }'].join('\n'),
+        'deferred-mutable.yml',
       ),
     ).toThrow();
   });
