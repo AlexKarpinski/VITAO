@@ -1,0 +1,142 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const workflowsDir = '.github/workflows';
+const workflowFiles = readdirSync(workflowsDir)
+  .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
+  .sort();
+
+const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+
+const stripYamlComment = (line: string) => {
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote === "'") {
+      if (char === "'" && line[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (char === '\\') {
+        index += 1;
+        continue;
+      }
+      if (char === '"') quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char === '#' && (index === 0 || /\s/.test(line[index - 1]))) return line.slice(0, index);
+  }
+  return line;
+};
+
+const normalizeGithubAccess = (value: string) => value
+  .replace(/\?\./g, '.')
+  .replace(/\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\]/g, '.$1')
+  .replace(/\s*\.\s*/g, '.');
+
+const unwrapYamlQuotes = (value: string) => {
+  const trimmed = value.trim().replace(/[,}]\s*$/, '').trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed.slice(1, -1);
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
+  return trimmed;
+};
+
+const isUntrustedGithubScriptSource = (value: string) => {
+  const source = normalizeGithubAccess(unwrapYamlQuotes(value));
+  if (!/^\$\{\{[\s\S]*\}\}$/.test(source)) return false;
+  return /\bgithub\.event\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body))\b/.test(source);
+};
+
+const scriptSourceFromLine = (line: string) => {
+  const structural = stripYamlComment(line);
+  const direct = structural.match(/^\s*script\s*:\s*(.+?)\s*$/);
+  if (direct) return direct[1];
+
+  const flowWith = structural.match(/^\s*with\s*:\s*\{([\s\S]*)\}\s*$/);
+  if (!flowWith) return null;
+  const script = flowWith[1].match(/(?:^|,)\s*script\s*:\s*((?:"[^"\n]*"|'[^'\n]*'|\$\{\{[\s\S]*?\}\}))(?=\s*,|\s*$)/);
+  return script?.[1] ?? null;
+};
+
+const collectGithubScriptSources = (workflow: string) => {
+  const sources: string[] = [];
+  const lines = workflow.split('\n');
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const uses = stripYamlComment(lines[index]).match(/^(\s*)-?\s*uses\s*:\s*['"]?actions\/github-script@[^\s'"]+['"]?\s*$/);
+    if (!uses) continue;
+    const stepIndent = uses[1].length;
+
+    for (let child = index + 1; child < lines.length; child += 1) {
+      const raw = lines[child];
+      const trimmed = raw.trim();
+      const indent = indentOf(raw);
+      if (trimmed && indent <= stepIndent && /^-\s+/.test(trimmed)) break;
+      const source = scriptSourceFromLine(raw);
+      if (source !== null) {
+        sources.push(source);
+        break;
+      }
+    }
+  }
+
+  return sources;
+};
+
+const expectNoUntrustedGithubScriptSource = (workflow: string, source: string) => {
+  for (const scriptSource of collectGithubScriptSources(workflow)) {
+    expect(isUntrustedGithubScriptSource(scriptSource), `${source}: attacker-controlled GitHub text becomes the GitHub Script source`).toBe(false);
+  }
+};
+
+describe('GitHub Script source trust policy', () => {
+  it('scans every checked-in workflow', () => {
+    expect(workflowFiles.length).toBeGreaterThan(0);
+    for (const file of workflowFiles) expectNoUntrustedGithubScriptSource(readFileSync(join(workflowsDir, file), 'utf8'), file);
+  });
+
+  it('rejects attacker-controlled text used directly as the script source', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: ${{ github.event.comment.body }}',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'direct-source.yml')).toThrow();
+  });
+
+  it('rejects the same sink in a flow-style with mapping', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with: { script: "${{ github.event.issue.body }}" }',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'flow-source.yml')).toThrow();
+  });
+
+  it('allows payload text read as data inside a fixed script body', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            core.info(context.payload.comment.body);',
+    ].join('\n');
+    expectNoUntrustedGithubScriptSource(safe, 'data-only.yml');
+  });
+});
