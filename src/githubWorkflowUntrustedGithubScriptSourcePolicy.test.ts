@@ -44,7 +44,7 @@ const normalizeGithubAccess = (value: string) => value
   .replace(/\s*\.\s*/g, '.');
 
 const unwrapYamlQuotes = (value: string) => {
-  const trimmed = value.trim().replace(/[,}]\s*$/, '').trim();
+  const trimmed = value.trim();
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed.slice(1, -1);
   if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
   return trimmed;
