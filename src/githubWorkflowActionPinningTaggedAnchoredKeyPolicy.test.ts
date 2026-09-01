@@ -7,6 +7,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
+const blockScalarHeader = /:\s*(?:(?:&|!)[^\s]+\s+)*(?:[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?)\s*(?:#.*)?$/;
 
 const stripComment = (value: string) => value.replace(/\s+#.*$/, '').trim();
 const stripNodeProperties = (raw: string) => {
@@ -35,10 +36,21 @@ const collectAliasedUsesRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
 
   for (const line of lines) {
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = line.trim();
+
+    if (blockScalarIndent !== null) {
+      if (!trimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+    if (blockScalarHeader.test(trimmed)) {
+      blockScalarIndent = indent;
+      continue;
+    }
+
     const anchor = trimmed.match(/^[^:#]+:\s*&([A-Za-z_][A-Za-z0-9_-]*)\s+(.+)$/);
     if (anchor) aliases.set(anchor[1], decodeScalar(anchor[2]));
 
@@ -93,5 +105,20 @@ describe('tagged anchored YAML keys in action steps', () => {
     ].join('\n');
     expect(collectAliasedUsesRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
     expectImmutableAliasedUsesRefs(pinned, 'tagged-key.yml');
+  });
+
+  it('ignores tagged anchored action examples inside run block scalars', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: |',
+      '          x-key: &use-key uses',
+      '          steps:',
+      '            - { *use-key: actions/checkout@v4 }',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(collectAliasedUsesRefs(safe)).toEqual([]);
+    expectImmutableAliasedUsesRefs(safe, 'block-scalar-example.yml');
   });
 });
