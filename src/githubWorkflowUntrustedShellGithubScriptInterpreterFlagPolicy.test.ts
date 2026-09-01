@@ -128,20 +128,32 @@ const isTainted = (value: string, tainted: Set<string>) => {
   return Boolean(identifier && tainted.has(identifier));
 };
 
-const hasTaintedNodeCodeFlag = (script: string) => {
+const codeFlagsFor = (executable: string) => {
+  const basename = executable.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
+  if (/^node(?:\.exe)?$/.test(basename)) return new Set(['-e', '--eval', '-p', '--print']);
+  if (/^python(?:\d+(?:\.\d+)?)?(?:\.exe)?$/.test(basename)) return new Set(['-c']);
+  if (/^ruby(?:\.exe)?$/.test(basename)) return new Set(['-e']);
+  if (/^perl(?:\.exe)?$/.test(basename)) return new Set(['-e']);
+  if (/^php(?:\.exe)?$/.test(basename)) return new Set(['-r']);
+  return null;
+};
+
+const hasTaintedInterpreterCodeFlag = (script: string) => {
   const tainted = taintedIdentifiers(script);
   const call = /\b(?:execFileSync|execFile|spawnSync|spawn)\s*\(([^;\n]+)\)/g;
   for (const match of script.matchAll(call)) {
     const args = splitTopLevelArgs(match[1]);
     if (args.length < 2) continue;
     const executable = unquote(args[0]);
-    if (!executable || !/(?:^|[\\/])node(?:\.exe)?$/i.test(executable)) continue;
+    if (!executable) continue;
+    const codeFlags = codeFlagsFor(executable);
+    if (!codeFlags) continue;
     const array = args[1].trim().match(/^\[([\s\S]*)\]$/);
     if (!array) continue;
     const argv = splitTopLevelArgs(array[1]);
     if (argv.length < 2) continue;
     const flag = unquote(argv[0]);
-    if (!flag || !['-e', '--eval', '-p', '--print'].includes(flag)) continue;
+    if (!flag || !codeFlags.has(flag)) continue;
     if (isTainted(argv[1], tainted)) return true;
   }
   return false;
@@ -149,7 +161,7 @@ const hasTaintedNodeCodeFlag = (script: string) => {
 
 const expectNoTaintedInterpreterFlags = (workflow: string, source: string) => {
   for (const script of githubScriptBodies(workflow)) {
-    expect(hasTaintedNodeCodeFlag(script), source).toBe(false);
+    expect(hasTaintedInterpreterCodeFlag(script), source).toBe(false);
   }
 };
 
@@ -170,6 +182,17 @@ describe('GitHub Script interpreter code-flag policy', () => {
     expect(() => expectNoTaintedInterpreterFlags(unsafe, 'node-e.yml')).toThrow();
   });
 
+  it('rejects commenter-controlled Python passed to python3 -c', () => {
+    const unsafe = [
+      'steps:',
+      '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '    with:',
+      '      script: |',
+      "        require('node:child_process').execFileSync('python3', ['-c', context.payload.comment.body])",
+    ].join('\n');
+    expect(() => expectNoTaintedInterpreterFlags(unsafe, 'python-c.yml')).toThrow();
+  });
+
   it('propagates local aliases into interpreter code flags', () => {
     const unsafe = [
       'steps:',
@@ -188,8 +211,8 @@ describe('GitHub Script interpreter code-flag policy', () => {
       '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
       '    with:',
       '      script: |',
-      "        require('node:child_process').execFileSync('node', ['-e', 'console.log(1)'])",
+      "        require('node:child_process').execFileSync('python3', ['-c', 'print(1)'])",
     ].join('\n');
-    expectNoTaintedInterpreterFlags(safe, 'node-e-safe.yml');
+    expectNoTaintedInterpreterFlags(safe, 'interpreter-safe.yml');
   });
 });
