@@ -74,9 +74,15 @@ const resolveFormat = (call: string) => {
 
 const computedEventObjects = (script: string) => {
   const objects: string[] = [];
-  const pattern = /github(?:\.event|\[['"]event['"]\])\s*\[\s*format\s*\(((?:'(?:''|[^'])*'\s*,?\s*)+)\)\s*\]/gi;
-  for (const match of script.matchAll(pattern)) {
+  const formatPattern = /github(?:\.event|\[['"]event['"]\])\s*\[\s*format\s*\(((?:'(?:''|[^'])*'\s*,?\s*)+)\)\s*\]/gi;
+  for (const match of script.matchAll(formatPattern)) {
     const resolved = resolveFormat(match[1]);
+    if (resolved) objects.push(resolved);
+  }
+
+  const fromJsonPattern = /github(?:\.event|\[['"]event['"]\])\s*\[\s*fromJSON\s*\(\s*((?:'(?:''|[^'])*')|(?:"(?:\\.|[^"\\])*"))\s*\)\s*\]/gi;
+  for (const match of script.matchAll(fromJsonPattern)) {
+    const resolved = resolveFromJson(match[1]);
     if (resolved) objects.push(resolved);
   }
   return objects;
@@ -168,6 +174,14 @@ describe('computed GitHub event shell-boundary policy', () => {
     expect(() => expectNoComputedUntrustedEventShellUse(unsafe, 'computed-event.yml')).toThrow();
   });
 
+  it('rejects a fromJSON-computed comment object used by a shell run step', () => {
+    const unsafe = [
+      'steps:',
+      "  - run: bash -c \"${{ github.event[fromJSON('\\\"comment\\\"')].body }}\"",
+    ].join('\n');
+    expect(() => expectNoComputedUntrustedEventShellUse(unsafe, 'computed-fromjson-event.yml')).toThrow();
+  });
+
   it('rejects a computed leaf beneath an untrusted event object', () => {
     const unsafe = [
       'steps:',
@@ -197,6 +211,7 @@ describe('computed GitHub event shell-boundary policy', () => {
     const safe = [
       'steps:',
       "  - run: echo '${{ github.event[format('{0}', 'action')] }}'",
+      "  - run: echo \"${{ github.event[fromJSON('\\\"action\\\"')] }}\"",
       "  - run: echo '${{ github.event.comment[format('{0}', 'id')] }}'",
       "  - run: echo \"${{ github.event.comment[fromJSON('\"id\"')] }}\"",
       '  - run: >-',
