@@ -9,7 +9,39 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const immutableActionRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const stripComment = (line: string) => line.replace(/\s+#.*$/, '');
-const isActionStepContext = (line: string) => /^\s*-\s*\{/.test(line) || /\bsteps\s*:\s*\[/.test(line);
+const hasUnquotedFlowSteps = (line: string) => {
+  let quote: '"' | "'" | null = null;
+  let structural = '';
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (quote === "'" && char === "'" && line[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      if (char === quote) {
+        if (quote === "'") quote = null;
+        else {
+          let backslashes = 0;
+          for (let previous = index - 1; previous >= 0 && line[previous] === '\\'; previous -= 1) backslashes += 1;
+          if (backslashes % 2 === 0) quote = null;
+        }
+      }
+      structural += ' ';
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      structural += ' ';
+      continue;
+    }
+    structural += char;
+  }
+
+  return /\bsteps\s*:\s*\[/.test(structural);
+};
+const isActionStepContext = (line: string) => /^\s*-\s*\{/.test(line) || hasUnquotedFlowSteps(line);
 const stripNodeProperties = (value: string) => value.trim().replace(/^(?:(?:&[A-Za-z0-9_.-]+|![^\s]+)\s+)+/, '');
 const isBlockHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(stripNodeProperties(value));
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
@@ -110,6 +142,12 @@ describe('GitHub workflow deferred YAML action pinning edge policy', () => {
     ].join('\n');
     expect(extractTargetedActionRefs(unrelated)).toEqual([]);
     expectTargetedRefsImmutable(unrelated, 'unrelated-flow.yml');
+  });
+
+  it('ignores steps and uses examples inside quoted flow scalars', () => {
+    const documentation = 'env: { DOC: "steps: [{ uses: actions/checkout@v4 }]" }';
+    expect(extractTargetedActionRefs(documentation)).toEqual([]);
+    expectTargetedRefsImmutable(documentation, 'quoted-flow-docs.yml');
   });
 
   it('ignores uses-like action examples nested inside outer block scalars', () => {
