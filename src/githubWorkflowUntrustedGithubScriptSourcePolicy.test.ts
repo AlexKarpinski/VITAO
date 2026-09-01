@@ -54,7 +54,11 @@ const untrustedGithubEventPath = /\bgithub\.event\.(?:issue\.(?:title|body)|comm
 
 const isUntrustedGithubScriptSource = (value: string) => {
   const source = normalizeGithubAccess(unwrapYamlQuotes(value));
-  return source.includes('${{') && untrustedGithubEventPath.test(source);
+  const expressions = source.matchAll(/\$\{\{([\s\S]*?)\}\}/g);
+  for (const expression of expressions) {
+    if (untrustedGithubEventPath.test(normalizeGithubAccess(expression[1]))) return true;
+  }
+  return false;
 };
 
 const scriptSourceFromLine = (line: string) => {
@@ -85,21 +89,21 @@ const collectGithubScriptSources = (workflow: string) => {
       const indent = indentOf(raw);
       if (trimmed && indent <= stepIndent && /^-\s+/.test(trimmed)) break;
       const source = scriptSourceFromLine(raw);
-      if (source !== null) {
-        if (blockScalarHeader(stripYamlComment(source).trim())) {
-          const scriptIndent = indent;
-          const body: string[] = [];
-          for (let bodyIndex = child + 1; bodyIndex < lines.length; bodyIndex += 1) {
-            const bodyLine = lines[bodyIndex];
-            if (bodyLine.trim() && indentOf(bodyLine) <= scriptIndent) break;
-            body.push(bodyLine);
-          }
-          sources.push(body.join('\n'));
-        } else {
-          sources.push(source);
+      if (source === null) continue;
+
+      if (blockScalarHeader(stripYamlComment(source).trim())) {
+        const scriptIndent = indent;
+        const body: string[] = [];
+        for (let bodyIndex = child + 1; bodyIndex < lines.length; bodyIndex += 1) {
+          const bodyLine = lines[bodyIndex];
+          if (bodyLine.trim() && indentOf(bodyLine) <= scriptIndent) break;
+          body.push(bodyLine);
         }
-        break;
+        sources.push(body.join('\n'));
+      } else {
+        sources.push(source);
       }
+      break;
     }
   }
 
