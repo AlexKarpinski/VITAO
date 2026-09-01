@@ -48,15 +48,43 @@ const githubScriptBodies = (workflow: string) => {
   return bodies;
 };
 
+const scriptExecutesTaintedEnv = (script: string, name: string) => {
+  const envRead = new RegExp(`process\\s*\\.\\s*env(?:\\s*\\.\\s*${name}|\\s*\\[\\s*['"]${name}['"]\\s*\\])`);
+  const taintedLocals = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const match of script.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g)) {
+      const [, local, initializer] = match;
+      const inheritsTaint = envRead.test(initializer) || Array.from(taintedLocals).some((tainted) => new RegExp(`\\b${tainted}\\b`).test(initializer));
+      if (inheritsTaint && !taintedLocals.has(local)) {
+        taintedLocals.add(local);
+        changed = true;
+      }
+    }
+  }
+
+  for (const call of script.matchAll(/\b(?:exec|execSync)\s*\(([^)]*)\)/gs)) {
+    const argument = call[1];
+    if (envRead.test(argument)) return true;
+    if (Array.from(taintedLocals).some((tainted) => new RegExp(`\\b${tainted}\\b`).test(argument))) return true;
+  }
+
+  const explicitShellSink = /(?:spawn|spawnSync|execFile|execFileSync)\s*\([^)]*(?:bash|sh|cmd|powershell|pwsh)[^)]*/gs;
+  for (const call of script.matchAll(explicitShellSink)) {
+    const invocation = call[0];
+    if (envRead.test(invocation)) return true;
+    if (Array.from(taintedLocals).some((tainted) => new RegExp(`\\b${tainted}\\b`).test(invocation))) return true;
+  }
+  return false;
+};
+
 const executesTaintedEnv = (workflow: string) => {
   const tainted = taintedEnvNames(workflow);
   if (tainted.size === 0) return false;
   for (const script of githubScriptBodies(workflow)) {
     for (const name of tainted) {
-      const envRead = new RegExp(`process\\s*\\.\\s*env(?:\\s*\\.\\s*${name}|\\s*\\[\\s*['"]${name}['"]\\s*\\])`);
-      if (!envRead.test(script)) continue;
-      const childProcessSink = /(?:exec|execSync)\s*\([^)]*process\s*\.\s*env|(?:spawn|spawnSync|execFile|execFileSync)\s*\([^)]*(?:bash|sh|cmd|powershell|pwsh)[^)]*process\s*\.\s*env/s;
-      if (childProcessSink.test(script)) return true;
+      if (scriptExecutesTaintedEnv(script, name)) return true;
     }
   }
   return false;
@@ -87,6 +115,38 @@ describe('GitHub Script workflow environment trust boundary', () => {
       "            require('node:child_process').execSync(process.env.CMD)",
     ].join('\n');
     expect(() => expectNoWorkflowEnvToGithubScriptShell(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects workflow env taint propagated through a local script variable', () => {
+    const unsafe = [
+      'env:',
+      '  CMD: ${{ github.event.comment.body }}',
+      'jobs:',
+      '  check:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const command = process.env.CMD',
+      "            require('node:child_process').execSync(command)",
+    ].join('\n');
+    expect(() => expectNoWorkflowEnvToGithubScriptShell(unsafe, 'local-alias.yml')).toThrow();
+  });
+
+  it('accepts a constant local command despite a tainted workflow env binding', () => {
+    const safe = [
+      'env:',
+      '  CMD: ${{ github.event.comment.body }}',
+      'jobs:',
+      '  check:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const command = 'echo safe'",
+      "            require('node:child_process').execSync(command)",
+    ].join('\n');
+    expectNoWorkflowEnvToGithubScriptShell(safe, 'safe-local.yml');
   });
 
   it('accepts a constant environment command', () => {
