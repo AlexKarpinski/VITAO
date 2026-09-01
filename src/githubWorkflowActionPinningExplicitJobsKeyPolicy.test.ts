@@ -9,6 +9,7 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const immutableSha = /^[0-9a-f]{40}$/i;
 const externalReusable = /^([^\s@]+\/.+?\.github\/workflows\/[^\s@]+)@([^\s#]+)$/;
+const blockScalarHeader = /[>|](?:[+-]?[1-9]|[1-9]?[+-])?$/;
 
 const decodeKey = (raw: string) => {
   const value = raw.trim();
@@ -44,9 +45,23 @@ const stripComment = (line: string) => {
 const collectExplicitJobsReusableRefs = (workflow: string) => {
   const lines = workflow.split('\n');
   const refs: string[] = [];
+  let blockScalarIndent: number | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
     const keyLine = stripComment(lines[index]);
+    const trimmed = keyLine.trim();
+    const indent = keyLine.match(/^\s*/)?.[0].length ?? 0;
+
+    if (blockScalarIndent !== null) {
+      if (!trimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+
+    if (/:[ \t]*/.test(keyLine) && blockScalarHeader.test(trimmed)) {
+      blockScalarIndent = indent;
+      continue;
+    }
+
     const explicit = keyLine.match(/^(\s*)\?\s*(.+?)\s*$/);
     if (!explicit || decodeKey(explicit[2]) !== 'jobs') continue;
 
@@ -61,10 +76,10 @@ const collectExplicitJobsReusableRefs = (workflow: string) => {
 
     for (let child = valueLine + 1; child < lines.length; child += 1) {
       const raw = stripComment(lines[child]);
-      const trimmed = raw.trim();
-      if (!trimmed) continue;
-      const indent = raw.match(/^\s*/)?.[0].length ?? 0;
-      if (indent <= valueIndent) break;
+      const childTrimmed = raw.trim();
+      if (!childTrimmed) continue;
+      const childIndent = raw.match(/^\s*/)?.[0].length ?? 0;
+      if (childIndent <= valueIndent) break;
 
       const uses = raw.match(/^\s*(?:['"]?uses['"]?)\s*:\s*([^\s#]+|"[^"]+"|'[^']+')\s*$/);
       if (!uses) continue;
@@ -114,6 +129,24 @@ on: workflow_dispatch
 :
   call:
     uses: owner/repo/.github/workflows/reusable.yml@main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo safe
+`;
+    expect(() => assertExplicitJobsPinned(workflow)).not.toThrow();
+  });
+
+  it('ignores explicit jobs text inside block scalar values', () => {
+    const workflow = `
+on: workflow_dispatch
+env:
+  DOC: |
+    ? jobs
+    :
+      call:
+        uses: owner/repo/.github/workflows/reusable.yml@main
 jobs:
   build:
     runs-on: ubuntu-latest
