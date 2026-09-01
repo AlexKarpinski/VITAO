@@ -31,17 +31,40 @@ const stripComment = (line: string) => {
   return line;
 };
 
+const stripNodeProperties = (value: string) => {
+  let rest = value.trim();
+  while (true) {
+    const next = rest.replace(/^(?:&[A-Za-z0-9_-]+|!\S*)\s*/, '');
+    if (next === rest) return rest;
+    rest = next.trimStart();
+  }
+};
+
+const blockScalarHeader = (value: string) => /^(?:[|>](?:[1-9][+-]?|[+-][1-9]?)?)$/.test(stripNodeProperties(value));
+
 const collectRefs = (workflow: string) => {
   const refs: string[] = [];
   const lines = workflow.split('\n');
   let jobsIndent: number | null = null;
   let directJobIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
 
   for (const raw of lines) {
     const line = stripComment(raw);
     if (!line.trim()) continue;
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = line.trim();
+
+    if (blockScalarIndent !== null) {
+      if (indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+
+    const mappingValue = trimmed.match(/^(?:[^:'"]+|"(?:\\.|[^"])*"|'(?:''|[^'])*')\s*:\s*(.*)$/)?.[1];
+    if (mappingValue !== undefined && blockScalarHeader(mappingValue)) {
+      blockScalarIndent = indent;
+      continue;
+    }
 
     if (jobsIndent === null) {
       const jobs = trimmed.match(/^(?:&[A-Za-z0-9_-]+\s+|!\S*\s+)*jobs\s*:\s*(?:(?:&[A-Za-z0-9_-]+|!\S*)\s*)*$/);
@@ -114,6 +137,20 @@ describe('GitHub workflow top-level jobs node-property pinning policy', () => {
       '    runs-on: ubuntu-latest',
       '    env: { uses: actions/checkout@v4 }',
       '  call: { uses: owner/repo/.github/workflows/build.yml@0123456789abcdef0123456789abcdef01234567 }',
+    ].join('\n');
+    expectPinned(safe, 'safe.yml');
+  });
+
+  it('ignores jobs-shaped documentation inside block scalars', () => {
+    const safe = [
+      'description: |',
+      '  jobs: &all',
+      '    call: { uses: owner/repo/.github/workflows/build.yml@main }',
+      'jobs:',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: echo safe',
     ].join('\n');
     expectPinned(safe, 'safe.yml');
   });
