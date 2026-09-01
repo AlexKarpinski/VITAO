@@ -60,12 +60,35 @@ const mappingKey = (trimmed: string) => {
 const isBlockScalarHeader = (trimmed: string) =>
   /^(?:-\s+)?[^:]+:\s*(?:(?:&[^\s]+|![^\s]*)\s+)*(?:[>|](?:[+-]?\d*|\d+[+-]?))\s*$/.test(trimmed);
 
+const hasClosingDoubleQuote = (value: string) => {
+  if (!value.startsWith('"')) return true;
+  let backslashes = 0;
+  for (let index = 1; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === '\\') {
+      backslashes += 1;
+      continue;
+    }
+    if (char === '"' && backslashes % 2 === 0) return true;
+    backslashes = 0;
+  }
+  return false;
+};
+
+const decodeDecoratedRef = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed.slice(1, -1);
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
+  return trimmed;
+};
+
 const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
   let blockScalarIndent: number | null = null;
 
-  for (const rawLine of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex];
     const line = stripComment(rawLine);
     const trimmed = line.trim();
     if (!trimmed) continue;
@@ -88,10 +111,22 @@ const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
       continue;
     }
 
-    const match = trimmed.match(/^-\s+(?:(?:&[^\s]+|![^\s]*)\s+)+uses\s*:\s*([^\s]+)\s*$/);
+    const match = trimmed.match(/^-\s+(?:(?:&[^\s]+|![^\s]*)\s+)+uses\s*:\s*(.+?)\s*$/);
     if (!match) continue;
 
-    const ref = match[1];
+    let rawRef = match[1].trim();
+    if (rawRef.startsWith('"') && !hasClosingDoubleQuote(rawRef)) {
+      while (lineIndex + 1 < lines.length) {
+        lineIndex += 1;
+        const continuation = stripComment(lines[lineIndex]).trim();
+        const joinsWithoutSpace = rawRef.endsWith('\\');
+        if (joinsWithoutSpace) rawRef = rawRef.slice(0, -1);
+        rawRef += joinsWithoutSpace ? continuation : ` ${continuation}`;
+        if (hasClosingDoubleQuote(rawRef)) break;
+      }
+    }
+
+    const ref = decodeDecoratedRef(rawRef);
     if (ref.startsWith('./') || ref.startsWith('docker://')) continue;
     const at = ref.lastIndexOf('@');
     expect(at).toBeGreaterThan(0);
@@ -153,6 +188,30 @@ describe('GitHub workflow decorated uses scope policy', () => {
     ].join('\n');
 
     expectDecoratedStepUsesPinned(safe, 'quoted-steps-pinned.yml');
+  });
+
+  it('accepts an immutable decorated action split across a quoted continuation', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - &uses-key uses: "actions/check\\',
+      '        out@0123456789abcdef0123456789abcdef01234567"',
+    ].join('\n');
+
+    expectDecoratedStepUsesPinned(safe, 'continued-ref.yml');
+  });
+
+  it('rejects a mutable decorated action split across a quoted continuation', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - &uses-key uses: "actions/check\\',
+      '        out@v4"',
+    ].join('\n');
+
+    expect(() => expectDecoratedStepUsesPinned(unsafe, 'continued-mutable-ref.yml')).toThrow();
   });
 
   it('ignores decorated uses examples inside YAML comments', () => {
