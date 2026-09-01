@@ -10,8 +10,17 @@ const workflowFiles = readdirSync(workflowsDir)
 const immutableSha = /^[^\s@]+@[0-9a-fA-F]{40}$/;
 type Quote = '"' | "'" | null;
 
+const stripNodeProperties = (value: string) => {
+  let trimmed = value.trim();
+  while (true) {
+    const property = trimmed.match(/^(?:&[A-Za-z0-9_-]+|!<[^>]+>|![^\s]+)\s+([\s\S]+)$/);
+    if (!property) return trimmed;
+    trimmed = property[1].trim();
+  }
+};
+
 const decodeScalar = (value: string) => {
-  const trimmed = value.trim();
+  const trimmed = stripNodeProperties(value);
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
     try {
       return JSON.parse(trimmed) as string;
@@ -161,6 +170,20 @@ describe('GitHub workflow root flow jobs pinning policy', () => {
         '{ "name": "Review", "on": "push", "jobs": { "call": { "uses": "owner/repo/.github/workflows/build.yml@0123456789abcdef0123456789abcdef01234567" } } }',
       ),
     ).not.toThrow();
+  });
+
+  it('normalizes node properties on root flow jobs and uses keys', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    expect(() =>
+      assertRootFlowJobsPinned(
+        `{ "name": "Review", !!str jobs: { "call": { &uses-key uses: &workflow-ref "owner/repo/.github/workflows/build.yml@${sha}" } } }`,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertRootFlowJobsPinned(
+        '{ "name": "Review", !!str jobs: { "call": { &uses-key uses: &workflow-ref "owner/repo/.github/workflows/build.yml@main" } } }',
+      ),
+    ).toThrow(/Expected immutable reusable-workflow pin/);
   });
 
   it('accepts local reusable workflows inside a root flow mapping', () => {
