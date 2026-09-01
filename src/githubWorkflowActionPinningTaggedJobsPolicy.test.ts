@@ -49,6 +49,13 @@ const stripLeadingNodeProperties = (value: string) => {
   return remaining;
 };
 
+const isBlockScalarHeader = (line: string) => {
+  const mapping = line.match(/^\s*(?:-\s+)?[^:#][^:]*:\s*(.*?)\s*$/);
+  if (!mapping) return false;
+  const value = stripLeadingNodeProperties(mapping[1]);
+  return /^[|>][0-9+-]*$/.test(value);
+};
+
 const reusableWorkflowRef = (value: string) => {
   const unquoted = value.trim().replace(/^['"]|['"]$/g, '');
   const match = unquoted.match(/^([^\s]+\/.github\/workflows\/[^\s@]+)@([^\s]+)$/);
@@ -61,12 +68,23 @@ const collectTaggedJobsReusableRefs = (workflow: string) => {
   let jobsIndent: number | null = null;
   let jobIndent: number | null = null;
   let fieldIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
 
   for (const rawLine of lines) {
+    const indent = indentOf(rawLine);
+    if (blockScalarIndent !== null) {
+      if (!rawLine.trim() || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+
     const structural = stripYamlComment(rawLine);
     const trimmed = structural.trim();
     if (!trimmed) continue;
-    const indent = indentOf(rawLine);
+
+    if (isBlockScalarHeader(structural)) {
+      blockScalarIndent = indent;
+      continue;
+    }
 
     const decoded = stripLeadingNodeProperties(trimmed);
     if (/^jobs\s*:\s*$/.test(decoded)) {
@@ -143,5 +161,21 @@ describe('tagged jobs reusable-workflow pinning policy', () => {
       '    uses: owner/repo/.github/workflows/build.yml@release',
     ].join('\n');
     expect(() => expectImmutableTaggedJobs(unsafe, 'decorated-jobs.yml')).toThrow();
+  });
+
+  it('ignores tagged jobs examples inside block scalars', () => {
+    const safe = [
+      'env:',
+      '  DOC: |',
+      '    ! jobs:',
+      '      call:',
+      '        uses: owner/repo/.github/workflows/build.yml@main',
+      'jobs:',
+      '  build:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - run: echo safe',
+    ].join('\n');
+    expectImmutableTaggedJobs(safe, 'tagged-jobs-docs.yml');
   });
 });
