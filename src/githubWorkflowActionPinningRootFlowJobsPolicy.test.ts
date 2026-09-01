@@ -141,6 +141,7 @@ const collectRootFlowJobRefs = (workflow: string) => {
 
 const assertRootFlowJobsPinned = (workflow: string) => {
   for (const ref of collectRootFlowJobRefs(workflow)) {
+    if (ref.startsWith('./')) continue;
     expect(ref, `Expected immutable reusable-workflow pin, got ${ref}`).toMatch(immutableSha);
   }
 };
@@ -158,6 +159,14 @@ describe('GitHub workflow root flow jobs pinning policy', () => {
     expect(() =>
       assertRootFlowJobsPinned(
         '{ "name": "Review", "on": "push", "jobs": { "call": { "uses": "owner/repo/.github/workflows/build.yml@0123456789abcdef0123456789abcdef01234567" } } }',
+      ),
+    ).not.toThrow();
+  });
+
+  it('accepts local reusable workflows inside a root flow mapping', () => {
+    expect(() =>
+      assertRootFlowJobsPinned(
+        '{ "name": "Review", "on": "push", "jobs": { "call": { "uses": "./.github/workflows/reusable.yml" } } }',
       ),
     ).not.toThrow();
   });
