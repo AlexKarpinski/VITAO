@@ -82,6 +82,11 @@ const hasTaintedCodeExecution = (script: string) => {
     if (args.some(argumentIsTainted)) return true;
   }
 
+  for (const match of script.matchAll(/\bimport\s*\(\s*(`[^`]*`|'[^']*'|"[^"]*")\s*\)/g)) {
+    const specifier = match[1];
+    if (/^[`'"]data:text\/javascript,/i.test(specifier) && argumentIsTainted(specifier)) return true;
+  }
+
   return false;
 };
 
@@ -169,8 +174,18 @@ describe('GitHub Script executable-code policy', () => {
     expect(() => expectNoTaintedCodeExecution(unsafe, 'vm-alias.yml')).toThrow();
   });
 
+  it('rejects tainted JavaScript data URL imports', () => {
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            await import(`data:text/javascript,${encodeURIComponent(context.payload.comment.body)}`);'].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'data-import.yml')).toThrow();
+  });
+
+  it('rejects tainted JavaScript data URL imports through local aliases', () => {
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            const code = context.payload.issue.body;', '            await import(`data:text/javascript,${encodeURIComponent(code)}`);'].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'data-import-alias.yml')).toThrow();
+  });
+
   it('allows code execution constructors with constant code', () => {
-    const safe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', "            const result = eval('1 + 1');", "            const memberResult = globalThis.eval('2 + 2');", "            const fn = Function('return 2');", "            const vmResult = require('node:vm').runInThisContext('1 + 2');", '            core.info(String(result + memberResult + fn() + vmResult));'].join('\n');
+    const safe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', "            const result = eval('1 + 1');", "            const memberResult = globalThis.eval('2 + 2');", "            const fn = Function('return 2');", "            const vmResult = require('node:vm').runInThisContext('1 + 2');", "            const module = await import('data:text/javascript,export default 4');", '            core.info(String(result + memberResult + fn() + vmResult + module.default));'].join('\n');
     expectNoTaintedCodeExecution(safe, 'eval-safe.yml');
   });
 });
