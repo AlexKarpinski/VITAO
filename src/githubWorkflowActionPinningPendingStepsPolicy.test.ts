@@ -147,17 +147,20 @@ const collectDeferredStepsRefs = (workflow: string) => {
       if (indent <= pendingStepsIndent) {
         pendingStepsIndent = null;
       } else if (trimmed.startsWith('[')) {
-        flowDepth = structuralBracketDelta(raw);
+        const deferredDepth = structuralBracketDelta(raw);
         pendingStepsIndent = null;
         openedDeferredSequence = true;
-        if (flowDepth <= 0) flowDepth = 1;
+        refs.push(...extractUsesFromFlowMapping(raw));
+        flowDepth = Math.max(0, deferredDepth);
       }
     }
 
     if (flowDepth === 0) continue;
 
-    refs.push(...extractUsesFromFlowMapping(raw));
-    if (!openedDeferredSequence) flowDepth += structuralBracketDelta(raw);
+    if (!openedDeferredSequence) {
+      refs.push(...extractUsesFromFlowMapping(raw));
+      flowDepth += structuralBracketDelta(raw);
+    }
     if (flowDepth < 0) flowDepth = 0;
   }
 
@@ -187,6 +190,15 @@ describe('deferred steps flow-sequence immutable pinning', () => {
 
     const mutable = ['jobs:', '  test:', '    steps:', '      [', '        { uses: actions/checkout@v4 }', '      ]'].join('\n');
     expect(() => expectDeferredStepsPinned(mutable, 'mutable.yml')).toThrow();
+  });
+
+  it('closes a deferred steps sequence that opens and closes on one line', () => {
+    const safe = ['jobs:', '  test:', '    steps:', '      [{ run: echo safe }]', '    strategy: { matrix: { include: [{ uses: actions/cache@v4 }] } }'].join('\n');
+    expect(collectDeferredStepsRefs(safe)).toEqual([]);
+    expectDeferredStepsPinned(safe, 'single-line-deferred.yml');
+
+    const mutable = ['jobs:', '  test:', '    steps:', '      [{ uses: actions/checkout@v4 }]'].join('\n');
+    expect(() => expectDeferredStepsPinned(mutable, 'single-line-deferred-mutable.yml')).toThrow();
   });
 
   it('decodes quoted steps keys before tracking a deferred sequence', () => {
