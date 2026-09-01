@@ -78,8 +78,12 @@ const blockScalarHeader = (value: string) => /^[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*
 const hasDirectUntrustedScriptExpression = (workflow: string) => workflow.split('\n').some((line) => {
   const normalized = normalizeGithubAccess(stripYamlComment(line));
   if (!normalized.includes('${{') || !untrustedGithubEventPath.test(normalized)) return false;
-  return new RegExp(`^\\s*${scriptKey}\\s*:`).test(normalized)
-    || new RegExp(`^\\s*with\\s*:\\s*\\{.*(?:^|[,\\s])${scriptKey}\\s*:`).test(normalized);
+  const directScript = new RegExp(`^\\s*${scriptKey}\\s*:`).test(normalized);
+  const blockFlowWith = new RegExp(`^\\s*with\\s*:\\s*\\{.*(?:^|[,\\s])${scriptKey}\\s*:`).test(normalized);
+  const flowGithubScriptStep = /^\s*-\s*\{/.test(normalized)
+    && /(?:^|[,\s{])(?:uses|"uses"|'uses')\s*:\s*['"]?actions\/github-script@[^\s,'"}]+/.test(normalized)
+    && new RegExp(`(?:^|[,\\s{])${scriptKey}\\s*:`).test(normalized);
+  return directScript || blockFlowWith || flowGithubScriptStep;
 });
 
 const collectGithubScriptSources = (workflow: string) => {
@@ -164,6 +168,16 @@ describe('GitHub Script source trust policy', () => {
       '        with: { "script": "${{ github.event.issue.body }}" }',
     ].join('\n');
     expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'flow-source.yml')).toThrow();
+  });
+
+  it('rejects attacker-controlled script source in a flow-style step mapping', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - { uses: actions/github-script@0123456789abcdef0123456789abcdef01234567, with: { script: "${{ github.event.comment.body }}" } }',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'flow-step-source.yml')).toThrow();
   });
 
   it('rejects untrusted expressions embedded in an inline script body', () => {
