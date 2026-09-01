@@ -20,6 +20,34 @@ const containsUntrustedPayload = (value: string) => {
   return /context\.payload\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body))/.test(normalized);
 };
 
+const referencesIdentifier = (value: string, name: string) => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`).test(value);
+};
+
+const collectTaintedIdentifiers = (script: string) => {
+  const tainted = new Set<string>();
+  const declarations = [...script.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g)]
+    .map((match) => ({ name: match[1], value: match[2] }));
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const declaration of declarations) {
+      if (tainted.has(declaration.name)) continue;
+      const isTainted = containsUntrustedPayload(declaration.value)
+        || [...tainted].some((name) => referencesIdentifier(declaration.value, name));
+      if (!isTainted) continue;
+      tainted.add(declaration.name);
+      changed = true;
+    }
+  }
+  return tainted;
+};
+
+const containsTaintedValue = (value: string, tainted: Set<string>) => containsUntrustedPayload(value)
+  || [...tainted].some((name) => referencesIdentifier(value, name));
+
 const splitTopLevelArgs = (value: string) => {
   const args: string[] = [];
   let start = 0;
@@ -77,13 +105,16 @@ const extractGetExecOutputCalls = (script: string) => {
   return calls;
 };
 
-const unsafeGetExecOutput = (script: string) => extractGetExecOutputCalls(script).some((call) => {
-  const args = splitTopLevelArgs(call);
-  const executable = args[0]?.trim().replace(/^['"]|['"]$/g, '') ?? '';
-  if (!shellExecutable.test(executable)) return false;
-  const shellArgs = args[1] ?? '';
-  return /['"](?:-c|\/c|-Command)['"]/i.test(shellArgs) && containsUntrustedPayload(shellArgs);
-});
+const unsafeGetExecOutput = (script: string) => {
+  const tainted = collectTaintedIdentifiers(script);
+  return extractGetExecOutputCalls(script).some((call) => {
+    const args = splitTopLevelArgs(call);
+    const executable = args[0]?.trim().replace(/^['"]|['"]$/g, '') ?? '';
+    if (!shellExecutable.test(executable)) return false;
+    const shellArgs = args[1] ?? '';
+    return /['"](?:-c|\/c|-Command)['"]/i.test(shellArgs) && containsTaintedValue(shellArgs, tainted);
+  });
+};
 
 const collectGithubScriptBodies = (workflow: string) => {
   const bodies: string[] = [];
@@ -142,6 +173,21 @@ describe('GitHub Script getExecOutput shell boundary', () => {
       "            await exec.getExecOutput('bash', ['-c', context.payload.comment.body]);",
     ].join('\n');
     expect(() => expectNoUnsafeGetExecOutput(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects attacker text passed through a local alias', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const exec = require('@actions/exec');",
+      '            const command = context.payload.comment.body;',
+      "            await exec.getExecOutput('bash', ['-c', command]);",
+    ].join('\n');
+    expect(() => expectNoUnsafeGetExecOutput(unsafe, 'alias-unsafe.yml')).toThrow();
   });
 
   it('allows payload text passed as data to a non-shell executable', () => {
