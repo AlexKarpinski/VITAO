@@ -50,10 +50,12 @@ const unwrapYamlQuotes = (value: string) => {
   return trimmed;
 };
 
+const untrustedGithubEventPath = /\bgithub\.event\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body))\b/;
+
 const isUntrustedGithubScriptSource = (value: string) => {
   const source = normalizeGithubAccess(unwrapYamlQuotes(value));
-  if (!/^\$\{\{[\s\S]*\}\}$/.test(source)) return false;
-  return /\bgithub\.event\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body))\b/.test(source);
+  const expressions = source.match(/\$\{\{[\s\S]*?\}\}/g) ?? [];
+  return expressions.some((expression) => untrustedGithubEventPath.test(expression));
 };
 
 const scriptSourceFromLine = (line: string) => {
@@ -66,6 +68,8 @@ const scriptSourceFromLine = (line: string) => {
   const script = flowWith[1].match(/(?:^|,)\s*script\s*:\s*((?:"[^"\n]*"|'[^'\n]*'|\$\{\{[\s\S]*?\}\}))(?=\s*,|\s*$)/);
   return script?.[1] ?? null;
 };
+
+const blockScalarHeader = (value: string) => /^[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*$/;
 
 const collectGithubScriptSources = (workflow: string) => {
   const sources: string[] = [];
@@ -83,7 +87,18 @@ const collectGithubScriptSources = (workflow: string) => {
       if (trimmed && indent <= stepIndent && /^-\s+/.test(trimmed)) break;
       const source = scriptSourceFromLine(raw);
       if (source !== null) {
-        sources.push(source);
+        if (blockScalarHeader(stripYamlComment(source).trim())) {
+          const scriptIndent = indent;
+          const body: string[] = [];
+          for (let bodyIndex = child + 1; bodyIndex < lines.length; bodyIndex += 1) {
+            const bodyLine = lines[bodyIndex];
+            if (bodyLine.trim() && indentOf(bodyLine) <= scriptIndent) break;
+            body.push(bodyLine);
+          }
+          sources.push(body.join('\n'));
+        } else {
+          sources.push(source);
+        }
         break;
       }
     }
@@ -125,6 +140,20 @@ describe('GitHub Script source trust policy', () => {
       '        with: { script: "${{ github.event.issue.body }}" }',
     ].join('\n');
     expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'flow-source.yml')).toThrow();
+  });
+
+  it('rejects untrusted expressions embedded in an inline script body', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const body = "${{ github.event.comment.body }}";',
+      '            core.info(body);',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'embedded-source.yml')).toThrow();
   });
 
   it('allows payload text read as data inside a fixed script body', () => {
