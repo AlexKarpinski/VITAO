@@ -82,23 +82,22 @@ const directUses = (mappingBody: string) => {
 const collectAliasedJobRefs = (workflow: string) => {
   const lines = workflow.split('\n');
   const anchoredRefs = new Map<string, string>();
-
-  for (const rawLine of lines) {
-    const line = stripYamlComment(rawLine);
-    if (!line.trim()) continue;
-    const anchor = line.match(/&([A-Za-z0-9_-]+)\s*\{([\s\S]*)\}/);
-    if (!anchor) continue;
-    const ref = directUses(anchor[2]);
-    if (ref) anchoredRefs.set(anchor[1], ref);
-  }
-
   const refs: string[] = [];
   let jobsIndent: number | null = null;
   let jobIndent: number | null = null;
-  for (const line of lines) {
-    if (!line.trim() || line.trimStart().startsWith('#')) continue;
-    const indent = indentOf(line);
-    const jobs = line.match(/^\s*["']?jobs["']?\s*:\s*$/);
+
+  for (const rawLine of lines) {
+    const structuralLine = stripYamlComment(rawLine);
+    if (!structuralLine.trim()) continue;
+
+    const anchor = structuralLine.match(/&([A-Za-z0-9_-]+)\s*\{([\s\S]*)\}/);
+    if (anchor) {
+      const ref = directUses(anchor[2]);
+      if (ref) anchoredRefs.set(anchor[1], ref);
+    }
+
+    const indent = indentOf(structuralLine);
+    const jobs = structuralLine.match(/^\s*["']?jobs["']?\s*:\s*$/);
     if (jobs) {
       jobsIndent = indent;
       jobIndent = null;
@@ -111,10 +110,10 @@ const collectAliasedJobRefs = (workflow: string) => {
       continue;
     }
 
-    const mappingEntry = line.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:/);
+    const mappingEntry = structuralLine.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:/);
     if (jobIndent === null && mappingEntry) jobIndent = indent;
 
-    const aliasJob = line.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\*([A-Za-z0-9_-]+)\s*(?:#.*)?$/);
+    const aliasJob = structuralLine.match(/^\s*(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*\*([A-Za-z0-9_-]+)\s*$/);
     if (!aliasJob || indent !== jobIndent) continue;
     const ref = anchoredRefs.get(aliasJob[1]);
     if (ref) refs.push(ref);
@@ -164,6 +163,28 @@ describe('aliased reusable-workflow job pinning policy', () => {
       '  call: *call-job',
     ].join('\n');
     expectImmutableRefs(safe, 'aliased-job-pinned.yml');
+  });
+
+  it('resolves a job alias against the nearest preceding anchor definition', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const unsafe = [
+      'metadata: &call { uses: owner/repo/.github/workflows/build.yml@main }',
+      'jobs:',
+      '  call: *call',
+      `later: &call { uses: owner/repo/.github/workflows/build.yml@${sha} }`,
+    ].join('\n');
+    expect(() => expectImmutableRefs(unsafe, 'aliased-job-shadowed.yml')).toThrow();
+  });
+
+  it('does not let a later mutable redefinition change an earlier alias', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const safe = [
+      `metadata: &call { uses: owner/repo/.github/workflows/build.yml@${sha} }`,
+      'jobs:',
+      '  call: *call',
+      'later: &call { uses: owner/repo/.github/workflows/build.yml@main }',
+    ].join('\n');
+    expectImmutableRefs(safe, 'aliased-job-later-shadow.yml');
   });
 
   it('ignores aliases used below direct job-entry indentation', () => {
