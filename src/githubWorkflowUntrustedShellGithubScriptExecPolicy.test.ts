@@ -28,7 +28,7 @@ type Quote = "'" | '"' | '`' | null;
 
 const extractCalls = (script: string, names: string[]): Call[] => {
   const calls: Call[] = [];
-  const matcher = new RegExp(`(?:(\\b[A-Za-z_$][\\w$]*)\\s*\\.\\s*)?\\b(${names.join('|')})\\s*\\(`, 'g');
+  const matcher = new RegExp(`(?:(\\b[A-Za-z_$][\\w$]*)\\s*\\.\\s*)?\\b(${names.join('|')})\\s*(?:\\?\\.\\s*)?\\(`, 'g');
   for (let match = matcher.exec(script); match; match = matcher.exec(script)) {
     const open = matcher.lastIndex - 1;
     let depth = 1;
@@ -242,6 +242,20 @@ describe('GitHub Script shell execution trust boundary', () => {
       "            require('node:child_process').execSync(context.payload.comment.body);",
     ].join('\n');
     expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects optional calls to child-process execution sinks', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const cp = require('node:child_process');",
+      '            cp.execSync?.(context.payload.comment.body);',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptShellExecution(unsafe, 'optional-call.yml')).toThrow();
   });
 
   it('rejects spawn with shell true when its command is attacker controlled', () => {
