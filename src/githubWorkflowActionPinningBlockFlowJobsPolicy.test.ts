@@ -75,12 +75,22 @@ const collectBlockFlowJobRefs = (workflow: string) => {
   let jobsIndent: number | null = null;
   let jobEntryIndent: number | null = null;
   let explicitJobKey: { indent: number; key: string } | null = null;
+  let blockScalarIndent: number | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
     const line = stripYamlComment(raw);
     const trimmed = line.trim();
     const indent = indentOf(raw);
+
+    if (blockScalarIndent !== null) {
+      if (!trimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+    if (/:\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*$/.test(line)) {
+      blockScalarIndent = indent;
+      continue;
+    }
 
     if (/^jobs\s*:\s*$/.test(trimmed)) {
       jobsIndent = indent;
@@ -158,5 +168,19 @@ describe('block flow reusable-workflow job pinning', () => {
     const safe = ['jobs:', '  build:', '    env: { uses: actions/checkout@v4 }', '    steps:', '      - run: echo safe'].join('\n');
     expect(collectBlockFlowJobRefs(safe)).toEqual([]);
     expectPinned(safe, 'nested-env.yml');
+  });
+
+  it('ignores reusable-workflow examples inside block scalars', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - run: |',
+      '          jobs:',
+      '            call: { uses: owner/repo/.github/workflows/build.yml@main }',
+      '          echo safe',
+    ].join('\n');
+    expect(collectBlockFlowJobRefs(safe)).toEqual([]);
+    expectPinned(safe, 'block-scalar-documentation.yml');
   });
 });
