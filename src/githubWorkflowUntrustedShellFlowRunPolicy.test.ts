@@ -15,6 +15,8 @@ const untrustedExpressions = [
   'github.event.pull_request.body',
   'github.event.review.body',
   'github.event.review_comment.body',
+  'github.event.discussion.title',
+  'github.event.discussion.body',
 ];
 
 const normalizeExpressionAccess = (value: string) =>
@@ -80,6 +82,15 @@ describe('GitHub workflow flow-style shell trust policy', () => {
       expectNoUntrustedFlowRun(
         `steps:\n  - { run: 'bash -c "\${{ github.event.comment.body }}"' }`,
         'unsafe.yml',
+      ),
+    ).toThrow();
+  });
+
+  it('rejects discussion titles in a flow-style run mapping', () => {
+    expect(() =>
+      expectNoUntrustedFlowRun(
+        `steps:\n  - { run: 'bash -c "\${{ github.event.discussion.title }}"' }`,
+        'discussion-title.yml',
       ),
     ).toThrow();
   });
