@@ -10,6 +10,7 @@ const workflowFiles = readdirSync(workflowsDir)
 const immutableSha = /^[0-9a-f]{40}$/i;
 const externalReusable = /^([^\s@]+\/.+?\.github\/workflows\/[^\s@]+)@([^\s#]+)$/;
 const blockScalarHeader = /[>|](?:[+-]?[1-9]|[1-9]?[+-])?$/;
+const nodeProperty = String.raw`(?:&[^\s,\[\]{}]+|!(?:<[^>]+>|[^\s,\[\]{}]*)?)`;
 
 const decodeKey = (raw: string) => {
   const value = raw.trim();
@@ -73,6 +74,7 @@ const collectExplicitJobsReusableRefs = (workflow: string) => {
     const value = stripComment(lines[valueLine]).match(/^(\s*):\s*(.*)$/);
     if (!value || value[1].length < keyIndent) continue;
     const valueIndent = value[1].length;
+    const usesKey = new RegExp(`^\\s*(?:${nodeProperty}\\s+)*(?:['\"]?uses['\"]?)\\s*:\\s*([^\\s#]+|\"[^\"]+\"|'[^']+')\\s*$`);
 
     for (let child = valueLine + 1; child < lines.length; child += 1) {
       const raw = stripComment(lines[child]);
@@ -81,7 +83,7 @@ const collectExplicitJobsReusableRefs = (workflow: string) => {
       const childIndent = raw.match(/^\s*/)?.[0].length ?? 0;
       if (childIndent <= valueIndent) break;
 
-      const uses = raw.match(/^\s*(?:['"]?uses['"]?)\s*:\s*([^\s#]+|"[^"]+"|'[^']+')\s*$/);
+      const uses = raw.match(usesKey);
       if (!uses) continue;
       const ref = uses[1].replace(/^['"]|['"]$/g, '');
       if (externalReusable.test(ref)) refs.push(ref);
@@ -118,6 +120,28 @@ on: workflow_dispatch
 :
   call:
     uses: owner/repo/.github/workflows/reusable.yml@0123456789abcdef0123456789abcdef01234567
+`;
+    expect(() => assertExplicitJobsPinned(workflow)).not.toThrow();
+  });
+
+  it('rejects mutable reusable refs with decorated uses keys under explicit jobs', () => {
+    const workflow = `
+on: workflow_dispatch
+? jobs
+:
+  call:
+    ! uses: owner/repo/.github/workflows/reusable.yml@main
+`;
+    expect(() => assertExplicitJobsPinned(workflow)).toThrow();
+  });
+
+  it('accepts immutable reusable refs with decorated uses keys under explicit jobs', () => {
+    const workflow = `
+on: workflow_dispatch
+? jobs
+:
+  call:
+    !!str uses: owner/repo/.github/workflows/reusable.yml@0123456789abcdef0123456789abcdef01234567
 `;
     expect(() => assertExplicitJobsPinned(workflow)).not.toThrow();
   });
