@@ -111,7 +111,7 @@ const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
       continue;
     }
 
-    const match = trimmed.match(/^-\s+(?:(?:&[^\s]+|![^\s]*)\s+)+uses\s*:\s*(.+?)\s*$/);
+    const match = trimmed.match(/^-\s+(?:(?:&[^\s]+|![^\s]*)\s+)+(?:"uses"|'uses'|uses)\s*:\s*(.+?)\s*$/);
     if (!match) continue;
 
     let rawRef = match[1].trim();
@@ -144,6 +144,28 @@ describe('GitHub workflow decorated uses scope policy', () => {
     ].join('\n');
 
     expect(() => expectDecoratedStepUsesPinned(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects a mutable quoted decorated uses key in block steps', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      '      - &uses-key "uses": actions/checkout@v4',
+    ].join('\n');
+
+    expect(() => expectDecoratedStepUsesPinned(unsafe, 'quoted-uses.yml')).toThrow();
+  });
+
+  it('accepts an immutable quoted decorated uses key in block steps', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    steps:',
+      "      - &uses-key 'uses': actions/checkout@0123456789abcdef0123456789abcdef01234567",
+    ].join('\n');
+
+    expectDecoratedStepUsesPinned(safe, 'quoted-uses-pinned.yml');
   });
 
   it('rejects a mutable uses key with a bare non-specific tag', () => {
