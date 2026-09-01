@@ -13,7 +13,7 @@ const normalizeAccess = (value: string) => value
 
 const containsUntrustedShellText = (value: string) => {
   const normalized = normalizeAccess(value);
-  return /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body|head\.ref)|review(?:_comment)?\.body)/.test(normalized)
+  return /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.ref)|review(?:_comment)?\.body)/.test(normalized)
     || /tojson\s*\(\s*github\.event(?:\.[A-Za-z_][A-Za-z0-9_-]*)?\s*\)/i.test(normalized);
 };
 
@@ -98,6 +98,32 @@ describe('GitHub workflow custom-shell trust policy', () => {
       '        run: echo safe',
     ].join('\n');
     expect(() => expectSafeShellTemplates(unsafe, 'custom-shell.yml')).toThrow();
+  });
+
+  it('rejects review-comment diff hunks interpolated into a custom shell template', () => {
+    const unsafe = [
+      'on: pull_request_review_comment',
+      'jobs:',
+      '  test:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      "      - shell: bash -c '${{ github.event.comment.diff_hunk }}' -- {0}",
+      '        run: echo safe',
+    ].join('\n');
+    expect(() => expectSafeShellTemplates(unsafe, 'review-diff-shell.yml')).toThrow();
+  });
+
+  it('rejects review-comment paths interpolated into a custom shell template', () => {
+    const unsafe = [
+      'on: pull_request_review_comment',
+      'jobs:',
+      '  test:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      "      - shell: bash -c '${{ github.event.comment.path }}' -- {0}",
+      '        run: echo safe',
+    ].join('\n');
+    expect(() => expectSafeShellTemplates(unsafe, 'review-path-shell.yml')).toThrow();
   });
 
   it('rejects attacker-controlled text inside block-scalar custom shell templates', () => {
