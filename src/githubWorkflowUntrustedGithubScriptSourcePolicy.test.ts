@@ -74,6 +74,12 @@ const scriptSourceFromLine = (line: string) => {
 
 const blockScalarHeader = (value: string) => /^[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*$/;
 
+const hasDirectUntrustedScriptExpression = (workflow: string) => workflow.split('\n').some((line) => {
+  const normalized = normalizeGithubAccess(stripYamlComment(line));
+  if (!normalized.includes('${{') || !untrustedGithubEventPath.test(normalized)) return false;
+  return /^\s*script\s*:/.test(normalized) || /^\s*with\s*:\s*\{.*\bscript\s*:/.test(normalized);
+});
+
 const collectGithubScriptSources = (workflow: string) => {
   const sources: string[] = [];
   const lines = workflow.split('\n');
@@ -111,6 +117,7 @@ const collectGithubScriptSources = (workflow: string) => {
 };
 
 const expectNoUntrustedGithubScriptSource = (workflow: string, source: string) => {
+  expect(hasDirectUntrustedScriptExpression(workflow), `${source}: attacker-controlled GitHub text is used directly as GitHub Script source`).toBe(false);
   for (const scriptSource of collectGithubScriptSources(workflow)) {
     expect(isUntrustedGithubScriptSource(scriptSource), `${source}: attacker-controlled GitHub text becomes the GitHub Script source`).toBe(false);
   }
