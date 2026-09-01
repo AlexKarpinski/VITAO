@@ -54,8 +54,7 @@ const untrustedGithubEventPath = /\bgithub\.event\.(?:issue\.(?:title|body)|comm
 
 const isUntrustedGithubScriptSource = (value: string) => {
   const source = normalizeGithubAccess(unwrapYamlQuotes(value));
-  const expressions = source.match(/\$\{\{[\s\S]*?\}\}/g) ?? [];
-  return expressions.some((expression) => untrustedGithubEventPath.test(expression));
+  return source.includes('${{') && untrustedGithubEventPath.test(source);
 };
 
 const scriptSourceFromLine = (line: string) => {
