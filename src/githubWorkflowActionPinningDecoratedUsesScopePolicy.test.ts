@@ -57,6 +57,11 @@ const mappingKey = (trimmed: string) => {
   return match ? decodeSimpleKey(match[1]) : null;
 };
 
+const leadingMappingKey = (trimmed: string) => {
+  const match = trimmed.match(/^((?:"(?:\\.|[^"])*")|(?:'(?:''|[^'])*')|(?:[A-Za-z_][A-Za-z0-9_-]*))\s*:/);
+  return match ? decodeSimpleKey(match[1]) : null;
+};
+
 const isBlockScalarHeader = (trimmed: string) =>
   /^(?:-\s+)?[^:]+:\s*(?:(?:&[^\s]+|![^\s]*)\s+)*(?:[>|](?:[+-]?\d*|\d+[+-]?))\s*$/.test(trimmed);
 
@@ -84,6 +89,9 @@ const decodeDecoratedRef = (value: string) => {
 
 const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
   const lines = workflow.split('\n');
+  let jobsIndent: number | null = null;
+  let jobIndent: number | null = null;
+  let jobFieldIndent: number | null = null;
   let stepsIndent: number | null = null;
   let blockScalarIndent: number | null = null;
 
@@ -99,7 +107,40 @@ const expectDecoratedStepUsesPinned = (workflow: string, source: string) => {
       blockScalarIndent = null;
     }
 
-    if (mappingKey(trimmed) === 'steps') {
+    const key = leadingMappingKey(trimmed);
+    if (key === 'jobs') {
+      jobsIndent = indent;
+      jobIndent = null;
+      jobFieldIndent = null;
+      stepsIndent = null;
+      continue;
+    }
+
+    if (jobsIndent !== null && indent <= jobsIndent) {
+      jobsIndent = null;
+      jobIndent = null;
+      jobFieldIndent = null;
+      stepsIndent = null;
+    }
+    if (jobsIndent === null) continue;
+
+    if (jobIndent === null && key !== null && indent > jobsIndent) {
+      jobIndent = indent;
+      jobFieldIndent = null;
+      stepsIndent = null;
+      continue;
+    }
+
+    if (jobIndent !== null && key !== null && indent === jobIndent) {
+      jobFieldIndent = null;
+      stepsIndent = null;
+      continue;
+    }
+    if (jobIndent === null || indent <= jobIndent) continue;
+
+    if (jobFieldIndent === null && key !== null) jobFieldIndent = indent;
+
+    if (key === 'steps' && indent === jobFieldIndent) {
       stepsIndent = indent;
       continue;
     }
@@ -161,7 +202,7 @@ describe('GitHub workflow decorated uses scope policy', () => {
     const safe = [
       'jobs:',
       '  build:',
-      '    steps:',
+      "    'steps':",
       "      - &uses-key 'uses': actions/checkout@0123456789abcdef0123456789abcdef01234567",
     ].join('\n');
 
@@ -210,6 +251,21 @@ describe('GitHub workflow decorated uses scope policy', () => {
     ].join('\n');
 
     expectDecoratedStepUsesPinned(safe, 'quoted-steps-pinned.yml');
+  });
+
+  it('accepts a matrix axis named steps as non-executable data', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        steps:',
+      '          - &uses-key uses: actions/checkout@v4',
+      '    steps:',
+      '      - run: echo safe',
+    ].join('\n');
+
+    expectDecoratedStepUsesPinned(safe, 'matrix-steps.yml');
   });
 
   it('accepts an immutable decorated action split across a quoted continuation', () => {
