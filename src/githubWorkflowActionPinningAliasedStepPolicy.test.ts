@@ -9,6 +9,9 @@ const workflowFiles = readdirSync('.github/workflows')
 const immutableSha = /^[^\s@]+@[0-9a-f]{40}$/i;
 const anchorName = '[A-Za-z0-9_-]+';
 
+type AnchorDefinition = { line: number; ref: string };
+type AliasUse = { line: number; name: string };
+
 const isEscapedDoubleQuote = (value: string, index: number) => {
   let backslashes = 0;
   for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor -= 1) backslashes += 1;
@@ -135,8 +138,10 @@ const directUsesRef = (mapping: string) => {
 };
 
 const collectAnchoredActionMappings = (workflow: string) => {
-  const anchors = new Map<string, string>();
-  for (const line of workflow.split('\n')) {
+  const anchors = new Map<string, AnchorDefinition[]>();
+  const lines = workflow.split('\n');
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
     if (line.trimStart().startsWith('#')) continue;
     const structuralLine = maskQuotedScalars(line);
     const anchorPattern = new RegExp(`&(${anchorName})\\b`, 'g');
@@ -149,33 +154,37 @@ const collectAnchoredActionMappings = (workflow: string) => {
       const mapping = extractBalancedFlowMapping(line, brace);
       if (mapping === null) continue;
       const uses = directUsesRef(mapping);
-      if (uses) anchors.set(anchor[1], uses);
+      if (!uses) continue;
+      const definitions = anchors.get(anchor[1]) ?? [];
+      definitions.push({ line: lineIndex, ref: uses });
+      anchors.set(anchor[1], definitions);
     }
   }
   return anchors;
 };
 
 const aliasesUsedAsSteps = (workflow: string) => {
-  const names = new Set<string>();
+  const uses: AliasUse[] = [];
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
 
-  const collectInlineStepsAliases = (value: string) => {
+  const collectInlineStepsAliases = (value: string, line: number) => {
     const trimmed = value.trim().replace(/\s+#.*$/, '');
     const exactAlias = trimmed.match(new RegExp(`^\\*(${anchorName})$`));
     if (exactAlias) {
-      names.add(exactAlias[1]);
+      uses.push({ line, name: exactAlias[1] });
       return;
     }
     const sequence = trimmed.match(/^\[([\s\S]*)\]$/);
     if (!sequence) return;
     for (const item of sequence[1].split(',')) {
       const alias = item.trim().match(new RegExp(`^\\*(${anchorName})$`));
-      if (alias) names.add(alias[1]);
+      if (alias) uses.push({ line, name: alias[1] });
     }
   };
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith('#')) continue;
@@ -183,7 +192,7 @@ const aliasesUsedAsSteps = (workflow: string) => {
     const steps = trimmed.match(/^["']?steps["']?\s*:\s*(.*)$/);
     if (steps) {
       stepsIndent = indent;
-      collectInlineStepsAliases(steps[1]);
+      collectInlineStepsAliases(steps[1], lineIndex);
       continue;
     }
 
@@ -194,17 +203,19 @@ const aliasesUsedAsSteps = (workflow: string) => {
     }
 
     const blockAlias = trimmed.match(new RegExp(`^-\\s*\\*(${anchorName})\\s*(?:#.*)?$`));
-    if (blockAlias) names.add(blockAlias[1]);
+    if (blockAlias) uses.push({ line: lineIndex, name: blockAlias[1] });
   }
-  return names;
+  return uses;
 };
 
 const expectAliasedStepsPinned = (workflow: string, source: string) => {
   const anchors = collectAnchoredActionMappings(workflow);
   for (const alias of aliasesUsedAsSteps(workflow)) {
-    const ref = anchors.get(alias);
+    const definitions = anchors.get(alias.name) ?? [];
+    const definition = [...definitions].reverse().find((candidate) => candidate.line <= alias.line);
+    const ref = definition?.ref;
     if (!ref || ref.startsWith('./') || ref.startsWith('docker://')) continue;
-    expect(ref, `${source}: aliased action step *${alias} must use an immutable SHA`).toMatch(immutableSha);
+    expect(ref, `${source}: aliased action step *${alias.name} must use an immutable SHA`).toMatch(immutableSha);
   }
 };
 
@@ -219,6 +230,34 @@ describe('GitHub workflow aliased action-step pinning policy', () => {
       '    steps: [*checkout]',
     ].join('\n');
     expect(() => expectAliasedStepsPinned(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('resolves an alias against the nearest preceding mutable anchor', () => {
+    const unsafe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        first: [ &checkout { uses: actions/checkout@v4 } ]',
+      '    steps: [*checkout]',
+      '    env:',
+      '      later: [ &checkout { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 } ]',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(unsafe, 'preceding-mutable-anchor.yml')).toThrow();
+  });
+
+  it('does not let a later mutable anchor redefine an earlier alias use', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    strategy:',
+      '      matrix:',
+      '        first: [ &checkout { uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 } ]',
+      '    steps: [*checkout]',
+      '    env:',
+      '      later: [ &checkout { uses: actions/checkout@v4 } ]',
+    ].join('\n');
+    expect(() => expectAliasedStepsPinned(safe, 'later-mutable-anchor.yml')).not.toThrow();
   });
 
   it('rejects an anchored action mapping with an explicit mutable uses key', () => {
