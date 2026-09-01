@@ -50,6 +50,7 @@ const unwrapYamlQuotes = (value: string) => {
   return trimmed;
 };
 
+const scriptKey = String.raw`(?:script|"script"|'script')`;
 const untrustedGithubEventPath = /\bgithub\.event\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body))\b/;
 
 const isUntrustedGithubScriptSource = (value: string) => {
@@ -63,12 +64,12 @@ const isUntrustedGithubScriptSource = (value: string) => {
 
 const scriptSourceFromLine = (line: string) => {
   const structural = stripYamlComment(line);
-  const direct = structural.match(/^\s*script\s*:\s*(.+?)\s*$/);
+  const direct = structural.match(new RegExp(`^\\s*${scriptKey}\\s*:\\s*(.+?)\\s*$`));
   if (direct) return direct[1];
 
   const flowWith = structural.match(/^\s*with\s*:\s*\{([\s\S]*)\}\s*$/);
   if (!flowWith) return null;
-  const script = flowWith[1].match(/(?:^|,)\s*script\s*:\s*((?:"[^"\n]*"|'[^'\n]*'|\$\{\{[\s\S]*?\}\}))(?=\s*,|\s*$)/);
+  const script = flowWith[1].match(new RegExp(`(?:^|,)\\s*${scriptKey}\\s*:\\s*((?:"[^"\\n]*"|'[^'\\n]*'|\\$\\{\\{[\\s\\S]*?\\}\\}))(?=\\s*,|\\s*$)`));
   return script?.[1] ?? null;
 };
 
@@ -77,7 +78,8 @@ const blockScalarHeader = (value: string) => /^[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*
 const hasDirectUntrustedScriptExpression = (workflow: string) => workflow.split('\n').some((line) => {
   const normalized = normalizeGithubAccess(stripYamlComment(line));
   if (!normalized.includes('${{') || !untrustedGithubEventPath.test(normalized)) return false;
-  return /^\s*script\s*:/.test(normalized) || /^\s*with\s*:\s*\{.*\bscript\s*:/.test(normalized);
+  return new RegExp(`^\\s*${scriptKey}\\s*:`).test(normalized)
+    || new RegExp(`^\\s*with\\s*:\\s*\\{.*(?:^|[,\\s])${scriptKey}\\s*:`).test(normalized);
 });
 
 const collectGithubScriptSources = (workflow: string) => {
@@ -141,13 +143,25 @@ describe('GitHub Script source trust policy', () => {
     expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'direct-source.yml')).toThrow();
   });
 
+  it('rejects quoted YAML script keys', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          "script": ${{ github.event.comment.body }}',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'quoted-script-key.yml')).toThrow();
+  });
+
   it('rejects the same sink in a flow-style with mapping', () => {
     const unsafe = [
       'jobs:',
       '  test:',
       '    steps:',
       '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
-      '        with: { script: "${{ github.event.issue.body }}" }',
+      '        with: { "script": "${{ github.event.issue.body }}" }',
     ].join('\n');
     expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'flow-source.yml')).toThrow();
   });
