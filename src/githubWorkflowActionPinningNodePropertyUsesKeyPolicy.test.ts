@@ -89,7 +89,10 @@ const stripPlainScalarContinuations = (lines: string[]) => {
   });
 };
 
-const cleanDeferredRef = (line: string) => line.trim().replace(/[}\],]+\s*$/, '').trim().replace(/^['"]|['"]$/g, '');
+const cleanDeferredRef = (line: string) => {
+  const match = line.trim().match(/^['"]?([^'"\s,}\]]+)/);
+  return match?.[1] ?? '';
+};
 
 const collectNodePropertyUsesRefs = (workflow: string) => {
   const refs: string[] = [];
