@@ -54,7 +54,7 @@ const splitTopLevel = (body: string) => {
 };
 
 const flowMappingBody = (source: string, key: string) => {
-  const match = source.match(new RegExp(`(?:^|[,{}])\\s*${key}\\s*:\\s*\\{`));
+  const match = source.match(new RegExp(`(?:^|[,{}]|-)\\s*${key}\\s*:\\s*\\{`));
   if (!match || match.index === undefined) return null;
   const opening = source.indexOf('{', match.index + match[0].lastIndexOf('{'));
   let quote: '"' | "'" | null = null;
