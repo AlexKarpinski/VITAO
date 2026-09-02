@@ -50,7 +50,7 @@ const isOutsideQuotedScalar = (line: string, index: number, initial: Quote = nul
   quoteStateAt(line, index, initial) === null;
 
 const findStepsKey = (line: string, initial: Quote = null) => {
-  const matcher = /(?:^|[,{]\s*)(?:"steps"|'steps'|steps)\s*:/g;
+  const matcher = /(?:^|[,{])[ \t]*(?:"steps"|'steps'|steps)[ \t]*:/g;
   for (let match = matcher.exec(line); match; match = matcher.exec(line)) {
     const keyOffset = match[0].search(/(?:"steps"|'steps'|steps)\s*:/);
     const keyIndex = (match.index ?? 0) + Math.max(0, keyOffset);
