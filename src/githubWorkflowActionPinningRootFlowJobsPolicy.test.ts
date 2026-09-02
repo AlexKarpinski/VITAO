@@ -118,8 +118,26 @@ const mappingBody = (value: string) => {
   return trimmed.slice(1, -1);
 };
 
+const stripRootPreamble = (workflow: string) => {
+  const lines = workflow.replace(/^\uFEFF/, '').split('\n');
+  let index = 0;
+  while (index < lines.length) {
+    const trimmed = lines[index].trim();
+    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('%')) {
+      index += 1;
+      continue;
+    }
+    if (trimmed === '---') {
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  return lines.slice(index).join('\n').trim();
+};
+
 const collectRootFlowJobRefs = (workflow: string) => {
-  const document = workflow.trim().replace(/^---\s*/, '');
+  const document = stripRootPreamble(workflow);
   const rootBody = mappingBody(document);
   if (rootBody === null) return [];
 
@@ -162,6 +180,16 @@ describe('GitHub workflow root flow jobs pinning policy', () => {
         '{ "name": "Review", "on": "push", "jobs": { "call": { "uses": "owner/repo/.github/workflows/build.yml@main" } } }',
       ),
     ).toThrow(/Expected immutable reusable-workflow pin/);
+  });
+
+  it('rejects mutable root flow jobs after comments and directives', () => {
+    const workflow = [
+      '# generated workflow',
+      '%YAML 1.2',
+      '---',
+      '{ "name": "Review", "jobs": { "call": { "uses": "owner/repo/.github/workflows/build.yml@main" } } }',
+    ].join('\n');
+    expect(() => assertRootFlowJobsPinned(workflow)).toThrow(/Expected immutable reusable-workflow pin/);
   });
 
   it('accepts immutable reusable workflows inside a root flow mapping', () => {
