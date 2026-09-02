@@ -33,6 +33,7 @@ const structuralUses = (source: string) => {
   let explicitStepsIndent: number | null = null;
   let blockStepsIndent: number | null = null;
   let pendingBareStepIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
 
   const collectFlowMapping = (text: string) => {
     const normalized = text.trim();
@@ -78,7 +79,19 @@ const structuralUses = (source: string) => {
     const raw = lines[index];
     const indent = raw.match(/^\s*/)?.[0].length ?? 0;
     const trimmed = raw.trim();
+
+    if (blockScalarIndent !== null) {
+      if (!trimmed) continue;
+      if (indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
     if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const blockScalar = trimmed.match(/^(?:-\s*)?(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*)\s*:\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?(?:\s+#.*)?$/);
+    if (blockScalar) {
+      blockScalarIndent = indent;
+      continue;
+    }
 
     const explicitKey = trimmed.match(/^\?\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*$/);
     if (explicitKey && decodeYamlKey(explicitKey[1]) === 'steps') {
@@ -153,6 +166,23 @@ describe('remaining structural action pinning P1 policy', () => {
 
   it('ignores uses-like text inside quoted flow scalars', () => {
     const workflow = 'jobs:\n  demo:\n    steps:\n      - { run: "echo ok, uses: actions/checkout@v4" }';
+    expect(structuralUses(workflow)).toEqual([]);
+    expectPinned(workflow);
+  });
+
+  it('ignores explicit steps-like documentation inside block scalars', () => {
+    const workflow = [
+      'jobs:',
+      '  demo:',
+      '    steps:',
+      '      - run: |',
+      "          cat <<'DOC'",
+      '          ? steps',
+      '          : [',
+      '              { uses: actions/checkout@v4 }',
+      '            ]',
+      '          DOC',
+    ].join('\n');
     expect(structuralUses(workflow)).toEqual([]);
     expectPinned(workflow);
   });
