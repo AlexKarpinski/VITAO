@@ -41,21 +41,29 @@ const stripYamlComment = (line: string) => {
   return line;
 };
 
+const decodeRunValue = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed.slice(1, -1);
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
+  return trimmed;
+};
+
+const collectRunMappings = (source: string, scripts: string[]) => {
+  const pattern = /(?:^|[{,])\s*(?:"run"|'run'|run)\s*:\s*("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^,}]+)(?=\s*[,}])/g;
+  for (const match of source.matchAll(pattern)) scripts.push(decodeRunValue(match[1]));
+};
+
 const extractFlowRunScripts = (workflow: string) => {
   const scripts: string[] = [];
   for (const rawLine of workflow.split('\n')) {
     const line = stripYamlComment(rawLine);
-    if (!/^\s*-\s*\{/.test(line)) continue;
-    const match = line.match(/(?:^|[{,])\s*(?:"run"|'run'|run)\s*:\s*("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^,}]+)(?=\s*[,}])/);
-    if (!match) continue;
-    const value = match[1].trim();
-    scripts.push(
-      value.startsWith('"') && value.endsWith('"')
-        ? value.slice(1, -1)
-        : value.startsWith("'") && value.endsWith("'")
-          ? value.slice(1, -1).replace(/''/g, "'")
-          : value,
-    );
+    if (/^\s*-\s*\{/.test(line)) collectRunMappings(line, scripts);
+
+    const stepsMatch = line.match(/(?:^|[{,])\s*(?:"steps"|'steps'|steps)\s*:\s*\[/);
+    if (stepsMatch?.index !== undefined) {
+      const opening = line.indexOf('[', stepsMatch.index);
+      if (opening >= 0) collectRunMappings(line.slice(opening), scripts);
+    }
   }
   return scripts;
 };
@@ -93,6 +101,24 @@ describe('GitHub workflow flow-style shell trust policy', () => {
         'discussion-title.yml',
       ),
     ).toThrow();
+  });
+
+  it('rejects untrusted text in an inline steps flow sequence', () => {
+    expect(() =>
+      expectNoUntrustedFlowRun(
+        `jobs: { build: { steps: [{ run: 'bash -c "\${{ github.event.issue.body }}"' }] } }`,
+        'inline-steps.yml',
+      ),
+    ).toThrow();
+  });
+
+  it('does not treat unrelated flow mappings as executable steps', () => {
+    expect(() =>
+      expectNoUntrustedFlowRun(
+        `strategy: { matrix: { include: [{ run: '\${{ github.event.issue.body }}' }] } }\nsteps: [{ run: 'echo safe' }]`,
+        'matrix-data.yml',
+      ),
+    ).not.toThrow();
   });
 
   it('accepts a safe flow-style run mapping', () => {
