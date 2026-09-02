@@ -67,24 +67,28 @@ const collectDirectBlockScalarKeyRefs = (workflow: string) => {
     if (!explicitKeyHeader || !blockHeader.test(explicitKeyHeader[1])) continue;
 
     const keyBody: string[] = [];
+    let valueIndex: number | null = null;
     let child = index + 1;
     for (; child < lines.length; child += 1) {
       const childRaw = lines[child];
       const childIndent = childRaw.match(/^\s*/)?.[0].length ?? 0;
       const childTrimmed = stripComment(childRaw).trim();
       if (!childTrimmed) continue;
+      if (/^:\s*/.test(childTrimmed)) { valueIndex = child; break; }
       if (childIndent <= indent) break;
       keyBody.push(childTrimmed);
     }
     if (keyBody.join(' ').trim() !== 'uses') continue;
 
-    for (; child < lines.length; child += 1) {
-      const valueRaw = lines[child];
+    for (let valueLine = valueIndex ?? child; valueLine < lines.length; valueLine += 1) {
+      const valueRaw = lines[valueLine];
       const valueTrimmed = stripComment(valueRaw).trim();
       if (!valueTrimmed) continue;
       const value = valueTrimmed.match(/^:\s*(.+?)\s*$/);
-      if (value) refs.push(unquote(value[1]));
-      if (value) index = child;
+      if (value) {
+        refs.push(unquote(value[1]));
+        index = valueLine;
+      }
       break;
     }
   }
