@@ -81,6 +81,10 @@ const collectBlockSteps = (workflow: string) => {
   return steps;
 };
 
+const normalizeStepLine = (raw: string, firstLine: boolean) => firstLine
+  ? raw.replace(/^(\s*)-\s*/, '$1  ')
+  : raw;
+
 const findStepShellEnvViolations = (workflow: string) => {
   const violations: string[] = [];
   for (const step of collectBlockSteps(workflow)) {
@@ -91,10 +95,10 @@ const findStepShellEnvViolations = (workflow: string) => {
     let shellBlockIndent: number | null = null;
 
     for (let index = 0; index < step.lines.length; index += 1) {
-      const raw = step.lines[index];
-      const line = stripYamlComment(raw);
+      const normalizedRaw = normalizeStepLine(step.lines[index], index === 0);
+      const line = stripYamlComment(normalizedRaw);
       const trimmed = line.trim();
-      const indent = indentOf(raw);
+      const indent = indentOf(normalizedRaw);
       if (!trimmed) continue;
 
       if (envIndent !== null && indent <= envIndent) envIndent = null;
