@@ -44,12 +44,101 @@ const stripYamlComment = (value: string) => {
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const blockScalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
 
+const splitFlowMapping = (body: string) => {
+  const entries: string[] = [];
+  let start = 0;
+  let quote: '"' | "'" | null = null;
+  let braces = 0;
+  let brackets = 0;
+  let backslashes = 0;
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (quote) {
+      if (char === '\\') {
+        backslashes += 1;
+        continue;
+      }
+      if (char === quote && (quote === "'" || backslashes % 2 === 0)) quote = null;
+      backslashes = 0;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      backslashes = 0;
+      continue;
+    }
+    if (char === '{') braces += 1;
+    else if (char === '}') braces -= 1;
+    else if (char === '[') brackets += 1;
+    else if (char === ']') brackets -= 1;
+    else if (char === ',' && braces === 0 && brackets === 0) {
+      entries.push(body.slice(start, index));
+      start = index + 1;
+    }
+  }
+  entries.push(body.slice(start));
+  return entries;
+};
+
+const collectFlowShellTemplates = (line: string) => {
+  const templates: string[] = [];
+  const structural = stripYamlComment(line);
+  const stepsMatch = structural.match(/(?:^|[,{}])\s*["']?steps["']?\s*:\s*\[/);
+  if (!stepsMatch || stepsMatch.index === undefined) return templates;
+
+  const sequenceStart = structural.indexOf('[', stepsMatch.index);
+  if (sequenceStart < 0) return templates;
+  let quote: '"' | "'" | null = null;
+  let backslashes = 0;
+  let sequenceDepth = 0;
+  let mappingStart: number | null = null;
+  let mappingDepth = 0;
+
+  for (let index = sequenceStart; index < structural.length; index += 1) {
+    const char = structural[index];
+    if (quote) {
+      if (char === '\\') {
+        backslashes += 1;
+        continue;
+      }
+      if (char === quote && (quote === "'" || backslashes % 2 === 0)) quote = null;
+      backslashes = 0;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      backslashes = 0;
+      continue;
+    }
+    if (char === '[') sequenceDepth += 1;
+    else if (char === ']') {
+      sequenceDepth -= 1;
+      if (sequenceDepth === 0) break;
+    } else if (char === '{') {
+      if (sequenceDepth === 1 && mappingDepth === 0) mappingStart = index + 1;
+      mappingDepth += 1;
+    } else if (char === '}') {
+      mappingDepth -= 1;
+      if (sequenceDepth === 1 && mappingDepth === 0 && mappingStart !== null) {
+        const mappingBody = structural.slice(mappingStart, index);
+        for (const entry of splitFlowMapping(mappingBody)) {
+          const match = entry.match(/^\s*["']?shell["']?\s*:\s*(.+?)\s*$/);
+          if (match) templates.push(match[1]);
+        }
+        mappingStart = null;
+      }
+    }
+  }
+  return templates;
+};
+
 const collectShellTemplates = (workflow: string) => {
   const templates: string[] = [];
   const lines = workflow.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
     const line = stripYamlComment(raw);
+    templates.push(...collectFlowShellTemplates(line));
     const match = line.match(/^\s*(?:-\s*)?(?:["']?shell["']?)\s*:\s*(.+?)\s*$/);
     if (!match) continue;
 
@@ -98,6 +187,23 @@ describe('GitHub workflow custom-shell trust policy', () => {
       '        run: echo safe',
     ].join('\n');
     expect(() => expectSafeShellTemplates(unsafe, 'custom-shell.yml')).toThrow();
+  });
+
+  it('rejects flow-style custom shell keys', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'jobs:',
+      '  test: { runs-on: ubuntu-latest, steps: [{ shell: "bash -c \'${{ github.event.comment.body }}\' -- {0}", run: echo safe }] }',
+    ].join('\n');
+    expect(() => expectSafeShellTemplates(unsafe, 'flow-custom-shell.yml')).toThrow();
+  });
+
+  it('ignores shell-like keys nested below a flow step', () => {
+    const safe = [
+      'jobs:',
+      '  test: { runs-on: ubuntu-latest, steps: [{ run: echo safe, env: { shell: "${{ github.event.comment.body }}" } }] }',
+    ].join('\n');
+    expectSafeShellTemplates(safe, 'nested-shell-data.yml');
   });
 
   it('rejects review-comment diff hunks interpolated into a custom shell template', () => {
