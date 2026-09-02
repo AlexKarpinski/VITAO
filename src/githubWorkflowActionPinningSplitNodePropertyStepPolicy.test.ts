@@ -9,6 +9,7 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const blockScalarHeader = /:\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*(?:#.*)?$/;
+const nodeProperties = /^(?:(?:&[^\s{}]+|![^\s{}]+|!)\s*)+/;
 
 const stripYamlComment = (value: string) => {
   let quote: '"' | "'" | null = null;
@@ -90,14 +91,17 @@ const collectSplitNodePropertyStepRefs = (workflow: string) => {
 
     if (pendingStepIndent !== null) {
       if (indent > pendingStepIndent) {
-        const mapping = trimmed.match(/^\{([\s\S]*)\}\s*$/);
+        const continuation = trimmed.replace(nodeProperties, '');
+        const mapping = continuation.match(/^\{([\s\S]*)\}\s*$/);
         if (mapping) collectDirectUses(mapping[1], refs);
+        pendingStepIndent = null;
+        if (mapping) continue;
+      } else {
+        pendingStepIndent = null;
       }
-      pendingStepIndent = null;
-      if (trimmed.startsWith('{')) continue;
     }
 
-    if (/^-\s+(?:(?:&[^\s{}]+|![^\s{}]+|!)\s*)+$/.test(trimmed)) {
+    if (/^-\s*(?:(?:&[^\s{}]+|![^\s{}]+|!)\s*)*$/.test(trimmed)) {
       pendingStepIndent = indent;
     }
   }
@@ -125,6 +129,16 @@ describe('split node-property step immutable-pinning policy', () => {
 
     const mutable = ['steps:', '  - &checkout', '    { uses: actions/checkout@v4 }'].join('\n');
     expect(() => expectImmutableSplitNodePropertyStepRefs(mutable, 'split-node-property-step.yml')).toThrow();
+  });
+
+  it('enforces node properties after a bare sequence marker', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = ['steps:', '  -', `    &checkout { uses: actions/checkout@${sha} }`].join('\n');
+    expect(collectSplitNodePropertyStepRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
+    expectImmutableSplitNodePropertyStepRefs(pinned, 'bare-marker-node-property-step.yml');
+
+    const mutable = ['steps:', '  -', '    !!map { uses: actions/checkout@v4 }'].join('\n');
+    expect(() => expectImmutableSplitNodePropertyStepRefs(mutable, 'bare-marker-node-property-step.yml')).toThrow();
   });
 
   it('supports tags and ignores nested uses-like mappings', () => {
