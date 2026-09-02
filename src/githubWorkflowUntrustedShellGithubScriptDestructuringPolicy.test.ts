@@ -20,19 +20,108 @@ const containsUntrustedPayloadText = (value: string) => {
     || /github\.event\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body))/.test(normalized);
 };
 
+const splitTopLevel = (value: string, delimiter = ',') => {
+  const parts: string[] = [];
+  let start = 0;
+  let braces = 0;
+  let brackets = 0;
+  let parens = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '{') braces += 1;
+    else if (char === '}') braces -= 1;
+    else if (char === '[') brackets += 1;
+    else if (char === ']') brackets -= 1;
+    else if (char === '(') parens += 1;
+    else if (char === ')') parens -= 1;
+    else if (char === delimiter && braces === 0 && brackets === 0 && parens === 0) {
+      parts.push(value.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  parts.push(value.slice(start).trim());
+  return parts.filter(Boolean);
+};
+
+const findTopLevelColon = (value: string) => {
+  let braces = 0;
+  let brackets = 0;
+  let parens = 0;
+  let quote: string | null = null;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+    else if (char === '{') braces += 1;
+    else if (char === '}') braces -= 1;
+    else if (char === '[') brackets += 1;
+    else if (char === ']') brackets -= 1;
+    else if (char === '(') parens += 1;
+    else if (char === ')') parens -= 1;
+    else if (char === ':' && braces === 0 && brackets === 0 && parens === 0) return index;
+  }
+  return -1;
+};
+
 const collectDestructuredTaint = (script: string) => {
   const tainted = new Set<string>();
-  const declarations = script.matchAll(/\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*([^;\n]+)/g);
-  for (const declaration of declarations) {
-    const fields = declaration[1].split(',');
-    const source = declaration[2].trim();
-    for (const field of fields) {
-      const match = field.trim().match(/^([A-Za-z_$][\w$]*)(?:\s*:\s*([A-Za-z_$][\w$]*))?(?:\s*=.*)?$/);
-      if (!match) continue;
-      const property = match[1];
-      const local = match[2] ?? property;
+
+  const visitPattern = (pattern: string, source: string) => {
+    for (const rawField of splitTopLevel(pattern)) {
+      const field = rawField.replace(/\s*=.*$/s, '').trim();
+      const colon = findTopLevelColon(field);
+      const property = (colon >= 0 ? field.slice(0, colon) : field).trim();
+      if (!/^[A-Za-z_$][\w$]*$/.test(property)) continue;
+      const remainder = colon >= 0 ? field.slice(colon + 1).trim() : '';
+      const nested = remainder.match(/^\{([\s\S]*)\}$/);
+      if (nested) {
+        visitPattern(nested[1], `${source}.${property}`);
+        continue;
+      }
+      const local = remainder || property;
+      if (!/^[A-Za-z_$][\w$]*$/.test(local)) continue;
       if (containsUntrustedPayloadText(`${source}.${property}`)) tainted.add(local);
     }
+  };
+
+  const declarationStart = /\b(?:const|let|var)\s*\{/g;
+  for (const match of script.matchAll(declarationStart)) {
+    const open = (match.index ?? 0) + match[0].lastIndexOf('{');
+    let depth = 0;
+    let close = -1;
+    for (let index = open; index < script.length; index += 1) {
+      if (script[index] === '{') depth += 1;
+      else if (script[index] === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          close = index;
+          break;
+        }
+      }
+    }
+    if (close < 0) continue;
+    const assignment = script.slice(close + 1).match(/^\s*=\s*([^;\n]+)/);
+    if (!assignment) continue;
+    visitPattern(script.slice(open + 1, close), assignment[1].trim());
   }
   return tainted;
 };
@@ -125,6 +214,20 @@ describe('GitHub Script destructured payload shell boundary', () => {
       "            require('node:child_process').exec(command);",
     ].join('\n');
     expect(() => expectNoDestructuredPayloadShellExecution(unsafe, 'aliased-destructured.yml')).toThrow();
+  });
+
+  it('rejects nested destructured comment text passed to execSync', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const { payload: { comment: { body } } } = context;',
+      "            require('node:child_process').execSync(body);",
+    ].join('\n');
+    expect(() => expectNoDestructuredPayloadShellExecution(unsafe, 'nested-destructured.yml')).toThrow();
   });
 
   it('allows destructured non-text metadata beside a constant command', () => {
