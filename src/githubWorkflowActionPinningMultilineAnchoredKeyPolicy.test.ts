@@ -7,6 +7,9 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 const immutableRef = /^[^@\s]+@[0-9a-f]{40}$/;
+const blockScalarHeader = /:\s*[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*(?:#.*)?$/;
+
+const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 
 const joinDoubleQuotedContinuations = (lines: string[], start: number) => {
   let value = lines[start].trim();
@@ -33,8 +36,20 @@ const decodeQuoted = (raw: string) => {
 const collectAnchoredKeys = (workflow: string) => {
   const aliases = new Map<string, string>();
   const lines = workflow.split('\n');
+  let blockScalarIndent: number | null = null;
   for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].trim().match(/^[^:#]+:\s*&([A-Za-z_][A-Za-z0-9_-]*)\s+(.+)$/);
+    const rawLine = lines[index];
+    const trimmed = rawLine.trim();
+    const indent = indentOf(rawLine);
+    if (blockScalarIndent !== null) {
+      if (!trimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+    if (blockScalarHeader.test(trimmed)) {
+      blockScalarIndent = indent;
+      continue;
+    }
+    const match = trimmed.match(/^[^:#]+:\s*&([A-Za-z_][A-Za-z0-9_-]*)\s+(.+)$/);
     if (!match) continue;
     let rawValue = match[2];
     if (rawValue.trimStart().startsWith('"')) {
@@ -52,9 +67,18 @@ const collectAliasedUsesRefs = (workflow: string) => {
   const aliases = collectAnchoredKeys(workflow);
   const lines = workflow.split('\n');
   let stepsIndent: number | null = null;
+  let blockScalarIndent: number | null = null;
   for (const line of lines) {
-    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    const indent = indentOf(line);
     const trimmed = line.trim();
+    if (blockScalarIndent !== null) {
+      if (!trimmed || indent > blockScalarIndent) continue;
+      blockScalarIndent = null;
+    }
+    if (blockScalarHeader.test(trimmed)) {
+      blockScalarIndent = indent;
+      continue;
+    }
     if (/^["']?steps["']?\s*:\s*$/.test(trimmed)) { stepsIndent = indent; continue; }
     if (stepsIndent === null) continue;
     if (trimmed && indent <= stepsIndent) { stepsIndent = null; continue; }
@@ -104,5 +128,20 @@ describe('multiline quoted anchored action keys', () => {
     ].join('\n');
     expect(collectAliasedUsesRefs(safe)).toEqual([`actions/checkout@${sha}`]);
     expectImmutableAliasedUses(safe, 'multiline-key-pinned.yml');
+  });
+
+  it('ignores anchored action examples inside block scalars', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - run: |',
+      '          x-key: &uses-key "uses"',
+      '          steps:',
+      '            - { *uses-key: actions/checkout@v4 }',
+      '      - run: echo safe',
+    ].join('\n');
+    expect(collectAliasedUsesRefs(safe)).toEqual([]);
+    expectImmutableAliasedUses(safe, 'block-scalar-docs.yml');
   });
 });
