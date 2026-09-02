@@ -49,6 +49,16 @@ const quoteStateAt = (line: string, end: number, initial: Quote = null) => {
 const isOutsideQuotedScalar = (line: string, index: number, initial: Quote = null) =>
   quoteStateAt(line, index, initial) === null;
 
+const findStepsKey = (line: string, initial: Quote = null) => {
+  const matcher = /(?:^|[,{]\s*)(?:"steps"|'steps'|steps)\s*:/g;
+  for (let match = matcher.exec(line); match; match = matcher.exec(line)) {
+    const keyOffset = match[0].search(/(?:"steps"|'steps'|steps)\s*:/);
+    const keyIndex = (match.index ?? 0) + Math.max(0, keyOffset);
+    if (isOutsideQuotedScalar(line, keyIndex, initial)) return keyIndex;
+  }
+  return -1;
+};
+
 const stripYamlComment = (line: string, initial: Quote = null) => {
   let quote: Quote = initial;
   for (let i = 0; i < line.length; i += 1) {
@@ -151,8 +161,8 @@ const collectExplicitFlowUses = (workflow: string) => {
     let startsBlockFlowStep = false;
 
     if (stepsDepth === 0 && blockStepDepth === 0) {
-      const stepsIndex = line.indexOf('steps:');
-      if (stepsIndex >= 0 && isOutsideQuotedScalar(line, stepsIndex, initialYamlQuote)) {
+      const stepsIndex = findStepsKey(line, initialYamlQuote);
+      if (stepsIndex >= 0) {
         const opener = line.indexOf('[', stepsIndex);
         if (opener >= 0 && isOutsideQuotedScalar(line, opener, initialYamlQuote)) {
           segment = line.slice(opener);
@@ -324,6 +334,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: 'echo "steps: [ { ? uses : actions/checkout@v4 } ]"'
+`),
+    ).not.toThrow();
+  });
+
+  it('ignores explicit uses data under keys that merely end in steps', () => {
+    expect(() =>
+      assertExplicitFlowUsesPinned(`
+name: explicit-flow-non-step-data
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_steps: [{ ? uses : actions/checkout@v4 }]
+    steps:
+      - run: echo safe
 `),
     ).not.toThrow();
   });
