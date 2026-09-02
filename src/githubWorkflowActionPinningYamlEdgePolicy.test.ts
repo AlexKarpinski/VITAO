@@ -9,7 +9,7 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const immutableActionRef = /^[^@\s]+@[0-9a-f]{40}$/;
 const stripComment = (line: string) => line.replace(/\s+#.*$/, '');
-const hasUnquotedFlowSteps = (line: string) => {
+const structuralLine = (line: string) => {
   let quote: '"' | "'" | null = null;
   let structural = '';
 
@@ -17,6 +17,7 @@ const hasUnquotedFlowSteps = (line: string) => {
     const char = line[index];
     if (quote) {
       if (quote === "'" && char === "'" && line[index + 1] === "'") {
+        structural += '  ';
         index += 1;
         continue;
       }
@@ -39,9 +40,48 @@ const hasUnquotedFlowSteps = (line: string) => {
     structural += char;
   }
 
-  return /\bsteps\s*:\s*\[/.test(structural);
+  return structural;
 };
-const isActionStepContext = (line: string) => /^\s*-\s*\{/.test(line) || hasUnquotedFlowSteps(line);
+const flowStepsSource = (line: string) => {
+  const structural = structuralLine(line);
+  const steps = /\bsteps\s*:\s*\[/.exec(structural);
+  if (!steps) return null;
+  const opening = structural.indexOf('[', steps.index);
+  if (opening < 0) return null;
+
+  let quote: '"' | "'" | null = null;
+  let depth = 0;
+  for (let index = opening; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (quote === "'" && char === "'" && line[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      if (char === quote) {
+        if (quote === "'") quote = null;
+        else {
+          let backslashes = 0;
+          for (let previous = index - 1; previous >= 0 && line[previous] === '\\'; previous -= 1) backslashes += 1;
+          if (backslashes % 2 === 0) quote = null;
+        }
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '[') depth += 1;
+    if (char === ']') {
+      depth -= 1;
+      if (depth === 0) return line.slice(opening, index + 1);
+    }
+  }
+
+  return line.slice(opening);
+};
+const actionStepSource = (line: string) => /^\s*-\s*\{/.test(line) ? line : flowStepsSource(line);
 const stripNodeProperties = (value: string) => value.trim().replace(/^(?:(?:&[A-Za-z0-9_.-]+|![^\s]+)\s+)+/, '');
 const isBlockHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(stripNodeProperties(value));
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
@@ -106,8 +146,9 @@ const extractTargetedActionRefs = (workflow: string) => {
       continue;
     }
 
-    if (!isActionStepContext(line)) continue;
-    for (const match of line.matchAll(/(?:^|[{,])\s*uses\s*:\s*([^,}\s]+)/g)) {
+    const actionSource = actionStepSource(line);
+    if (!actionSource) continue;
+    for (const match of actionSource.matchAll(/(?:^|[{,])\s*uses\s*:\s*([^,}\s]+)/g)) {
       refs.push(match[1]);
     }
   }
@@ -142,6 +183,12 @@ describe('GitHub workflow deferred YAML action pinning edge policy', () => {
     ].join('\n');
     expect(extractTargetedActionRefs(unrelated)).toEqual([]);
     expectTargetedRefsImmutable(unrelated, 'unrelated-flow.yml');
+  });
+
+  it('restricts flow-step scanning to the structural steps sequence', () => {
+    const workflow = 'build: { env: { uses: harmless-value@v4 }, steps: [{ run: echo ok }] }';
+    expect(extractTargetedActionRefs(workflow)).toEqual([]);
+    expectTargetedRefsImmutable(workflow, 'flow-job-env.yml');
   });
 
   it('ignores steps and uses examples inside quoted flow scalars', () => {
