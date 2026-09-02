@@ -89,14 +89,30 @@ const stripPlainScalarContinuations = (lines: string[]) => {
   });
 };
 
+const cleanDeferredRef = (line: string) => line.trim().replace(/[}\],]+\s*$/, '').trim().replace(/^['"]|['"]$/g, '');
+
 const collectNodePropertyUsesRefs = (workflow: string) => {
   const refs: string[] = [];
   const strippedLines = stripPlainScalarContinuations(stripQuotedScalarsByLine(workflow));
+  let pendingDecoratedUses = false;
   for (let index = 0; index < strippedLines.length; index += 1) {
     const line = strippedLines[index];
+    const trimmed = line.trim();
+
+    if (pendingDecoratedUses) {
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const ref = cleanDeferredRef(line);
+      if (ref) refs.push(ref);
+      pendingDecoratedUses = false;
+      continue;
+    }
+
     if (!/\bsteps\s*:/.test(line)) continue;
     const pattern = /(?:^|[,{[])[ \t]*(?:[&!][^\s{}:,]+[ \t]+)+uses[ \t]*:[ \t]*([^\s,}\]]+)/g;
     for (const match of line.matchAll(pattern)) refs.push(match[1].replace(/^['"]|['"]$/g, ''));
+
+    const deferredPattern = /(?:^|[,{[])[ \t]*(?:[&!][^\s{}:,]+[ \t]+)+uses[ \t]*:[ \t]*$/;
+    if (deferredPattern.test(line)) pendingDecoratedUses = true;
   }
   return refs;
 };
@@ -124,6 +140,15 @@ describe('GitHub workflow node-property uses-key pinning policy', () => {
   it('rejects mutable action refs when a node property decorates a quoted uses key', () => {
     const unsafe = 'jobs: { build: { steps: [{ &uses-key "uses": actions/checkout@v4 }] } }';
     expect(() => assertImmutable(unsafe, 'quoted-key.yml')).toThrow();
+  });
+
+  it('follows decorated uses keys to deferred plain-scalar values', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const mutable = ['jobs: { build: { steps: [{ &uses-key uses:', '  actions/checkout@v4 }] } }'].join('\n');
+    const pinned = ['jobs: { build: { steps: [{ &uses-key uses:', `  actions/checkout@${sha} }] } }`].join('\n');
+    expect(collectNodePropertyUsesRefs(mutable)).toEqual(['actions/checkout@v4']);
+    expect(() => assertImmutable(mutable, 'deferred-mutable.yml')).toThrow();
+    expect(() => assertImmutable(pinned, 'deferred-pinned.yml')).not.toThrow();
   });
 
   it('accepts immutable action refs with anchored or tagged uses keys', () => {
