@@ -11,7 +11,8 @@ const decodeYamlKey = (raw: string) => {
   const value = raw.trim();
   if (value.startsWith('"') && value.endsWith('"')) {
     try {
-      return JSON.parse(value);
+      const jsonCompatible = value.replace(/\\x([0-9A-Fa-f]{2})/g, '\\u00$1');
+      return JSON.parse(jsonCompatible);
     } catch {
       return value.slice(1, -1);
     }
@@ -100,6 +101,16 @@ describe('GitHub workflow quoted environment-key shell policy', () => {
       '  - run: bash -c "$CMD"',
     ].join('\n');
     expect(() => assertNoQuotedEnvShellFlow(unsafe, 'escaped-env.yml')).toThrow();
+  });
+
+  it('decodes YAML hex escapes in quoted environment keys', () => {
+    const unsafe = [
+      'env:',
+      '  "\\x43MD": ${{ github.event.comment.body }}',
+      'steps:',
+      '  - run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => assertNoQuotedEnvShellFlow(unsafe, 'yaml-hex-env.yml')).toThrow();
   });
 
   it('allows a quoted environment key when its value is constant', () => {
