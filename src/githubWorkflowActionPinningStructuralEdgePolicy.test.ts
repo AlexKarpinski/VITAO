@@ -27,6 +27,24 @@ const decodeYamlKey = (raw: string) => {
   return key;
 };
 
+const stripYamlComment = (line: string) => {
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (char === quote) {
+        let backslashes = 0;
+        for (let previous = index - 1; previous >= 0 && line[previous] === '\\'; previous -= 1) backslashes += 1;
+        if (quote === "'" || backslashes % 2 === 0) quote = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") { quote = char; continue; }
+    if (char === '#' && (index === 0 || /\s/.test(line[index - 1]))) return line.slice(0, index);
+  }
+  return line;
+};
+
 const structuralSquareDelta = (line: string) => {
   let quote: '"' | "'" | null = null;
   let delta = 0;
@@ -181,7 +199,8 @@ const extractExplicitStepsRefs = (workflow: string) => {
   let flowDepth = 0;
 
   for (const line of lines) {
-    const trimmed = line.trim();
+    const structuralLine = stripYamlComment(line);
+    const trimmed = structuralLine.trim();
     if (/^\?\s*["']?steps["']?\s*$/.test(trimmed)) {
       pendingSteps = true;
       continue;
@@ -202,8 +221,8 @@ const extractExplicitStepsRefs = (workflow: string) => {
       continue;
     }
     if (flowDepth > 0) {
-      refs.push(...collectStructuralUses(line));
-      flowDepth += structuralSquareDelta(line);
+      refs.push(...collectStructuralUses(structuralLine));
+      flowDepth += structuralSquareDelta(structuralLine);
       if (flowDepth < 0) flowDepth = 0;
     }
   }
@@ -258,6 +277,11 @@ describe('GitHub workflow structural action-pinning edge policy', () => {
 
   it('keeps explicit steps context when quoted scalars contain closing brackets', () => {
     const unsafe = ['jobs:', '  build:', '    ? steps', '    : [', '      { run: "echo ]" },', '      { uses: actions/checkout@v4 },', '    ]'].join('\n');
+    expect(() => expectPinned(extractExplicitStepsRefs(unsafe))).toThrow();
+  });
+
+  it('ignores commented closing brackets while tracking explicit steps', () => {
+    const unsafe = ['jobs:', '  build:', '    ? steps', '    : [', '      # ] documentation', '      { uses: actions/checkout@v4 },', '    ]'].join('\n');
     expect(() => expectPinned(extractExplicitStepsRefs(unsafe))).toThrow();
   });
 
