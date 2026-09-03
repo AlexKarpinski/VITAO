@@ -142,36 +142,42 @@ const collectDeferredAnchoredStepRefs = (workflow: string) => {
       continue;
     }
     if (indent <= jobIndent) continue;
+
+    if (pendingStepsIndent !== null) {
+      if (indent <= pendingStepsIndent) {
+        pendingStepsIndent = null;
+      } else {
+        const withoutProperties = trimmed.replace(/^(?:(?:&[^\s]+|!![^\s]+|![^\s]*)\s+)*/, '');
+        if (!withoutProperties.startsWith('[')) {
+          pendingStepsIndent = null;
+          continue;
+        }
+
+        let sequence = withoutProperties;
+        let depth = structuralSquareDelta(sequence);
+        while (depth > 0 && index + 1 < lines.length) {
+          index += 1;
+          const next = stripComment(lines[index]);
+          sequence += `\n${next}`;
+          depth += structuralSquareDelta(next);
+        }
+        pendingStepsIndent = null;
+        const body = sequence.replace(/^\s*\[/, '').replace(/\]\s*$/, '');
+        for (const entry of splitTopLevel(body)) {
+          const step = entry.match(/^\s*\{([\s\S]*)\}\s*$/);
+          if (!step) continue;
+          const ref = directUses(step[1]);
+          if (ref) refs.push(ref);
+        }
+        continue;
+      }
+    }
+
     if (fieldIndent === null) fieldIndent = indent;
     if (indent !== fieldIndent) continue;
 
     if (/^["']?steps["']?\s*:\s*$/.test(trimmed)) {
       pendingStepsIndent = indent;
-      continue;
-    }
-    if (pendingStepsIndent === null) continue;
-
-    const withoutProperties = trimmed.replace(/^(?:(?:&[^\s]+|!![^\s]+|![^\s]*)\s+)*/, '');
-    if (!withoutProperties.startsWith('[')) {
-      pendingStepsIndent = null;
-      continue;
-    }
-
-    let sequence = withoutProperties;
-    let depth = structuralSquareDelta(sequence);
-    while (depth > 0 && index + 1 < lines.length) {
-      index += 1;
-      const next = stripComment(lines[index]);
-      sequence += `\n${next}`;
-      depth += structuralSquareDelta(next);
-    }
-    pendingStepsIndent = null;
-    const body = sequence.replace(/^\s*\[/, '').replace(/\]\s*$/, '');
-    for (const entry of splitTopLevel(body)) {
-      const step = entry.match(/^\s*\{([\s\S]*)\}\s*$/);
-      if (!step) continue;
-      const ref = directUses(step[1]);
-      if (ref) refs.push(ref);
     }
   }
   return refs;
