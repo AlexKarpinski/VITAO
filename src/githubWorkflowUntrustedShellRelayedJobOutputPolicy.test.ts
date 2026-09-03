@@ -13,6 +13,19 @@ const normalizeAccess = (value: string) => value
 const containsDirectUntrustedEvent = (value: string) =>
   /github\.event\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body|discussion\.(?:title|body))/.test(normalizeAccess(value));
 
+const containsNeedsOutputRef = (value: string, job: string, output: string) => {
+  const needle = `needs.${job}.outputs.${output}`;
+  let from = 0;
+  while (from < value.length) {
+    const index = value.indexOf(needle, from);
+    if (index < 0) return false;
+    const next = value[index + needle.length];
+    if (!next || !/[A-Za-z0-9_-]/.test(next)) return true;
+    from = index + 1;
+  }
+  return false;
+};
+
 type JobOutput = { job: string; output: string; value: string };
 
 const collectJobOutputs = (workflow: string) => {
@@ -82,10 +95,10 @@ const collectTaintedJobOutputs = (workflow: string) => {
       if (tainted.has(key)) continue;
 
       for (const source of tainted) {
-        const [sourceJob, sourceOutput] = source.split('.');
-        const escapedJob = sourceJob.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const escapedOutput = sourceOutput.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (new RegExp(`needs\.${escapedJob}\.outputs\.${escapedOutput}\b`).test(output.value)) {
+        const separator = source.indexOf('.');
+        const sourceJob = source.slice(0, separator);
+        const sourceOutput = source.slice(separator + 1);
+        if (containsNeedsOutputRef(output.value, sourceJob, sourceOutput)) {
           tainted.add(key);
           changed = true;
           break;
@@ -139,12 +152,11 @@ const expectNoRelayedJobOutputShell = (workflow: string) => {
   const shellValues = collectShellExecutedValues(workflow).map(normalizeAccess);
 
   for (const key of tainted) {
-    const [job, output] = key.split('.');
-    const escapedJob = job.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const escapedOutput = output.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const sink = new RegExp(`needs\.${escapedJob}\.outputs\.${escapedOutput}\b`);
+    const separator = key.indexOf('.');
+    const job = key.slice(0, separator);
+    const output = key.slice(separator + 1);
     expect(
-      shellValues.some((value) => sink.test(value)),
+      shellValues.some((value) => containsNeedsOutputRef(value, job, output)),
       `tainted or relayed job output ${key} reaches a shell-capable workflow`,
     ).toBe(false);
   }
