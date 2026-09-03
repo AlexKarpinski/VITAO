@@ -148,7 +148,7 @@ describe('GitHub workflow bracketed reusable-input shell policy', () => {
         'jobs:',
         '  execute:',
         '    steps:',
-        '      - run: bash -c "${{ inputs[\\"command\\"] }}"',
+        "      - run: bash -c \"${{ inputs['command'] }}\"",
       ].join('\n')],
     ]);
 
