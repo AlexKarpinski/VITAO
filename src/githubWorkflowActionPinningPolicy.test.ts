@@ -5,11 +5,16 @@ import { describe, expect, it } from 'vitest';
 const workflowsDir = '.github/workflows';
 const workflowFiles = readdirSync(workflowsDir).filter((name) => name.endsWith('.yml') || name.endsWith('.yaml')).sort();
 
+const isEscapedQuote = (source: string, index: number) => {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+};
 const stripYamlComment = (line: string) => {
   let quote: '"' | "'" | null = null;
   for (let index = 0; index < line.length; index += 1) {
     const char = line[index];
-    if (quote) { if (char === quote && line[index - 1] !== '\\') quote = null; continue; }
+    if (quote) { if (char === quote && (quote === "'" || !isEscapedQuote(line, index))) quote = null; continue; }
     if (char === '"' || char === "'") { quote = char; continue; }
     if (char === '#' && (index === 0 || /\s/.test(line[index - 1]))) return line.slice(0, index);
   }
@@ -36,7 +41,7 @@ const blockScalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*$/;
 const flowStructure = (line: string) => {
   let quote: '"' | "'" | null = null; let square = 0; let curly = 0;
   for (let index = 0; index < line.length; index += 1) { const char = line[index];
-    if (quote) { if (char === quote && (quote === "'" || line[index - 1] !== '\\')) quote = null; continue; }
+    if (quote) { if (char === quote && (quote === "'" || !isEscapedQuote(line, index))) quote = null; continue; }
     if (char === '"' || char === "'") { quote = char; continue; }
     if (char === '[') square += 1; else if (char === ']') square -= 1; else if (char === '{') curly += 1; else if (char === '}') curly -= 1;
   }
@@ -46,7 +51,7 @@ const sliceStructuralFlowSequence = (line: string, openingIndex: number) => {
   let quote: '"' | "'" | null = null; let depth = 0;
   for (let index = openingIndex; index < line.length; index += 1) {
     const char = line[index];
-    if (quote) { if (char === quote && (quote === "'" || line[index - 1] !== '\\')) quote = null; continue; }
+    if (quote) { if (char === quote && (quote === "'" || !isEscapedQuote(line, index))) quote = null; continue; }
     if (char === '"' || char === "'") { quote = char; continue; }
     if (char === '[') depth += 1;
     if (char === ']') { depth -= 1; if (depth === 0) return line.slice(openingIndex, index + 1); }
@@ -57,7 +62,7 @@ const splitTopLevelFlowEntries = (body: string) => {
   const entries: string[] = []; let start = 0; let quote: '"' | "'" | null = null; let square = 0; let curly = 0;
   for (let index = 0; index < body.length; index += 1) {
     const char = body[index];
-    if (quote) { if (char === quote && (quote === "'" || body[index - 1] !== '\\')) quote = null; continue; }
+    if (quote) { if (char === quote && (quote === "'" || !isEscapedQuote(body, index))) quote = null; continue; }
     if (char === '"' || char === "'") { quote = char; continue; }
     if (char === '[') square += 1; else if (char === ']') square -= 1; else if (char === '{') curly += 1; else if (char === '}') curly -= 1;
     else if (char === ',' && square === 0 && curly === 0) { entries.push(body.slice(start, index)); start = index + 1; }
@@ -188,4 +193,11 @@ describe('GitHub workflow action pinning policy', () => {
   it('recognizes multiline outer jobs mappings and quoted reusable-workflow uses keys', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=['jobs: {',`  call: { "uses": owner/repo/.github/workflows/build.yml@${sha} }`,'}'].join('\n'); expect(extractActionRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]); expect(() => expectImmutableExternalActions(['jobs: {','  call: { "uses": owner/repo/.github/workflows/build.yml@main }','}'].join('\n'),'multiline-jobs.yml')).toThrow(); });
   it('recognizes explicit-key steps collections', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`jobs:\n  build:\n    ? steps\n    : [{ uses: actions/checkout@${sha} }]`; expect(extractActionRefs(pinned)).toContain(`actions/checkout@${sha}`); expect(() => expectImmutableExternalActions('jobs:\n  build:\n    ? steps\n    : [{ uses: actions/checkout@v4 }]','explicit-steps.yml')).toThrow(); });
   it('preserves block steps scope across bare sequence markers and decoded uses keys', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=['steps:','  -','    { "\\u0075ses": actions/checkout@'+sha+' }'].join('\n'); expect(extractActionRefs(pinned)).toContain(`actions/checkout@${sha}`); expect(() => expectImmutableExternalActions(['steps:','  -','    { "\\u0075ses": actions/checkout@v4 }'].join('\n'),'bare-step.yml')).toThrow(); });
+  it('closes flow quotes after even backslash runs', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinnedSteps = ['steps: [', '  { run: "printf \\\\" },', `  { uses: actions/checkout@${sha} },`, ']'].join('\n');
+    expect(extractActionRefs(pinnedSteps)).toEqual([`actions/checkout@${sha}`]);
+    const pinnedJob = `jobs:\n  call: { name: "Path \\\\" , uses: owner/repo/.github/workflows/build.yml@${sha} }`;
+    expect(extractActionRefs(pinnedJob)).toContain(`owner/repo/.github/workflows/build.yml@${sha}`);
+  });
 });
