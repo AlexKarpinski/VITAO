@@ -76,6 +76,37 @@ const extractJobBlocks = (workflow: string) => {
   return blocks;
 };
 
+const extractRunTemplates = (workflow: string) => {
+  const lines = workflow.split('\n');
+  const runs: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    const line = stripYamlComment(raw);
+    const match = line.match(/^\s*(?:-\s*)?["']?run["']?\s*:\s*(.*)$/);
+    if (!match) continue;
+
+    const value = match[1].trim();
+    if (!/^[>|][+-]?\d*$/.test(value)) {
+      if (value) runs.push(unwrapScalar(value));
+      continue;
+    }
+
+    const runIndent = getIndent(raw);
+    const body: string[] = [];
+    for (let child = index + 1; child < lines.length; child += 1) {
+      const childRaw = lines[child];
+      const childTrimmed = childRaw.trim();
+      if (childTrimmed && getIndent(childRaw) <= runIndent) break;
+      body.push(childRaw);
+      index = child;
+    }
+    runs.push(body.join('\n'));
+  }
+
+  return runs;
+};
+
 type Edge = { caller: string; callee: string; args: Map<string, string> };
 
 const extractEdges = (workflows: Map<string, string>) => {
@@ -137,11 +168,15 @@ const expectNoReusableInputShellTemplateBypass = (workflows: Map<string, string>
       .map((line) => stripYamlComment(line).match(/^\s*(?:-\s*)?["']?shell["']?\s*:\s*(.+)$/)?.[1])
       .filter((value): value is string => Boolean(value))
       .map(unwrapScalar);
-    for (const shell of shells) {
-      const normalized = normalizeAccess(shell);
-      for (const input of inputs) {
-        const escaped = input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        expect(new RegExp(`inputs\\.${escaped}\\b`).test(normalized), `${name}: tainted reusable input reaches shell template`).toBe(false);
+    const runs = extractRunTemplates(workflow);
+    for (const input of inputs) {
+      const escaped = input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const inputAccess = new RegExp(`inputs\\.${escaped}\\b`);
+      for (const shell of shells) {
+        expect(inputAccess.test(normalizeAccess(shell)), `${name}: tainted reusable input reaches shell template`).toBe(false);
+      }
+      for (const run of runs) {
+        expect(inputAccess.test(normalizeAccess(run)), `${name}: tainted reusable input reaches run command`).toBe(false);
       }
     }
   }
@@ -162,10 +197,34 @@ describe('GitHub reusable-workflow input shell-template policy', () => {
     expect(() => expectNoReusableInputShellTemplateBypass(workflows)).toThrow();
   });
 
+  it('rejects an untrusted reusable input interpolated into the callee run command', () => {
+    const workflows = new Map<string, string>([
+      ['caller.yml', ['jobs:', '  call:', '    uses: ./.github/workflows/callee.yml', '    with:', '      command: ${{ github.event.comment.body }}'].join('\n')],
+      ['callee.yml', ['jobs:', '  execute:', '    steps:', '      - run: bash -c "${{ inputs.command }}"'].join('\n')],
+    ]);
+    expect(() => expectNoReusableInputShellTemplateBypass(workflows)).toThrow();
+  });
+
+  it('rejects an untrusted reusable input interpolated into a block-scalar run command', () => {
+    const workflows = new Map<string, string>([
+      ['caller.yml', ['jobs:', '  call:', '    uses: ./.github/workflows/callee.yml', '    with:', '      command: ${{ github.event.comment.body }}'].join('\n')],
+      ['callee.yml', ['jobs:', '  execute:', '    steps:', '      - run: |', '          bash -c "${{ inputs.command }}"'].join('\n')],
+    ]);
+    expect(() => expectNoReusableInputShellTemplateBypass(workflows)).toThrow();
+  });
+
   it('allows a constant reusable input in a shell template', () => {
     const workflows = new Map<string, string>([
       ['caller.yml', ['jobs:', '  call:', '    uses: ./.github/workflows/callee.yml', '    with:', '      executor: bash'].join('\n')],
       ['callee.yml', ['jobs:', '  execute:', '    steps:', '      - shell: ${{ inputs.executor }} {0}', '        run: echo safe'].join('\n')],
+    ]);
+    expect(() => expectNoReusableInputShellTemplateBypass(workflows)).not.toThrow();
+  });
+
+  it('allows a constant reusable input in a run command', () => {
+    const workflows = new Map<string, string>([
+      ['caller.yml', ['jobs:', '  call:', '    uses: ./.github/workflows/callee.yml', '    with:', '      command: echo-safe'].join('\n')],
+      ['callee.yml', ['jobs:', '  execute:', '    steps:', '      - run: bash -c "${{ inputs.command }}"'].join('\n')],
     ]);
     expect(() => expectNoReusableInputShellTemplateBypass(workflows)).not.toThrow();
   });
