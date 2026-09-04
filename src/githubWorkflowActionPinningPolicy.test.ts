@@ -70,12 +70,24 @@ const splitTopLevelFlowEntries = (body: string) => {
   entries.push(body.slice(start));
   return entries;
 };
+const maskQuotedFlowScalarStructure = (source: string) => {
+  const chars = [...source]; let quote: '"' | "'" | null = null; let opening = -1;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (!quote) { if (char === '"' || char === "'") { quote = char; opening = index; } continue; }
+    if (char !== quote || (quote === '"' && isEscapedQuote(source, index))) continue;
+    let previous = opening - 1; while (previous >= 0 && /\s/.test(source[previous])) previous -= 1;
+    if (previous >= 0 && source[previous] === ':') for (let cursor = opening + 1; cursor < index; cursor += 1) if (/[{},\[\]]/.test(chars[cursor])) chars[cursor] = ' ';
+    quote = null; opening = -1;
+  }
+  return chars.join('');
+};
 
 const extractActionRefs = (workflow: string) => {
   const refs: string[] = []; const lines = workflow.split('\n'); const scalarAnchors = new Map<string, string>(); let ignoredBlockIndent: number | null = null; let flowStepsDepth = 0; let jobsIndent: number | null = null; let jobIndent: number | null = null; let blockStepsIndent: number | null = null; let pendingBareStepIndent: number | null = null;
   const resolveYamlKey = (rawKey: string) => { const decoded = decodeYamlKey(rawKey); return decoded.startsWith('*') ? scalarAnchors.get(decoded.slice(1)) ?? decoded : decoded; };
   const collectFlowUses = (source: string) => {
-    const topLevel = source.replace(/\b(?:with|env|metadata)\s*:\s*\{[^{}]*\}/g, '');
+    const topLevel = maskQuotedFlowScalarStructure(source).replace(/\b(?:with|env|metadata)\s*:\s*\{[^{}]*\}/g, '');
     const flowEntryPattern = /(?=(?:^|[\[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*("[^"]+"|'[^']+'|[^,}\]\s]+))/g;
     for (const entry of topLevel.matchAll(flowEntryPattern)) if (resolveYamlKey(entry[1]) === 'uses') refs.push(unquote(entry[2]));
   };
@@ -166,7 +178,7 @@ const extractActionRefs = (workflow: string) => {
         if (openingIndex >= 0) flowSource = sliceStructuralFlowSequence(withoutComment, openingIndex);
       }
       collectFlowUses(flowSource);
-      const topLevel = flowSource.replace(/\b(?:with|env|metadata)\s*:\s*\{[^{}]*\}/g, '');
+      const topLevel = maskQuotedFlowScalarStructure(flowSource).replace(/\b(?:with|env|metadata)\s*:\s*\{[^{}]*\}/g, '');
       const multiline = topLevel.match(/(?:^|[\[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*$/);
       if (multiline && resolveYamlKey(multiline[1]) === 'uses') for (let child = index + 1; child < lines.length; child += 1) { const v = stripYamlComment(lines[child]).trim(); if (!v) continue; refs.push(unquote(v.replace(/[}\],]+\s*$/, ''))); index = child; break; }
     }
@@ -180,6 +192,7 @@ describe('GitHub workflow action pinning policy', () => {
   it('pins every external action in every workflow to an immutable full commit SHA', () => { expect(workflowFiles.length).toBeGreaterThan(0); for (const file of workflowFiles) expectImmutableExternalActions(readFileSync(join(workflowsDir, file), 'utf8'), file); });
   it('accepts both valid block-scalar indicator orders while enforcing immutable refs', () => { const sha='0123456789abcdef0123456789abcdef01234567'; for (const header of ['>2+','>+2','|2-','|-2']) { expectImmutableExternalActions(`uses: ${header}\n  actions/checkout@${sha}`, 'block.yml'); expect(() => expectImmutableExternalActions(`uses: ${header}\n  actions/checkout@v4`, 'block.yml')).toThrow(); } });
   it('ignores uses-like flow keys in unrelated mappings but enforces actual flow steps', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const safe=[`env: { uses: actions/checkout@v4 }`,`with: { uses: actions/cache@v4 }`,`metadata: { uses: actions/setup-node@v4 }`,`steps: [{uses: actions/checkout@${sha}}]`].join('\n'); expect(extractActionRefs(safe)).toEqual([`actions/checkout@${sha}`]); expectImmutableExternalActions(safe,'flow.yml'); expect(() => expectImmutableExternalActions('steps: [{uses: actions/checkout@v4}]','flow.yml')).toThrow(); });
+  it('ignores uses-like text in quoted flow scalars and nested environment data', () => { const safe='steps: [{ run: "echo ok, uses: actions/checkout@v4", env: { TEMPLATE: "{}", uses: harmless-value@v4 } }]'; expect(extractActionRefs(safe)).toEqual([]); expectImmutableExternalActions(safe,'quoted-flow-data.yml'); const mutable='steps: [{ run: "echo ok, uses: actions/cache@v4", env: { TEMPLATE: "{}", uses: harmless-value@v4 } }, { uses: actions/checkout@v4 }]'; expect(() => expectImmutableExternalActions(mutable,'quoted-flow-data.yml')).toThrow(); });
   it('preserves structural flow-step context across quoted brackets and nested inputs', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=[`steps: [`,`  { run: "echo ]" },`,`  { uses: actions/checkout@${sha}, with: { uses: actions/cache@v4 } },`,`  { uses: actions/setup-node@${sha} }`,`]`].join('\n'); expect(extractActionRefs(pinned)).toEqual([`actions/checkout@${sha}`,`actions/setup-node@${sha}`]); expectImmutableExternalActions(pinned,'multiline-flow.yml'); const mutable=['steps: [','  { run: "echo ]" },','  { uses: actions/checkout@v4 },',']'].join('\n'); expect(() => expectImmutableExternalActions(mutable,'multiline-flow.yml')).toThrow(); });
   it('recognizes quoted steps keys before entering multiline flow-step context', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=['"steps": [',`  { "uses": actions/checkout@${sha} },`,']'].join('\n'); expect(extractActionRefs(pinned)).toEqual([`actions/checkout@${sha}`]); expectImmutableExternalActions(pinned,'quoted-steps.yml'); const mutable=['"steps": [','  { "uses": actions/checkout@v4 },',']'].join('\n'); expect(() => expectImmutableExternalActions(mutable,'quoted-steps.yml')).toThrow(); });
   it('recognizes inline flow-style job steps keys without scanning sibling mappings', () => { const sha='0123456789abcdef0123456789abcdef01234567'; const pinned=`jobs:\n  demo: { runs-on: ubuntu-latest, strategy: { matrix: { include: [{ uses: actions/cache@v4 }] } }, steps: [{ uses: actions/checkout@${sha} }] }`; expect(extractActionRefs(pinned)).toEqual([`actions/checkout@${sha}`]); expectImmutableExternalActions(pinned,'inline-job.yml'); const mutable='jobs:\n  demo: { runs-on: ubuntu-latest, steps: [{ uses: actions/checkout@v4 }] }'; expect(() => expectImmutableExternalActions(mutable,'inline-job.yml')).toThrow(); });
