@@ -57,6 +57,35 @@ const isQuotedAt = (line: string, index: number) => {
   return quote !== null;
 };
 
+const isInsideNamedFlowMapping = (line: string, index: number, mappingName: string) => {
+  let quote: '"' | "'" | null = null;
+  const stack: Array<string | null> = [];
+  for (let i = 0; i < index; i += 1) {
+    const char = line[i];
+    if (quote === "'") {
+      if (char === "'" && line[i + 1] === "'") { i += 1; continue; }
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (char === '\\') { i += 1; continue; }
+      if (char === '"') quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '{') {
+      const owner = line.slice(0, i).match(/(?:^|[,{])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*$/)?.[1];
+      stack.push(owner ? decodeYamlKey(owner) : null);
+      continue;
+    }
+    if (char === '}') stack.pop();
+  }
+  return stack.includes(mappingName);
+};
+
 const extractDirectRunValues = (workflow: string) => {
   const values: string[] = [];
   const lines = workflow.split('\n');
@@ -69,8 +98,11 @@ const extractDirectRunValues = (workflow: string) => {
     for (const match of line.matchAll(mapping)) {
       const matchIndex = match.index ?? 0;
       const keyOffset = match[0].indexOf(match[1]);
-      if (isQuotedAt(line, matchIndex + Math.max(keyOffset, 0))) continue;
-      if (decodeYamlKey(match[1]) === 'run') values.push(match[2]);
+      const keyIndex = matchIndex + Math.max(keyOffset, 0);
+      if (isQuotedAt(line, keyIndex)) continue;
+      if (decodeYamlKey(match[1]) !== 'run') continue;
+      if (isInsideNamedFlowMapping(line, keyIndex, 'with')) continue;
+      values.push(match[2]);
     }
 
     const explicit = line.match(/^(\s*)-?\s*\?\s*(.+?)\s*(?:#.*)?$/);
@@ -121,5 +153,10 @@ describe('direct GitHub workflow run-key security policy', () => {
   it('does not treat unrelated scalar text containing run as a run mapping', () => {
     const safe = `env: { NOTE: "prefix {run: '\${{ github.event.comment.body }}'} suffix" }\nsteps:\n  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567`;
     expectNoDirectUntrustedRun(safe, 'metadata.yml');
+  });
+
+  it('does not treat an action input named run as a shell step', () => {
+    const safe = `steps:\n  - { uses: actions/github-script@0123456789abcdef0123456789abcdef01234567, with: { run: '\${{ github.event.comment.body }}' } }`;
+    expectNoDirectUntrustedRun(safe, 'action-input.yml');
   });
 });
