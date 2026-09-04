@@ -48,9 +48,49 @@ const decodeRunValue = (value: string) => {
   return trimmed;
 };
 
+const decodeMappingKey = (raw: string) => {
+  const key = raw.trim();
+  if (key.startsWith('"') && key.endsWith('"')) return key.slice(1, -1);
+  if (key.startsWith("'") && key.endsWith("'")) return key.slice(1, -1).replace(/''/g, "'");
+  return key;
+};
+
+const isInsideNamedFlowMapping = (source: string, index: number, mappingName: string) => {
+  let quote: '"' | "'" | null = null;
+  const stack: Array<string | null> = [];
+  for (let i = 0; i < index; i += 1) {
+    const char = source[i];
+    if (quote === "'") {
+      if (char === "'" && source[i + 1] === "'") { i += 1; continue; }
+      if (char === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (char === '\\') { i += 1; continue; }
+      if (char === '"') quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === '{') {
+      const owner = source.slice(0, i).match(/(?:^|[,{])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*$/)?.[1];
+      stack.push(owner ? decodeMappingKey(owner) : null);
+      continue;
+    }
+    if (char === '}') stack.pop();
+  }
+  return stack.includes(mappingName);
+};
+
 const collectRunMappings = (source: string, scripts: string[]) => {
   const pattern = /(?:^|[{,])\s*(?:"run"|'run'|run)\s*:\s*("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^,}]+)(?=\s*[,}])/g;
-  for (const match of source.matchAll(pattern)) scripts.push(decodeRunValue(match[1]));
+  for (const match of source.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (isInsideNamedFlowMapping(source, index, 'with')) continue;
+    scripts.push(decodeRunValue(match[1]));
+  }
 };
 
 const extractFlowRunScripts = (workflow: string) => {
@@ -117,6 +157,15 @@ describe('GitHub workflow flow-style shell trust policy', () => {
       expectNoUntrustedFlowRun(
         `strategy: { matrix: { include: [{ run: '\${{ github.event.issue.body }}' }] } }\nsteps: [{ run: 'echo safe' }]`,
         'matrix-data.yml',
+      ),
+    ).not.toThrow();
+  });
+
+  it('does not treat an action input named run as a shell step', () => {
+    expect(() =>
+      expectNoUntrustedFlowRun(
+        `steps:\n  - { uses: actions/github-script@0123456789abcdef0123456789abcdef01234567, with: { run: '\${{ github.event.comment.body }}' } }`,
+        'action-input.yml',
       ),
     ).not.toThrow();
   });
