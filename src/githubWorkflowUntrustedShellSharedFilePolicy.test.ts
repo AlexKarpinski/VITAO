@@ -10,11 +10,40 @@ const workflowFiles = readdirSync(workflowsDir)
 const untrustedPayload = /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)/;
 const untrustedEventFileRead = /(?:jq\s+-r\s+['"]\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body)|review(?:_comment)?\.body)['"]\s+['"]?\$GITHUB_EVENT_PATH['"]?)/;
 
+const collectTaintedIdentifiers = (workflow: string) => {
+  const tainted = new Set<string>();
+  const declarations = [
+    ...workflow.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^\n;]+)/g),
+  ];
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const match of declarations) {
+      const [, name, initializer] = match;
+      const referencesTaintedAlias = [...tainted].some((alias) =>
+        new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(initializer),
+      );
+      if (!tainted.has(name) && (untrustedPayload.test(initializer) || referencesTaintedAlias)) {
+        tainted.add(name);
+        changed = true;
+      }
+    }
+  }
+
+  return tainted;
+};
+
 const collectTaintedFileWrites = (workflow: string) => {
   const paths = new Set<string>();
+  const taintedIdentifiers = collectTaintedIdentifiers(workflow);
   const write = /(?:(?:writeFileSync|appendFileSync)|(?:fs\.)?promises\.(?:writeFile|appendFile))\(\s*['"]([^'"]+)['"]\s*,([^\n;]+)/g;
   for (const match of workflow.matchAll(write)) {
-    if (untrustedPayload.test(match[2])) paths.add(match[1]);
+    const value = match[2];
+    const referencesTaintedAlias = [...taintedIdentifiers].some((alias) =>
+      new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(value),
+    );
+    if (untrustedPayload.test(value) || referencesTaintedAlias) paths.add(match[1]);
   }
 
   const redirectWrite = /^\s*(?:-\s+)?run:\s*(.+)$/gm;
@@ -57,6 +86,22 @@ describe('GitHub workflow shared-file shell trust boundary', () => {
       '      - run: source /tmp/command.sh',
     ].join('\n');
     expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects attacker-derived files written through a local payload alias', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const fs = require('node:fs');",
+      '            const command = context.payload.comment.body;',
+      "            fs.writeFileSync('/tmp/command.sh', command);",
+      '      - run: bash /tmp/command.sh',
+    ].join('\n');
+    expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe-alias.yml')).toThrow();
   });
 
   it('rejects attacker-derived files written asynchronously and sourced later', () => {
