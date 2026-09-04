@@ -88,7 +88,7 @@ const collectRunMappings = (source: string, scripts: string[]) => {
   const pattern = /(?:^|[{,])\s*(?:"run"|'run'|run)\s*:\s*("(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^,}]+)(?=\s*[,}])/g;
   for (const match of source.matchAll(pattern)) {
     const index = match.index ?? 0;
-    if (isInsideNamedFlowMapping(source, index, 'with')) continue;
+    if (isInsideNamedFlowMapping(source, index + 1, 'with')) continue;
     scripts.push(decodeRunValue(match[1]));
   }
 };
