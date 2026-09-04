@@ -97,8 +97,8 @@ const extractDirectRunValues = (workflow: string) => {
     const line = lines[lineIndex];
     for (const match of line.matchAll(mapping)) {
       const matchIndex = match.index ?? 0;
-      const keyOffset = match[0].indexOf(match[1]);
-      const keyIndex = matchIndex + Math.max(keyOffset, 0);
+      const prefixLength = line.slice(matchIndex).match(/^(?:[\[,{]|-\s+)?\s*/)?.[0].length ?? 0;
+      const keyIndex = matchIndex + prefixLength;
       if (isQuotedAt(line, keyIndex)) continue;
       if (decodeYamlKey(match[1]) !== 'run') continue;
       if (isInsideNamedFlowMapping(line, keyIndex, 'with')) continue;
