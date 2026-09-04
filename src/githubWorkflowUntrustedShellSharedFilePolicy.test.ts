@@ -33,7 +33,8 @@ const executesFile = (workflow: string, path: string) => {
   const quotedPath = `(?:['"])?${escaped}(?:['"])?`;
   const sourceExecution = `(?:source|\\.)\\s+${quotedPath}(?=\\s|$)`;
   const interpreterExecution = `(?:bash|sh|dash|ksh|zsh)\\s+(?:--\\s+)?${quotedPath}(?=\\s|$)`;
-  return new RegExp(`${commandBoundary}(?:${sourceExecution}|${interpreterExecution})`, 'm').test(workflow);
+  const directExecution = `${quotedPath}(?=\\s|$)`;
+  return new RegExp(`${commandBoundary}(?:${sourceExecution}|${interpreterExecution}|${directExecution})`, 'm').test(workflow);
 };
 
 const expectNoUntrustedSharedFileExecution = (workflow: string, source: string) => {
@@ -86,6 +87,21 @@ describe('GitHub workflow shared-file shell trust boundary', () => {
       '      - run: bash /tmp/command.sh',
     ].join('\n');
     expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe-interpreter.yml')).toThrow();
+  });
+
+  it('rejects attacker-derived executable files launched directly', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const fs = require('node:fs');",
+      "            fs.writeFileSync('/tmp/command.sh', context.payload.comment.body);",
+      '      - run: chmod +x /tmp/command.sh && /tmp/command.sh',
+    ].join('\n');
+    expect(() => expectNoUntrustedSharedFileExecution(unsafe, 'unsafe-direct.yml')).toThrow();
   });
 
   it('rejects event-file data redirected into a script and executed later', () => {
