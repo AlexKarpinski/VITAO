@@ -94,12 +94,35 @@ const collectStepBlocks = (workflow: string) => {
   return blocks;
 };
 
+const stepReturnsUntrustedValue = (step: string) => {
+  const aliases = new Set<string>();
+  const normalized = normalizeAccess(step);
+  for (const parent of untrustedParents) {
+    const escaped = parent.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const destructuring = new RegExp(`const\\s*\\{([^}]+)\\}\\s*=\\s*${escaped}\\b`, 'g');
+    for (const match of normalized.matchAll(destructuring)) {
+      for (const entry of match[1].split(',')) {
+        const binding = entry.trim().match(/^(?:title|body)\s*(?::\s*([A-Za-z_$][A-Za-z0-9_$]*))?$/);
+        if (binding) aliases.add(binding[1] ?? entry.trim());
+      }
+    }
+  }
+
+  return normalized.split('\n').some((line) => {
+    const match = line.match(/\breturn\s+(.+?);?\s*$/);
+    if (!match) return false;
+    const expression = match[1];
+    if (containsUntrustedPayload(expression)) return true;
+    return [...aliases].some((alias) => new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(expression));
+  });
+};
+
 const extractTaintedStepIds = (workflow: string) => {
   const ids = new Set<string>();
   for (const block of collectStepBlocks(workflow)) {
     const rawId = block.match(/^\s*(?:-\s+)?["']?id["']?\s*:\s*(.+?)\s*$/m)?.[1];
     const id = rawId ? decodeYamlScalar(rawId) : undefined;
-    if (id && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(id) && containsUntrustedPayload(block)) ids.add(id);
+    if (id && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(id) && stepReturnsUntrustedValue(block)) ids.add(id);
   }
   return ids;
 };
@@ -220,6 +243,10 @@ describe('GitHub workflow transitive untrusted shell policy', () => {
   it('propagates tainted step outputs through env before shell execution', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'output-env.yml')).toThrow();
+  });
+  it('does not taint a constant github-script return merely because payload text is logged', () => {
+    const safe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: |', '        core.info(context.payload.comment.body);', "        return 'echo safe';", '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(safe, 'constant-output-after-log.yml')).not.toThrow();
   });
   it('propagates taint through YAML scalar aliases with trailing comments', () => {
     const unsafe = ['env:', '  RAW: &payload ${{ github.event.comment.body }}', '  CMD: *payload # downstream command', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
