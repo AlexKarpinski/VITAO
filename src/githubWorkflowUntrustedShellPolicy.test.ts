@@ -168,21 +168,35 @@ const extractUntrustedEnvVars = (workflow: string) => {
   const lines = workflow.split('\n');
 
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const match = line.match(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/);
-    if (!match) continue;
+    const envMatch = lines[index].match(/^(\s*)(?:-\s*)?env\s*:\s*$/);
+    if (!envMatch) continue;
 
-    const indent = match[1].length;
-    const value = stripYamlInlineComment(match[3]);
-    if (value && !isBlockScalarHeader(value)) {
-      if (containsUntrustedExpression(value)) vars.add(match[2]);
-      continue;
-    }
+    const envIndent = envMatch[1].length;
+    let entryIndent: number | null = null;
 
-    if (isBlockScalarHeader(value)) {
-      const block = collectIndentedScalar(lines, index, indent);
-      if (containsUntrustedExpression(block.value)) vars.add(match[2]);
-      index = block.endIndex;
+    for (let child = index + 1; child < lines.length; child += 1) {
+      const line = lines[child];
+      const trimmed = line.trim();
+      const indent = line.match(/^\s*/)?.[0].length ?? 0;
+      if (trimmed && indent <= envIndent) break;
+      if (!trimmed) continue;
+
+      const match = line.match(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/);
+      if (!match) continue;
+      if (entryIndent === null) entryIndent = match[1].length;
+      if (match[1].length !== entryIndent) continue;
+
+      const value = stripYamlInlineComment(match[3]);
+      if (value && !isBlockScalarHeader(value)) {
+        if (containsUntrustedExpression(value)) vars.add(match[2]);
+        continue;
+      }
+
+      if (isBlockScalarHeader(value)) {
+        const block = collectIndentedScalar(lines, child, match[1].length);
+        if (containsUntrustedExpression(block.value)) vars.add(match[2]);
+        child = block.endIndex;
+      }
     }
   }
 
@@ -307,6 +321,19 @@ describe('GitHub workflow untrusted shell policy', () => {
     ].join('\n');
 
     expect(() => expectNoUntrustedTextInShell(unsafe, 'env-unsafe.yml')).toThrow();
+  });
+
+  it('ignores untrusted values outside env mappings when collecting shell environment taint', () => {
+    const safe = [
+      'steps:',
+      '  - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '    with:',
+      '      body: ${{ github.event.comment.body }}',
+      '  - run: printf "%s\\n" "$body"',
+    ].join('\n');
+
+    expect(extractUntrustedEnvVars(safe)).toEqual(new Set());
+    expectNoUntrustedTextInShell(safe, 'non-env-binding.yml');
   });
 
   it('rejects GitHub env-context interpolation of tainted variables', () => {
