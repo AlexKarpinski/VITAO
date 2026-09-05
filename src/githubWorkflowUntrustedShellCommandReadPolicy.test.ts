@@ -70,6 +70,12 @@ const collectRuns = (workflow: string) => {
 const containsDirectUntrusted = (value: string) =>
   /(?:github\.event|context\.payload)\.(?:issue\.(?:title|body)|comment\.body|pull_request\.(?:title|body|head\.ref)|review(?:_comment)?\.body|discussion\.(?:title|body))/.test(normalizeAccess(value));
 
+const readsUntrustedEventPathField = (value: string) => {
+  const normalized = normalizeAccess(value);
+  return /GITHUB_EVENT_PATH/.test(normalized)
+    && /(?:\.comment\.body|\.issue\.(?:title|body)|\.pull_request\.(?:title|body|head\.ref)|\.review(?:_comment)?\.body|\.discussion\.(?:title|body))/.test(normalized);
+};
+
 const collectTaintedStepIds = (workflow: string) => {
   const ids = new Set<string>();
   const lines = workflow.split('\n');
@@ -127,6 +133,37 @@ const collectDirectTaintedEnv = (workflow: string) => {
   return names;
 };
 
+const collectEventPathTaintedOutputs = (workflow: string) => {
+  const outputs: Array<{ stepId: string; outputName: string }> = [];
+  const lines = workflow.split('\n');
+  for (let start = 0; start < lines.length; start += 1) {
+    const raw = lines[start];
+    const sequence = raw.match(/^(\s*)-\s+/);
+    if (!sequence) continue;
+    const itemIndent = sequence[1].length;
+    const block = [raw];
+    let end = start;
+    for (let index = start + 1; index < lines.length; index += 1) {
+      const candidate = lines[index];
+      if (candidate.trim() && indentOf(candidate) <= itemIndent) break;
+      block.push(candidate);
+      end = index;
+    }
+    const text = block.join('\n');
+    const id = text.match(/^\s*(?:-\s*)?id:\s*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*$/m);
+    if (!id) { start = end; continue; }
+    for (const script of collectRuns(text)) {
+      const normalized = normalizeAccess(script);
+      if (!readsUntrustedEventPathField(normalized) || !/GITHUB_OUTPUT/.test(normalized)) continue;
+      for (const output of normalized.matchAll(/\b([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*\$\([^\n)]*GITHUB_EVENT_PATH[^\n)]*\)/g)) {
+        outputs.push({ stepId: id[1], outputName: output[1] });
+      }
+    }
+    start = end;
+  }
+  return outputs;
+};
+
 const expectNoEventPathCommandExecution = (workflow: string, source: string) => {
   for (const script of collectRuns(workflow)) {
     const normalized = normalizeAccess(script);
@@ -134,6 +171,21 @@ const expectNoEventPathCommandExecution = (workflow: string, source: string) => 
     const readsUntrustedField = /(?:\.comment\.body|\.issue\.(?:title|body)|\.pull_request\.(?:title|body|head\.ref)|\.review(?:_comment)?\.body|\.discussion\.(?:title|body))/.test(normalized);
     const executesRead = /(?:bash\s+-c|sh\s+-c|eval|Invoke-Expression|cmd\s+\/c|call|source\s+<\(|(?:^|[;&|]\s*)\.\s+<\(|\|\s*(?:bash|sh)(?:\s|$))\b/i.test(normalized);
     expect(readsUntrustedField && executesRead, `${source}: untrusted GITHUB_EVENT_PATH data reaches shell`).toBe(false);
+  }
+};
+
+const expectNoEventPathOutputExecution = (workflow: string, source: string) => {
+  const taintedOutputs = collectEventPathTaintedOutputs(workflow);
+  for (const script of collectRuns(workflow)) {
+    const normalized = normalizeAccess(script);
+    const commandSink = /(?:bash\s+-c|sh\s+-c|eval|Invoke-Expression|cmd\s+\/c|call)\b/i;
+    if (!commandSink.test(normalized)) continue;
+    for (const { stepId, outputName } of taintedOutputs) {
+      const escapedStep = stepId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escapedOutput = outputName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const outputRef = new RegExp(`steps\\.${escapedStep}\\.outputs\\.${escapedOutput}\\b`);
+      expect(outputRef.test(normalized), `${source}: GITHUB_EVENT_PATH-derived output ${stepId}.${outputName} reaches shell`).toBe(false);
+    }
   }
 };
 
@@ -155,6 +207,7 @@ describe('command-based untrusted shell reads', () => {
     for (const file of workflowFiles) {
       const workflow = readFileSync(join(workflowsDir, file), 'utf8');
       expectNoEventPathCommandExecution(workflow, file);
+      expectNoEventPathOutputExecution(workflow, file);
       expectNoCommandBasedEnvReads(workflow, file);
     }
   });
@@ -177,6 +230,16 @@ describe('command-based untrusted shell reads', () => {
   it('rejects event payload text piped directly to a shell', () => {
     const unsafe = ['jobs:', '  check:', '    steps:', '      - run: jq -r \' .comment.body \' "$GITHUB_EVENT_PATH" | bash'].join('\n').replace("' .comment.body '", "'.comment.body'");
     expect(() => expectNoEventPathCommandExecution(unsafe, 'event-path-pipe.yml')).toThrow();
+  });
+
+  it('rejects GITHUB_EVENT_PATH data persisted through GITHUB_OUTPUT and executed later', () => {
+    const unsafe = ['jobs:', '  check:', '    steps:', '      - id: capture', '        run: echo "command=$(jq -r \' .comment.body \' \"$GITHUB_EVENT_PATH\")" >> "$GITHUB_OUTPUT"', '      - run: bash -c "${{ steps.capture.outputs.command }}"'].join('\n').replace("' .comment.body '", "'.comment.body'");
+    expect(() => expectNoEventPathOutputExecution(unsafe, 'event-path-output.yml')).toThrow();
+  });
+
+  it('allows constant GITHUB_OUTPUT values to be consumed by a shell command', () => {
+    const safe = ['jobs:', '  check:', '    steps:', '      - id: capture', '        run: echo "command=echo-safe" >> "$GITHUB_OUTPUT"', '      - run: bash -c "${{ steps.capture.outputs.command }}"'].join('\n');
+    expectNoEventPathOutputExecution(safe, 'constant-output.yml');
   });
 
   it('rejects command-based reads of directly tainted environment values', () => {
