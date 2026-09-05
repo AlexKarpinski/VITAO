@@ -16,11 +16,71 @@ const normalizeAccess = (value: string) => value
 
 const forkRepoText = /(?:github\.event\.pull_request\.head\.repo|context\.payload\.pull_request\.head\.repo)\.(?:description|name|full_name|default_branch|homepage)\b/;
 
+const isEscapedQuote = (source: string, index: number) => {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) backslashes += 1;
+  return backslashes % 2 === 1;
+};
+
+const collectFlowRunScripts = (line: string) => {
+  const scripts: string[] = [];
+  let quote: '"' | "'" | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote) {
+      if (char === quote && (quote === "'" || !isEscapedQuote(line, index))) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char !== '{' && char !== ',') continue;
+
+    const tail = line.slice(index + 1);
+    const key = tail.match(/^\s*(?:run|"run"|'run')\s*:\s*/);
+    if (!key) continue;
+
+    const start = index + 1 + key[0].length;
+    let valueQuote: '"' | "'" | null = null;
+    let square = 0;
+    let curly = 0;
+    let end = line.length;
+    for (let cursor = start; cursor < line.length; cursor += 1) {
+      const valueChar = line[cursor];
+      if (valueQuote) {
+        if (valueChar === valueQuote && (valueQuote === "'" || !isEscapedQuote(line, cursor))) valueQuote = null;
+        continue;
+      }
+      if (valueChar === '"' || valueChar === "'") {
+        valueQuote = valueChar;
+        continue;
+      }
+      if (valueChar === '[') square += 1;
+      else if (valueChar === ']') {
+        if (square === 0 && curly === 0) { end = cursor; break; }
+        square -= 1;
+      } else if (valueChar === '{') curly += 1;
+      else if (valueChar === '}') {
+        if (curly === 0 && square === 0) { end = cursor; break; }
+        curly -= 1;
+      } else if (valueChar === ',' && square === 0 && curly === 0) {
+        end = cursor;
+        break;
+      }
+    }
+    scripts.push(line.slice(start, end).trim());
+    index = Math.max(index, end - 1);
+  }
+  return scripts;
+};
+
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
   const lines = workflow.split('\n');
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
+    scripts.push(...collectFlowRunScripts(raw));
     const match = raw.match(/^\s*(?:-\s*)?["']?run["']?\s*:\s*(.*)$/);
     if (!match) continue;
     const value = match[1].trim();
@@ -90,6 +150,17 @@ describe('GitHub workflow fork-repository metadata shell policy', () => {
       `      - run: bash -c "\${{ github.event.pull_request.head.repo.description }}"`,
     ].join('\n');
     expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-description.yml')).toThrow();
+  });
+
+  it('rejects fork metadata in flow-style run mappings', () => {
+    const unsafe = [
+      'on: pull_request_target',
+      'jobs:',
+      '  demo:',
+      '    runs-on: ubuntu-latest',
+      `    steps: [{ run: "bash -c '\${{ github.event.pull_request.head.repo.description }}'" }]`,
+    ].join('\n');
+    expect(() => expectNoForkRepoMetadataInShell(unsafe, 'fork-flow-description.yml')).toThrow();
   });
 
   it('rejects fork default-branch names interpolated into a privileged shell', () => {
