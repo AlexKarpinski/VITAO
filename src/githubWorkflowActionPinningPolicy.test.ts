@@ -138,8 +138,24 @@ const extractActionRefs = (workflow: string) => {
     if (jobsIndent !== null && indent <= jobsIndent) { jobsIndent = null; jobIndent = null; }
     if (jobsIndent !== null && indent > jobsIndent && jobIndent === null) jobIndent = indent;
     const explicitKey = withoutComment.match(/^\s*(?:-\s*)?\?\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z0-9_-]+))\s*$/);
-    if (explicitKey && resolveYamlKey(explicitKey[1]) === 'steps') {
-      for (let child = index + 1; child < lines.length; child += 1) {
+    let explicitKeyValue = explicitKey?.[1] ?? null;
+    let explicitKeyEnd = index;
+    if (!explicitKeyValue) {
+      const continuedExplicitKey = withoutComment.match(/^\s*(?:-\s*)?\?\s*("(?:\\.|[^"\\])*\\)\s*$/);
+      if (continuedExplicitKey) {
+        let joinedKey = continuedExplicitKey[1].slice(0, -1);
+        for (let child = index + 1; child < lines.length; child += 1) {
+          const continuation = stripYamlComment(lines[child]).trim();
+          if (!continuation) continue;
+          joinedKey += continuation;
+          explicitKeyEnd = child;
+          if (joinedKey.endsWith('"') && !isEscapedQuote(joinedKey, joinedKey.length - 1)) { explicitKeyValue = joinedKey; break; }
+          if (joinedKey.endsWith('\\')) joinedKey = joinedKey.slice(0, -1); else break;
+        }
+      }
+    }
+    if (explicitKeyValue && resolveYamlKey(explicitKeyValue) === 'steps') {
+      for (let child = explicitKeyEnd + 1; child < lines.length; child += 1) {
         const explicitValue = stripYamlComment(lines[child]).match(/^\s*:\s*(.*)$/);
         if (!explicitValue) { if (stripYamlComment(lines[child]).trim()) break; continue; }
         const value = explicitValue[1].trim();
@@ -148,8 +164,8 @@ const extractActionRefs = (workflow: string) => {
       }
       continue;
     }
-    if (explicitKey && resolveYamlKey(explicitKey[1]) === 'uses') {
-      for (let child = index + 1; child < lines.length; child += 1) { const childRaw = lines[child]; const explicitValue = stripYamlComment(childRaw).match(/^\s*:\s*(.*)$/); if (!explicitValue) { if (stripYamlComment(childRaw).trim()) break; continue; }
+    if (explicitKeyValue && resolveYamlKey(explicitKeyValue) === 'uses') {
+      for (let child = explicitKeyEnd + 1; child < lines.length; child += 1) { const childRaw = lines[child]; const explicitValue = stripYamlComment(childRaw).match(/^\s*:\s*(.*)$/); if (!explicitValue) { if (stripYamlComment(childRaw).trim()) break; continue; }
         const value = explicitValue[1].trim(); if (value) { refs.push(unquote(value)); index = child; break; }
         const valueIndent = childRaw.match(/^\s*/)?.[0].length ?? 0; for (let vc = child + 1; vc < lines.length; vc += 1) { const vRaw = lines[vc]; const vTrim = stripYamlComment(vRaw).trim(); const vIndent = vRaw.match(/^\s*/)?.[0].length ?? 0; if (!vTrim) continue; if (vIndent <= valueIndent) break; refs.push(unquote(vTrim)); index = vc; break; } break;
       } continue;
@@ -228,5 +244,13 @@ describe('GitHub workflow action pinning policy', () => {
     expect(extractActionRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
     const mutable = ['steps: [', '  { run: "echo [', '  ]" },', '  { uses: actions/checkout@v4 },', ']'].join('\n');
     expect(() => expectImmutableExternalActions(mutable, 'multiline-flow-step-quote.yml')).toThrow();
+  });
+  it('accumulates multiline explicit steps keys', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = ['jobs:', '  build:', '    ? "st\\', '      eps"', `    : [{ uses: actions/checkout@${sha} }]`].join('\n');
+    expect(extractActionRefs(pinned)).toContain(`actions/checkout@${sha}`);
+    expectImmutableExternalActions(pinned, 'continued-explicit-steps.yml');
+    const mutable = ['jobs:', '  build:', '    ? "st\\', '      eps"', '    : [{ uses: actions/checkout@v4 }]'].join('\n');
+    expect(() => expectImmutableExternalActions(mutable, 'continued-explicit-steps.yml')).toThrow();
   });
 });
