@@ -32,6 +32,7 @@ const referencesEnvironment = (value: string, name: string) => {
   ].some((pattern) => pattern.test(value));
 };
 const isBlockHeader = (value: string) => /^[|>](?:[+-]?[1-9]?|[1-9][+-]?)$/.test(value.trim());
+const isJobKey = (value: string) => /^(?:[A-Za-z_][A-Za-z0-9_-]*|"[A-Za-z_][A-Za-z0-9_-]*"|'[A-Za-z_][A-Za-z0-9_-]*')\s*:\s*$/.test(value);
 
 const collectIndentedValue = (lines: string[], start: number, parentIndent: number) => {
   const parts: string[] = [];
@@ -82,7 +83,7 @@ const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
       continue;
     }
 
-    if (jobIndent === null && indent > jobsIndent && /^[A-Za-z_][A-Za-z0-9_-]*\s*:\s*$/.test(trimmed)) {
+    if (jobIndent === null && indent > jobsIndent && isJobKey(trimmed)) {
       jobIndent = indent;
       matrixIndent = null;
       envIndent = null;
@@ -90,7 +91,7 @@ const expectNoUntrustedMatrixShell = (workflow: string, source: string) => {
       matrixTaintedEnv = new Set<string>();
       continue;
     }
-    if (jobIndent !== null && indent === jobIndent && /^[A-Za-z_][A-Za-z0-9_-]*\s*:\s*$/.test(trimmed)) {
+    if (jobIndent !== null && indent === jobIndent && isJobKey(trimmed)) {
       matrixIndent = null;
       envIndent = null;
       matrixTainted = false;
@@ -178,6 +179,19 @@ describe('GitHub workflow matrix-to-shell trust boundary', () => {
       "      - run: bash -c '${{ matrix.command }}'",
     ].join('\n');
     expect(() => expectNoUntrustedMatrixShell(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects issue-controlled matrix values in quoted job IDs', () => {
+    const unsafe = [
+      'jobs:',
+      '  "build":',
+      '    strategy:',
+      '      matrix: ${{ fromJSON(github.event.issue.body) }}',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      "      - run: bash -c '${{ matrix.command }}'",
+    ].join('\n');
+    expect(() => expectNoUntrustedMatrixShell(unsafe, 'quoted-job.yml')).toThrow();
   });
 
   it('rejects untrusted values nested below a matrix mapping', () => {
