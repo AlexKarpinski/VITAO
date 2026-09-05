@@ -5,13 +5,15 @@ import { describe, expect, it } from 'vitest';
 const workflowsDir = '.github/workflows';
 const workflowFiles = readdirSync(workflowsDir).filter((name) => name.endsWith('.yml') || name.endsWith('.yaml')).sort();
 
+type FlowQuote = '"' | "'" | null;
+
 const isEscapedQuote = (source: string, index: number) => {
   let backslashes = 0;
   for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) backslashes += 1;
   return backslashes % 2 === 1;
 };
 const stripYamlComment = (line: string) => {
-  let quote: '"' | "'" | null = null;
+  let quote: FlowQuote = null;
   for (let index = 0; index < line.length; index += 1) {
     const char = line[index];
     if (quote) { if (char === quote && (quote === "'" || !isEscapedQuote(line, index))) quote = null; continue; }
@@ -38,17 +40,17 @@ const decodeYamlKey = (rawKey: string) => {
   return key;
 };
 const blockScalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*$/;
-const flowStructure = (line: string) => {
-  let quote: '"' | "'" | null = null; let square = 0; let curly = 0;
+const flowStructure = (line: string, initialQuote: FlowQuote = null) => {
+  let quote: FlowQuote = initialQuote; let square = 0; let curly = 0;
   for (let index = 0; index < line.length; index += 1) { const char = line[index];
     if (quote) { if (char === quote && (quote === "'" || !isEscapedQuote(line, index))) quote = null; continue; }
     if (char === '"' || char === "'") { quote = char; continue; }
     if (char === '[') square += 1; else if (char === ']') square -= 1; else if (char === '{') curly += 1; else if (char === '}') curly -= 1;
   }
-  return { square, curly };
+  return { square, curly, quote };
 };
 const sliceStructuralFlowSequence = (line: string, openingIndex: number) => {
-  let quote: '"' | "'" | null = null; let depth = 0;
+  let quote: FlowQuote = null; let depth = 0;
   for (let index = openingIndex; index < line.length; index += 1) {
     const char = line[index];
     if (quote) { if (char === quote && (quote === "'" || !isEscapedQuote(line, index))) quote = null; continue; }
@@ -59,7 +61,7 @@ const sliceStructuralFlowSequence = (line: string, openingIndex: number) => {
   return line.slice(openingIndex);
 };
 const splitTopLevelFlowEntries = (body: string) => {
-  const entries: string[] = []; let start = 0; let quote: '"' | "'" | null = null; let square = 0; let curly = 0;
+  const entries: string[] = []; let start = 0; let quote: FlowQuote = null; let square = 0; let curly = 0;
   for (let index = 0; index < body.length; index += 1) {
     const char = body[index];
     if (quote) { if (char === quote && (quote === "'" || !isEscapedQuote(body, index))) quote = null; continue; }
@@ -71,7 +73,7 @@ const splitTopLevelFlowEntries = (body: string) => {
   return entries;
 };
 const maskQuotedFlowScalarStructure = (source: string) => {
-  const chars = [...source]; let quote: '"' | "'" | null = null; let opening = -1;
+  const chars = [...source]; let quote: FlowQuote = null; let opening = -1;
   for (let index = 0; index < source.length; index += 1) {
     const char = source[index];
     if (!quote) { if (char === '"' || char === "'") { quote = char; opening = index; } continue; }
@@ -84,7 +86,7 @@ const maskQuotedFlowScalarStructure = (source: string) => {
 };
 
 const extractActionRefs = (workflow: string) => {
-  const refs: string[] = []; const lines = workflow.split('\n'); const scalarAnchors = new Map<string, string>(); let ignoredBlockIndent: number | null = null; let flowStepsDepth = 0; let jobsIndent: number | null = null; let jobIndent: number | null = null; let blockStepsIndent: number | null = null; let pendingBareStepIndent: number | null = null;
+  const refs: string[] = []; const lines = workflow.split('\n'); const scalarAnchors = new Map<string, string>(); let ignoredBlockIndent: number | null = null; let flowStepsDepth = 0; let flowStepsQuote: FlowQuote = null; let jobsIndent: number | null = null; let jobIndent: number | null = null; let blockStepsIndent: number | null = null; let pendingBareStepIndent: number | null = null;
   const resolveYamlKey = (rawKey: string) => { const decoded = decodeYamlKey(rawKey); return decoded.startsWith('*') ? scalarAnchors.get(decoded.slice(1)) ?? decoded : decoded; };
   const collectFlowUses = (source: string) => {
     const topLevel = maskQuotedFlowScalarStructure(source).replace(/\b(?:with|env|metadata)\s*:\s*\{[^{}]*\}/g, '');
@@ -115,9 +117,9 @@ const extractActionRefs = (workflow: string) => {
     if (inlineJobs && resolveYamlKey(inlineJobs[1]) === 'jobs') { collectInlineJobs(inlineJobs[2]); continue; }
     const multilineJobs = withoutComment.match(/^\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*\{\s*$/);
     if (multilineJobs && resolveYamlKey(multilineJobs[1]) === 'jobs') {
-      const collected: string[] = []; let depth = 1;
+      const collected: string[] = []; let depth = 1; let quote: FlowQuote = null;
       for (let child = index + 1; child < lines.length; child += 1) {
-        const childLine = stripYamlComment(lines[child]); const structure = flowStructure(childLine); depth += structure.curly;
+        const childLine = stripYamlComment(lines[child]); const structure = flowStructure(childLine, quote); quote = structure.quote; depth += structure.curly;
         if (depth <= 0) { index = child; break; }
         collected.push(childLine.trim()); index = child;
       }
@@ -126,7 +128,7 @@ const extractActionRefs = (workflow: string) => {
     }
 
     const flowStartMatches = Array.from(withoutComment.matchAll(/(?=(?:^|[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(?:&[A-Za-z0-9_-]+\s+)*\[)/g));
-    const flowStepsMatch = flowStartMatches.find((match) => resolveYamlKey(match[1]) === 'steps'); const startsFlowSteps = Boolean(flowStepsMatch); if (startsFlowSteps && flowStepsDepth === 0) flowStepsDepth = 1;
+    const flowStepsMatch = flowStartMatches.find((match) => resolveYamlKey(match[1]) === 'steps'); const startsFlowSteps = Boolean(flowStepsMatch); if (startsFlowSteps && flowStepsDepth === 0) { flowStepsDepth = 1; flowStepsQuote = null; }
     const section = trimmed.match(/^((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*$/);
     if (section && resolveYamlKey(section[1]) === 'jobs') { jobsIndent = indent; jobIndent = null; blockStepsIndent = null; pendingBareStepIndent = null; continue; }
     if (section && resolveYamlKey(section[1]) === 'steps') { blockStepsIndent = indent; pendingBareStepIndent = null; continue; }
@@ -182,7 +184,7 @@ const extractActionRefs = (workflow: string) => {
       const multiline = topLevel.match(/(?:^|[\[{,])\s*((?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|\*[A-Za-z0-9_-]+|[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*$/);
       if (multiline && resolveYamlKey(multiline[1]) === 'uses') for (let child = index + 1; child < lines.length; child += 1) { const v = stripYamlComment(lines[child]).trim(); if (!v) continue; refs.push(unquote(v.replace(/[}\],]+\s*$/, ''))); index = child; break; }
     }
-    if (flowStepsDepth > 0) { const structure = flowStructure(withoutComment); flowStepsDepth += structure.square; if (startsFlowSteps) flowStepsDepth -= 1; if (flowStepsDepth < 0) flowStepsDepth = 0; }
+    if (flowStepsDepth > 0) { const structure = flowStructure(withoutComment, flowStepsQuote); flowStepsQuote = structure.quote; flowStepsDepth += structure.square; if (startsFlowSteps) flowStepsDepth -= 1; if (flowStepsDepth <= 0) { flowStepsDepth = 0; flowStepsQuote = null; } }
   }
   return refs;
 };
@@ -212,5 +214,19 @@ describe('GitHub workflow action pinning policy', () => {
     expect(extractActionRefs(pinnedSteps)).toEqual([`actions/checkout@${sha}`]);
     const pinnedJob = `jobs:\n  call: { name: "Path \\\\" , uses: owner/repo/.github/workflows/build.yml@${sha} }`;
     expect(extractActionRefs(pinnedJob)).toContain(`owner/repo/.github/workflows/build.yml@${sha}`);
+  });
+  it('preserves quote state across multiline flow jobs', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = ['jobs: {', '  call: { name: "template {{', `  }}", uses: owner/repo/.github/workflows/build.yml@${sha} }`, '}'].join('\n');
+    expect(extractActionRefs(pinned)).toEqual([`owner/repo/.github/workflows/build.yml@${sha}`]);
+    const mutable = ['jobs: {', '  call: { name: "template {{', '  }}", uses: owner/repo/.github/workflows/build.yml@main }', '}'].join('\n');
+    expect(() => expectImmutableExternalActions(mutable, 'multiline-flow-job-quote.yml')).toThrow();
+  });
+  it('preserves quote state across multiline flow step scalars', () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const pinned = ['steps: [', '  { run: "echo [', '  ]" },', `  { uses: actions/checkout@${sha} },`, ']'].join('\n');
+    expect(extractActionRefs(pinned)).toEqual([`actions/checkout@${sha}`]);
+    const mutable = ['steps: [', '  { run: "echo [', '  ]" },', '  { uses: actions/checkout@v4 },', ']'].join('\n');
+    expect(() => expectImmutableExternalActions(mutable, 'multiline-flow-step-quote.yml')).toThrow();
   });
 });
