@@ -201,6 +201,18 @@ const expectNoCommandBasedEnvReads = (workflow: string, source: string) => {
   }
 };
 
+const expectNoRuntimeEnvExecution = (workflow: string, source: string) => {
+  const tainted = collectDirectTaintedEnv(workflow);
+  for (const script of collectRuns(workflow)) {
+    for (const name of tainted) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const nodeEnvRead = `process\\.env(?:\\.${escaped}\\b|\\[\\s*['\"]${escaped}['\"]\\s*\\])`;
+      const nodeExecution = new RegExp(`(?:exec|execSync)\\s*\\(\\s*${nodeEnvRead}`, 'i');
+      expect(nodeExecution.test(script), `${source}: Node runtime executes tainted environment value ${name}`).toBe(false);
+    }
+  }
+};
+
 describe('command-based untrusted shell reads', () => {
   it('scans every checked-in workflow', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
@@ -209,6 +221,7 @@ describe('command-based untrusted shell reads', () => {
       expectNoEventPathCommandExecution(workflow, file);
       expectNoEventPathOutputExecution(workflow, file);
       expectNoCommandBasedEnvReads(workflow, file);
+      expectNoRuntimeEnvExecution(workflow, file);
     }
   });
 
@@ -260,6 +273,16 @@ describe('command-based untrusted shell reads', () => {
   it('rejects flow env output taint and fallback expressions in command reads', () => {
     const unsafe = ['jobs:', '  check:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        id: capture', '        with:', '          result-encoding: string', '          script: return context.payload.comment.body', '      - env: { CMD: "${{ steps.capture.outputs.result || \'echo safe\' }}" }', '        run: bash -c "$(printenv CMD)"'].join('\n');
     expect(() => expectNoCommandBasedEnvReads(unsafe, 'flow-output-printenv.yml')).toThrow();
+  });
+
+  it('rejects Node execution of directly tainted environment values', () => {
+    const unsafe = ['jobs:', '  check:', '    env:', '      CMD: ${{ github.event.comment.body }}', '    steps:', '      - run: node -e \'require("node:child_process").execSync(process.env.CMD)\''].join('\n');
+    expect(() => expectNoRuntimeEnvExecution(unsafe, 'node-runtime-env.yml')).toThrow();
+  });
+
+  it('allows Node execution of constant environment values', () => {
+    const safe = ['jobs:', '  check:', '    env:', '      CMD: echo-safe', '    steps:', '      - run: node -e \'require("node:child_process").execSync(process.env.CMD)\''].join('\n');
+    expectNoRuntimeEnvExecution(safe, 'node-runtime-constant.yml');
   });
 
   it('allows command reads of constant environment values', () => {
