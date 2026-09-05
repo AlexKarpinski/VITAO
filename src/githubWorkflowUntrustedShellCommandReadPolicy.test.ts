@@ -9,7 +9,7 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
-  .replace(/\[['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\]/g, '.$1');
+  .replace(/\s*\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\]/g, '.$1');
 
 const stripYamlComment = (value: string) => {
   let quote: '"' | "'" | null = null;
@@ -162,6 +162,11 @@ describe('command-based untrusted shell reads', () => {
   it('rejects shell execution of comment text read from GITHUB_EVENT_PATH', () => {
     const unsafe = ['jobs:', '  check:', '    steps:', '      - run: bash -c "$(jq -r \' .comment.body \' \"$GITHUB_EVENT_PATH\")"'].join('\n').replace("' .comment.body '", "'.comment.body'");
     expect(() => expectNoEventPathCommandExecution(unsafe, 'event-path.yml')).toThrow();
+  });
+
+  it('rejects bracketed event payload paths with expression whitespace', () => {
+    const unsafe = ['jobs:', '  check:', '    steps:', '      - run: bash -c "$(jq -r \' .comment [\\"body\\"] \' \"$GITHUB_EVENT_PATH\")"'].join('\n').replace("' .comment", "'.comment").replace('] \'', "]'");
+    expect(() => expectNoEventPathCommandExecution(unsafe, 'event-path-bracket.yml')).toThrow();
   });
 
   it('rejects sourcing comment text read from GITHUB_EVENT_PATH', () => {
