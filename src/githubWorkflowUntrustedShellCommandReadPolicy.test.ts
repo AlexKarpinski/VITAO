@@ -9,7 +9,7 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const normalizeAccess = (value: string) => value
   .replace(/\?\./g, '.')
-  .replace(/\s*\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\]/g, '.$1');
+  .replace(/\s*\[\s*\\?['"]([A-Za-z_][A-Za-z0-9_-]*)\\?['"]\s*\]/g, '.$1');
 
 const stripYamlComment = (value: string) => {
   let quote: '"' | "'" | null = null;
