@@ -114,6 +114,12 @@ const envReferencePattern = (name: string) => {
   return new RegExp(`(?:\\$${escaped}\\b|\\$\\{${escaped}\\}|\\$env:${escaped}\\b|%${escaped}%|env\\.${escaped}\\b)`, 'i');
 };
 
+const pythonRuntimeExecutionPattern = (name: string) => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const envRead = `os\\.environ(?:\\.get\\(\\s*['"]${escaped}['"]\\s*\\)|\\[\\s*['"]${escaped}['"]\\s*\\])`;
+  return new RegExp(`(?:subprocess\\.(?:run|call|Popen)\\(\\s*${envRead}[\\s\\S]*?shell\\s*=\\s*True\\b|os\\.system\\(\\s*${envRead}\\s*\\))`, 'i');
+};
+
 const indirectPointerPattern = (name: string) => {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`\\$\\{!${escaped}(?:[^}]*)\\}`, 'i');
@@ -194,7 +200,10 @@ const assertNoTransitiveUntrustedShell = (workflow: string, source: string) => {
     const normalizedRun = normalizeAccess(run);
     expect(containsUntrustedPayload(normalizedRun), `${source}: direct untrusted payload in run`).toBe(false);
     for (const id of taintedStepIds) expect(stepOutputPattern(id).test(normalizedRun), `${source}: tainted output from ${id} reaches run`).toBe(false);
-    for (const name of tainted) expect(envReferencePattern(name).test(normalizedRun), `${source}: tainted env ${name} reaches run`).toBe(false);
+    for (const name of tainted) {
+      expect(envReferencePattern(name).test(normalizedRun), `${source}: tainted env ${name} reaches run`).toBe(false);
+      expect(pythonRuntimeExecutionPattern(name).test(normalizedRun), `${source}: tainted env ${name} reaches Python execution`).toBe(false);
+    }
     for (const pointer of indirectPointers) expect(indirectPointerPattern(pointer).test(normalizedRun), `${source}: ${pointer} indirectly expands a tainted env`).toBe(false);
   }
 };
@@ -247,6 +256,14 @@ describe('GitHub workflow transitive untrusted shell policy', () => {
   it('decodes quoted step ids before tracking outputs', () => {
     const unsafe = ['steps:', '  - id: "capture"', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - run: bash -c "${{ steps.capture.outputs.result }}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'quoted-id.yml')).toThrow();
+  });
+  it('rejects tainted environment values executed through Python runtime APIs', () => {
+    const unsafe = ['env:', '  CMD: ${{ github.event.comment.body }}', 'steps:', '  - run: python -c "import os, subprocess; subprocess.run(os.environ.get(\'CMD\'), shell=True)"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'python-runtime-env.yml')).toThrow();
+  });
+  it('allows constant environment values passed to Python runtime APIs', () => {
+    const safe = ['env:', '  CMD: echo safe', 'steps:', '  - run: python -c "import os, subprocess; subprocess.run(os.environ.get(\'CMD\'), shell=True)"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(safe, 'python-runtime-constant.yml')).not.toThrow();
   });
   it('checks every repository workflow for these transitive paths', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
