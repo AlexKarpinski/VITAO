@@ -203,6 +203,12 @@ const extractUntrustedEnvVars = (workflow: string) => {
   return vars;
 };
 
+const stepReturnsUntrustedValue = (step: string) =>
+  step.split('\n').some((line) => {
+    const match = line.match(/\breturn\s+(.+?);?\s*$/);
+    return match ? containsUntrustedExpression(match[1]) : false;
+  });
+
 const extractUntrustedStepIds = (workflow: string) => {
   const ids = new Set<string>();
   const lines = workflow.split('\n');
@@ -221,7 +227,7 @@ const extractUntrustedStepIds = (workflow: string) => {
       stepLines.push(childLine);
     }
 
-    if (containsUntrustedExpression(stepLines.join('\n'))) ids.add(match[2]);
+    if (stepReturnsUntrustedValue(stepLines.join('\n'))) ids.add(match[2]);
   }
 
   return ids;
@@ -412,6 +418,23 @@ describe('GitHub workflow untrusted shell policy', () => {
     ].join('\n');
 
     expect(() => expectNoUntrustedTextInShell(unsafe, 'step-output-unsafe.yml')).toThrow();
+  });
+
+  it('allows GitHub Script steps that inspect payload text but return a constant output', () => {
+    const safe = [
+      'steps:',
+      '  - id: capture',
+      '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '    with:',
+      '      result-encoding: string',
+      '      script: |',
+      '        core.info(context.payload.comment.body);',
+      "        return 'echo safe';",
+      '  - run: bash -c "${{ steps.capture.outputs.result }}"',
+    ].join('\n');
+
+    expect(extractUntrustedStepIds(safe)).toEqual(new Set());
+    expectNoUntrustedTextInShell(safe, 'step-output-safe.yml');
   });
 
   it('parses multiline plain run scalars', () => {
