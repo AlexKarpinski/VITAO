@@ -1,0 +1,162 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const workflowsDir = '.github/workflows';
+const workflowFiles = readdirSync(workflowsDir)
+  .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
+  .sort();
+
+const immutableSha = /^[^\s@]+@[0-9a-fA-F]{40}$/;
+const scalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
+
+const stripNodeProperties = (value: string) =>
+  value.replace(/^(?:(?:&[A-Za-z0-9_.-]+|![^\s]+|!![^\s]+)\s+)+/, '').trim();
+
+const updateMultilineQuote = (line: string, initial: '"' | "'" | null) => {
+  let quote = initial;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (quote === '"') {
+      if (char !== '"') continue;
+      let backslashes = 0;
+      for (let cursor = index - 1; cursor >= 0 && line[cursor] === '\\'; cursor -= 1) backslashes += 1;
+      if (backslashes % 2 === 0) quote = null;
+      continue;
+    }
+    if (quote === "'") {
+      if (char !== "'") continue;
+      if (line[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") quote = char;
+    if (char === '#' && quote === null && (index === 0 || /\s/.test(line[index - 1]))) break;
+  }
+  return quote;
+};
+
+const collectDecoratedExplicitStepRefs = (workflow: string) => {
+  const refs: string[] = [];
+  const lines = workflow.split('\n');
+  let ignoredScalarIndent: number | null = null;
+  let multilineQuote: '"' | "'" | null = null;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const raw = lines[lineIndex];
+    const indent = raw.match(/^\s*/)?.[0].length ?? 0;
+    const trimmed = raw.trim();
+    if (ignoredScalarIndent !== null) {
+      if (!trimmed || indent > ignoredScalarIndent) continue;
+      ignoredScalarIndent = null;
+    }
+
+    if (multilineQuote !== null) {
+      multilineQuote = updateMultilineQuote(raw, multilineQuote);
+      continue;
+    }
+
+    const scalar = raw.match(/^\s*[^:#]+:\s*(.+)$/);
+    if (scalar && scalarHeader.test(stripNodeProperties(scalar[1]))) {
+      ignoredScalarIndent = indent;
+      continue;
+    }
+
+    const quoteAfterLine = updateMultilineQuote(raw, null);
+    if (quoteAfterLine !== null) {
+      multilineQuote = quoteAfterLine;
+      continue;
+    }
+
+    const explicit = raw.match(/^\s*\?\s+(.+)$/);
+    if (!explicit) continue;
+    const key = stripNodeProperties(explicit[1]).replace(/^['"]|['"]$/g, '');
+    if (key !== 'steps') continue;
+
+    for (let index = lineIndex + 1; index < lines.length; index += 1) {
+      const valueLine = lines[index];
+      const valueIndent = valueLine.match(/^\s*/)?.[0].length ?? 0;
+      if (valueLine.trim() && valueIndent < indent) break;
+      const match = valueLine.match(/(?:^|[{,[]\s*)uses\s*:\s*['"]?([^'"\s,}\]]+)/);
+      if (match) refs.push(match[1]);
+      if (/^\s*\]/.test(valueLine) || /^\s*[^\s].*:/.test(valueLine) && valueIndent <= indent) break;
+    }
+  }
+
+  return refs;
+};
+
+const assertPinned = (workflow: string) => {
+  for (const ref of collectDecoratedExplicitStepRefs(workflow)) {
+    if (ref.startsWith('./') || ref.startsWith('docker://')) continue;
+    expect(ref, `Expected immutable action pin, got ${ref}`).toMatch(immutableSha);
+  }
+};
+
+describe('GitHub explicit steps node-property pinning policy', () => {
+  it('rejects mutable actions behind tagged explicit steps keys', () => {
+    const unsafe = `
+name: explicit-tagged-steps
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    ? !!str steps
+    : [{ uses: actions/checkout@v4 }]
+`;
+    expect(() => assertPinned(unsafe)).toThrow(/Expected immutable action pin/);
+  });
+
+  it('accepts immutable actions behind tagged explicit steps keys', () => {
+    const safe = `
+name: explicit-tagged-steps
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    ? !!str steps
+    : [{ uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 }]
+`;
+    expect(() => assertPinned(safe)).not.toThrow();
+  });
+
+  it('scans repeated decorated explicit steps occurrences independently', () => {
+    const unsafe = `
+name: repeated-explicit-tagged-steps
+jobs:
+  first:
+    runs-on: ubuntu-latest
+    ? !!str steps
+    : [{ uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 }]
+  second:
+    runs-on: ubuntu-latest
+    ? !!str steps
+    : [{ uses: actions/checkout@v4 }]
+`;
+    expect(() => assertPinned(unsafe)).toThrow(/actions\/checkout@v4/);
+  });
+
+  it('ignores explicit steps examples inside multiline quoted scalars', () => {
+    const safe = `
+name: multiline-quoted-docs
+env:
+  DOC: "documentation starts
+    ? !!str steps
+    : [{ uses: actions/checkout@v4 }]
+    documentation ends"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo safe
+`;
+    expect(() => assertPinned(safe)).not.toThrow();
+  });
+
+  it('scans every checked-in workflow', () => {
+    for (const file of workflowFiles) {
+      assertPinned(readFileSync(join(workflowsDir, file), 'utf8'));
+    }
+  });
+});
