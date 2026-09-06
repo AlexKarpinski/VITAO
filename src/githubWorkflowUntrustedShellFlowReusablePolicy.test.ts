@@ -53,12 +53,37 @@ const parseFlowMap = (raw: string) => {
   return result;
 };
 
+const unwrapScalar = (value: string) => value.trim().replace(/^['"]|['"]$/g, '');
+
 const expectNoFlowStyleReusableInputBypass = (workflows: Map<string, string>) => {
+  const checkFlowArgs = (callerName: string, usesValue: string, flowWith: string) => {
+    const uses = unwrapScalar(usesValue).match(/^\.\/\.github\/workflows\/([^\s#]+)$/)?.[1];
+    if (!uses) return;
+
+    const callee = workflows.get(uses);
+    if (!callee) return;
+
+    for (const [input, value] of parseFlowMap(flowWith)) {
+      if (!isUntrusted(value)) continue;
+      const escaped = input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const reachesRun = new RegExp(`^\\s*(?:-\\s*)?run\\s*:\\s*.*inputs\\.${escaped}\\b`, 'm').test(callee);
+      expect(reachesRun, `${callerName} passes untrusted flow-style input ${input} to shell in ${uses}`).toBe(false);
+    }
+  };
+
   for (const [callerName, caller] of workflows) {
     const lines = caller.split('\n');
     for (let index = 0; index < lines.length; index += 1) {
-      const uses = lines[index].match(/^\s*uses\s*:\s*\.\/\.github\/workflows\/([^\s#]+)\s*$/)?.[1];
-      if (!uses) continue;
+      const flowJob = lines[index].match(/^\s*[A-Za-z0-9_-]+\s*:\s*(\{.*\})\s*$/)?.[1];
+      if (flowJob) {
+        const job = parseFlowMap(flowJob);
+        const uses = job.get('uses');
+        const flowWith = job.get('with');
+        if (uses && flowWith?.trim().startsWith('{')) checkFlowArgs(callerName, uses, flowWith);
+      }
+
+      const usesValue = lines[index].match(/^\s*uses\s*:\s*(\.\/\.github\/workflows\/[^\s#]+)\s*$/)?.[1];
+      if (!usesValue) continue;
 
       const usesIndent = lines[index].match(/^\s*/)?.[0].length ?? 0;
       for (let child = index + 1; child < lines.length; child += 1) {
@@ -69,16 +94,7 @@ const expectNoFlowStyleReusableInputBypass = (workflows: Map<string, string>) =>
         if (trimmed && indent < usesIndent) break;
         if (trimmed && indent === usesIndent && !flowWith) break;
         if (!flowWith) continue;
-
-        const callee = workflows.get(uses);
-        if (!callee) continue;
-
-        for (const [input, value] of parseFlowMap(flowWith)) {
-          if (!isUntrusted(value)) continue;
-          const escaped = input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const reachesRun = new RegExp(`^\\s*(?:-\\s*)?run\\s*:\\s*.*inputs\\.${escaped}\\b`, 'm').test(callee);
-          expect(reachesRun, `${callerName} passes untrusted flow-style input ${input} to shell in ${uses}`).toBe(false);
-        }
+        checkFlowArgs(callerName, usesValue, flowWith);
       }
     }
   }
@@ -127,6 +143,30 @@ describe('GitHub workflow flow-style reusable-input policy', () => {
         '  call:',
         '    uses: ./.github/workflows/callee.yml',
         '    with: { command: "echo safe" }',
+      ].join('\n')],
+      ['callee.yml', 'jobs:\n  execute:\n    steps:\n      - run: bash -c "${{ inputs.command }}"'],
+    ]);
+
+    expect(() => expectNoFlowStyleReusableInputBypass(workflows)).not.toThrow();
+  });
+
+  it('rejects an untrusted argument in a flow-style reusable-workflow job', () => {
+    const workflows = new Map<string, string>([
+      ['caller.yml', [
+        'jobs:',
+        '  call: { uses: ./.github/workflows/callee.yml, with: { command: "${{ github.event.comment.body }}" } }',
+      ].join('\n')],
+      ['callee.yml', 'jobs:\n  execute:\n    steps:\n      - run: bash -c "${{ inputs.command }}"'],
+    ]);
+
+    expect(() => expectNoFlowStyleReusableInputBypass(workflows)).toThrow(/flow-style input command/);
+  });
+
+  it('allows a constant argument in a flow-style reusable-workflow job', () => {
+    const workflows = new Map<string, string>([
+      ['caller.yml', [
+        'jobs:',
+        '  call: { uses: ./.github/workflows/callee.yml, with: { command: "echo safe" } }',
       ].join('\n')],
       ['callee.yml', 'jobs:\n  execute:\n    steps:\n      - run: bash -c "${{ inputs.command }}"'],
     ]);
