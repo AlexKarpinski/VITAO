@@ -65,10 +65,11 @@ const expectNoFlowStyleReusableInputBypass = (workflows: Map<string, string>) =>
         const line = lines[child];
         const trimmed = line.trim();
         const indent = line.match(/^\s*/)?.[0].length ?? 0;
-        if (trimmed && indent <= usesIndent) break;
-
         const flowWith = line.match(/^\s*with\s*:\s*(\{.*\})\s*$/)?.[1];
+        if (trimmed && indent < usesIndent) break;
+        if (trimmed && indent === usesIndent && !flowWith) break;
         if (!flowWith) continue;
+
         const callee = workflows.get(uses);
         if (!callee) continue;
 
