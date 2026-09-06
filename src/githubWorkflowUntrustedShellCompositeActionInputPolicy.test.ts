@@ -21,6 +21,10 @@ const actionFiles = () => {
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const directInputExpression = /\$\{\{\s*inputs(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[['"][^'"\]]+['"]\])\s*\}\}/;
 const blockHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*$/;
+const untrustedGithubScriptPayload =
+  /context\s*\.\s*payload\s*\.\s*(?:comment|issue|pull_request|review|discussion)\s*\.\s*(?:body|title|diff_hunk)\b/i;
+const githubScriptShellCall =
+  /\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\s*\(\s*context\s*\.\s*payload\s*\.\s*(?:comment|issue|pull_request|review|discussion)\s*\.\s*(?:body|title|diff_hunk)\b/i;
 
 const collectUnsafeCompositeRuns = (action: string) => {
   const lines = action.split('\n');
@@ -57,8 +61,48 @@ const collectUnsafeCompositeRuns = (action: string) => {
   return unsafe;
 };
 
+const collectUnsafeCompositeGithubScripts = (action: string) => {
+  const lines = action.split('\n');
+  const unsafe: string[] = [];
+  const composite = lines.some((line) => /^\s*using\s*:\s*['"]?composite['"]?\s*$/.test(line));
+  if (!composite) return unsafe;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const uses = lines[index].match(/^(\s*)-?\s*uses\s*:\s*['"]?actions\/github-script@[^'"\s]+['"]?\s*$/i);
+    if (!uses) continue;
+
+    const stepIndent = uses[1].length;
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      const raw = lines[cursor];
+      if (raw.trim() && indentOf(raw) <= stepIndent) break;
+      const script = raw.match(/^(\s*)script\s*:\s*(.*)$/);
+      if (!script) continue;
+
+      const value = script[2].trim();
+      if (!blockHeader.test(value)) {
+        if (githubScriptShellCall.test(value)) unsafe.push(value);
+        continue;
+      }
+
+      const scriptIndent = script[1].length;
+      const body: string[] = [];
+      for (let child = cursor + 1; child < lines.length; child += 1) {
+        const childRaw = lines[child];
+        if (childRaw.trim() && indentOf(childRaw) <= scriptIndent) break;
+        body.push(childRaw);
+        cursor = child;
+      }
+      const source = body.join('\n');
+      if (untrustedGithubScriptPayload.test(source) && githubScriptShellCall.test(source)) unsafe.push(source);
+    }
+  }
+
+  return unsafe;
+};
+
 const expectCompositeInputsSeparatedFromShell = (action: string, source: string) => {
   expect(collectUnsafeCompositeRuns(action), source).toEqual([]);
+  expect(collectUnsafeCompositeGithubScripts(action), source).toEqual([]);
 };
 
 describe('local composite action shell-input policy', () => {
@@ -93,6 +137,35 @@ describe('local composite action shell-input policy', () => {
       `      run: eval "\${{ inputs['command'] }}"`,
     ].join('\n');
     expect(() => expectCompositeInputsSeparatedFromShell(unsafe, 'action.yml')).toThrow();
+  });
+
+  it('rejects untrusted event text executed by github-script inside a composite action', () => {
+    const unsafe = [
+      'runs:',
+      '  using: composite',
+      '  steps:',
+      '    - uses: actions/github-script@v8',
+      '      with:',
+      '        script: |',
+      "          const { execSync } = require('node:child_process');",
+      '          execSync(context.payload.comment.body);',
+    ].join('\n');
+    expect(() => expectCompositeInputsSeparatedFromShell(unsafe, 'action.yml')).toThrow();
+  });
+
+  it('allows github-script to inspect untrusted text without executing it', () => {
+    const safe = [
+      'runs:',
+      '  using: composite',
+      '  steps:',
+      '    - uses: actions/github-script@v8',
+      '      with:',
+      '        script: |',
+      "          const { execSync } = require('node:child_process');",
+      '          core.info(context.payload.comment.body);',
+      "          execSync('printf safe');",
+    ].join('\n');
+    expectCompositeInputsSeparatedFromShell(safe, 'action.yml');
   });
 
   it('allows input transport through env when shell text does not interpolate expressions', () => {
