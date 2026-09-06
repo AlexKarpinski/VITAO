@@ -148,6 +148,15 @@ const indirectPointerPattern = (name: string) => {
   return new RegExp(`\\$\\{!${escaped}(?:[^}]*)\\}`, 'i');
 };
 
+const extractRunIndirectPointers = (run: string, tainted: Set<string>) => {
+  const pointers = new Set<string>();
+  for (const line of run.split('\n')) {
+    const assignment = line.trim().match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=([A-Za-z_][A-Za-z0-9_]*)\s*;?$/);
+    if (assignment && tainted.has(assignment[2])) pointers.add(assignment[1]);
+  }
+  return pointers;
+};
+
 type EnvTaint = { tainted: Set<string>; indirectPointers: Set<string> };
 
 const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>): EnvTaint => {
@@ -221,13 +230,16 @@ const assertNoTransitiveUntrustedShell = (workflow: string, source: string) => {
   const { tainted, indirectPointers } = extractTaintedEnvVars(workflow, taintedStepIds);
   for (const run of extractRunValues(workflow)) {
     const normalizedRun = normalizeAccess(run);
+    const runIndirectPointers = extractRunIndirectPointers(normalizedRun, tainted);
     expect(containsUntrustedPayload(normalizedRun), `${source}: direct untrusted payload in run`).toBe(false);
     for (const id of taintedStepIds) expect(stepOutputPattern(id).test(normalizedRun), `${source}: tainted output from ${id} reaches run`).toBe(false);
     for (const name of tainted) {
       expect(envReferencePattern(name).test(normalizedRun), `${source}: tainted env ${name} reaches run`).toBe(false);
       expect(pythonRuntimeExecutionPattern(name).test(normalizedRun), `${source}: tainted env ${name} reaches Python execution`).toBe(false);
     }
-    for (const pointer of indirectPointers) expect(indirectPointerPattern(pointer).test(normalizedRun), `${source}: ${pointer} indirectly expands a tainted env`).toBe(false);
+    for (const pointer of new Set([...indirectPointers, ...runIndirectPointers])) {
+      expect(indirectPointerPattern(pointer).test(normalizedRun), `${source}: ${pointer} indirectly expands a tainted env`).toBe(false);
+    }
   }
 };
 
@@ -259,6 +271,14 @@ describe('GitHub workflow transitive untrusted shell policy', () => {
   it('rejects Bash indirect expansion with parameter modifiers', () => {
     const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  NAME: RAW', 'steps:', '  - run: bash -c "${!NAME:0}"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'indirect-pointer-modifier.yml')).toThrow();
+  });
+  it('rejects Bash indirect expansion through a pointer assigned inside run', () => {
+    const unsafe = ['env:', '  CMD: ${{ github.event.comment.body }}', 'steps:', '  - run: |', '      NAME=CMD', '      bash -c "${!NAME}"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'run-local-indirect-pointer.yml')).toThrow();
+  });
+  it('allows a run-local indirect pointer to a constant environment value', () => {
+    const safe = ['env:', '  CMD: echo safe', 'steps:', '  - run: |', '      NAME=CMD', '      bash -c "${!NAME}"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(safe, 'run-local-indirect-pointer-safe.yml')).not.toThrow();
   });
   it('propagates tainted step outputs through block-scalar env values', () => {
     const unsafe = ['steps:', '  - id: capture', '    uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '    with:', '      script: return context.payload.comment.body', '  - env:', '      CMD: >-', '        ${{ steps.capture.outputs.result }}', '    run: bash -c "$CMD"'].join('\n');
