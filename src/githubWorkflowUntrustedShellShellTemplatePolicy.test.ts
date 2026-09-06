@@ -162,9 +162,56 @@ const collectShellTemplates = (workflow: string) => {
   return templates;
 };
 
+const collectUntrustedEnvNames = (workflow: string) => {
+  const names = new Set<string>();
+  const lines = workflow.split('\n');
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const envMatch = stripYamlComment(lines[index]).match(/^(\s*)(?:-\s*)?env\s*:\s*$/);
+    if (!envMatch) continue;
+
+    const envIndent = envMatch[1].length;
+    let entryIndent: number | null = null;
+    for (let child = index + 1; child < lines.length; child += 1) {
+      const raw = lines[child];
+      const stripped = stripYamlComment(raw);
+      const trimmed = stripped.trim();
+      const indent = indentOf(raw);
+      if (trimmed && indent <= envIndent) break;
+      if (!trimmed) continue;
+
+      const entry = stripped.match(/^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$/);
+      if (!entry) continue;
+      if (entryIndent === null) entryIndent = entry[1].length;
+      if (entry[1].length !== entryIndent) continue;
+
+      const value = entry[3].trim();
+      if (containsUntrustedShellText(value)) names.add(entry[2]);
+    }
+  }
+
+  return names;
+};
+
+const templateReferencesEnv = (template: string, name: string) => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const normalized = normalizeAccess(template);
+  return new RegExp(
+    `(?:\\$${escaped}\\b|\\$\\{${escaped}(?::[-+?=][^}]*)?\\}|\\$env:${escaped}\\b|%${escaped}%|\\$\\{\\{\\s*env\\.${escaped}\\s*\\}\\})`,
+    'i',
+  ).test(normalized);
+};
+
 const expectSafeShellTemplates = (workflow: string, source: string) => {
+  const untrustedEnvNames = collectUntrustedEnvNames(workflow);
   for (const template of collectShellTemplates(workflow)) {
     expect(containsUntrustedShellText(template), `${source}: ${template}`).toBe(false);
+    for (const name of untrustedEnvNames) {
+      expect(
+        templateReferencesEnv(template, name),
+        `${source}: custom shell executes untrusted event text through env ${name}`,
+      ).toBe(false);
+    }
   }
 };
 
@@ -257,6 +304,52 @@ describe('GitHub workflow custom-shell trust policy', () => {
       '        run: echo safe',
     ].join('\n');
     expect(() => expectSafeShellTemplates(unsafe, 'pr-head-shell.yml')).toThrow();
+  });
+
+  it('rejects tainted environment values executed by custom shell templates', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'env:',
+      '  CMD: ${{ github.event.comment.body }}',
+      'jobs:',
+      '  test:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      "      - shell: bash -c 'eval \"$CMD\"; source \"$1\"' -- {0}",
+      '        run: echo safe',
+    ].join('\n');
+
+    expect(() => expectSafeShellTemplates(unsafe, 'env-custom-shell.yml')).toThrow();
+  });
+
+  it('rejects GitHub env-context references in custom shell templates', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'env:',
+      '  EXECUTOR: ${{ github.event.comment.body }}',
+      'jobs:',
+      '  test:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - shell: ${{ env.EXECUTOR }} {0}',
+      '        run: echo safe',
+    ].join('\n');
+
+    expect(() => expectSafeShellTemplates(unsafe, 'env-expression-shell.yml')).toThrow();
+  });
+
+  it('allows constant environment values in custom shell templates', () => {
+    const safe = [
+      'env:',
+      '  CMD: echo safe',
+      'jobs:',
+      '  test:',
+      '    steps:',
+      "      - shell: bash -c 'eval \"$CMD\"; source \"$1\"' -- {0}",
+      '        run: echo safe',
+    ].join('\n');
+
+    expectSafeShellTemplates(safe, 'constant-env-shell.yml');
   });
 
   it('allows constant shell templates', () => {
