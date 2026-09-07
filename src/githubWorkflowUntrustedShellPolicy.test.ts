@@ -70,13 +70,15 @@ const decodeYamlKey = (raw: string) => {
 const isBlockScalarHeader = (value: string) =>
   /^[|>](?:(?:[+-])?(?:[1-9])?|(?:[1-9])(?:[+-])?)$/.test(value);
 
+const indentation = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
+
 const collectIndentedScalar = (lines: string[], startIndex: number, parentIndent: number) => {
   const values: string[] = [];
   let endIndex = startIndex;
   for (let child = startIndex + 1; child < lines.length; child += 1) {
     const childLine = lines[child];
     const childTrimmed = childLine.trim();
-    const childIndent = childLine.match(/^\s*/)?.[0].length ?? 0;
+    const childIndent = indentation(childLine);
     if (childTrimmed && childIndent <= parentIndent) break;
     if (childTrimmed) values.push(childTrimmed);
     endIndex = child;
@@ -91,7 +93,7 @@ const collectPlainScalarContinuation = (lines: string[], startIndex: number, par
   for (let child = startIndex + 1; child < lines.length; child += 1) {
     const childLine = lines[child];
     const childTrimmed = childLine.trim();
-    const childIndent = childLine.match(/^\s*/)?.[0].length ?? 0;
+    const childIndent = indentation(childLine);
     if (!childTrimmed) break;
     if (childIndent < parentIndent + 2) break;
     if (childIndent === parentIndent + 2 && /^(?:["']?[A-Za-z_][A-Za-z0-9_-]*["']?)\s*:/.test(childTrimmed)) break;
@@ -102,8 +104,10 @@ const collectPlainScalarContinuation = (lines: string[], startIndex: number, par
   return { value: values.join('\n'), endIndex };
 };
 
-const extractRunScripts = (workflow: string) => {
-  const scripts: string[] = [];
+type RunScript = { script: string; lineIndex: number };
+
+const extractRunEntries = (workflow: string) => {
+  const scripts: RunScript[] = [];
   const lines = workflow.split('\n');
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -115,18 +119,20 @@ const extractRunScripts = (workflow: string) => {
     const value = stripYamlInlineComment(match[3]);
     if (value && !isBlockScalarHeader(value)) {
       const continuation = collectPlainScalarContinuation(lines, index, indent);
-      scripts.push([value, continuation.value].filter(Boolean).join('\n'));
+      scripts.push({ script: [value, continuation.value].filter(Boolean).join('\n'), lineIndex: index });
       index = continuation.endIndex;
       continue;
     }
 
     const block = collectIndentedScalar(lines, index, indent);
-    scripts.push(block.value);
+    scripts.push({ script: block.value, lineIndex: index });
     index = block.endIndex;
   }
 
   return scripts;
 };
+
+const extractRunScripts = (workflow: string) => extractRunEntries(workflow).map(({ script }) => script);
 
 const untrustedTextExpressions = [
   'github.event.issue.title',
@@ -163,21 +169,87 @@ const containsUntrustedExpression = (value: string) => {
   });
 };
 
-const extractUntrustedEnvVars = (workflow: string) => {
-  const vars = new Set<string>();
+type EnvBinding = {
+  name: string;
+  tainted: boolean;
+  scopeStart: number;
+  scopeEnd: number;
+  scopeDepth: number;
+};
+
+type JobRange = { start: number; end: number; indent: number };
+
+const extractJobRanges = (lines: string[]) => {
+  const ranges: JobRange[] = [];
+  const jobsIndex = lines.findIndex((line) => /^\s*jobs\s*:\s*(?:#.*)?$/.test(line));
+  if (jobsIndex < 0) return ranges;
+
+  const jobsIndent = indentation(lines[jobsIndex]);
+  let jobIndent: number | null = null;
+  const starts: Array<{ start: number; indent: number }> = [];
+
+  for (let index = jobsIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const indent = indentation(line);
+    if (indent <= jobsIndent) break;
+    const match = line.match(/^(\s*)([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(?:#.*)?$/);
+    if (!match) continue;
+    if (jobIndent === null) jobIndent = match[1].length;
+    if (match[1].length === jobIndent) starts.push({ start: index, indent: jobIndent });
+  }
+
+  for (let index = 0; index < starts.length; index += 1) {
+    ranges.push({
+      start: starts[index].start,
+      end: index + 1 < starts.length ? starts[index + 1].start - 1 : lines.length - 1,
+      indent: starts[index].indent,
+    });
+  }
+  return ranges;
+};
+
+const findStepScope = (lines: string[], envLine: number, envIndent: number, job: JobRange) => {
+  for (let index = envLine; index >= job.start; index -= 1) {
+    const line = lines[index];
+    const stepMatch = line.match(/^(\s*)-\s+(?:[^#].*)$/);
+    if (!stepMatch) continue;
+    const stepIndent = stepMatch[1].length;
+    if (stepIndent >= envIndent) continue;
+
+    let end = job.end;
+    for (let child = index + 1; child <= job.end; child += 1) {
+      const childMatch = lines[child].match(/^(\s*)-\s+(?:[^#].*)$/);
+      if (childMatch && childMatch[1].length === stepIndent) {
+        end = child - 1;
+        break;
+      }
+    }
+    if (envLine <= end) return { start: index, end, depth: 2 };
+  }
+  return null;
+};
+
+const extractEnvBindings = (workflow: string) => {
+  const bindings: EnvBinding[] = [];
   const lines = workflow.split('\n');
+  const jobs = extractJobRanges(lines);
 
   for (let index = 0; index < lines.length; index += 1) {
     const envMatch = lines[index].match(/^(\s*)(?:-\s*)?env\s*:\s*$/);
     if (!envMatch) continue;
 
     const envIndent = envMatch[1].length;
+    const job = jobs.find(({ start, end }) => index >= start && index <= end);
+    const stepScope = job ? findStepScope(lines, index, envIndent, job) : null;
+    const scope = stepScope ?? (job ? { start: job.start, end: job.end, depth: 1 } : { start: 0, end: lines.length - 1, depth: 0 });
     let entryIndent: number | null = null;
 
     for (let child = index + 1; child < lines.length; child += 1) {
       const line = lines[child];
       const trimmed = line.trim();
-      const indent = line.match(/^\s*/)?.[0].length ?? 0;
+      const indent = indentation(line);
       if (trimmed && indent <= envIndent) break;
       if (!trimmed) continue;
 
@@ -188,19 +260,32 @@ const extractUntrustedEnvVars = (workflow: string) => {
 
       const value = stripYamlInlineComment(match[3]);
       if (value && !isBlockScalarHeader(value)) {
-        if (containsUntrustedExpression(value)) vars.add(match[2]);
+        bindings.push({ name: match[2], tainted: containsUntrustedExpression(value), scopeStart: scope.start, scopeEnd: scope.end, scopeDepth: scope.depth });
         continue;
       }
 
       if (isBlockScalarHeader(value)) {
         const block = collectIndentedScalar(lines, child, match[1].length);
-        if (containsUntrustedExpression(block.value)) vars.add(match[2]);
+        bindings.push({ name: match[2], tainted: containsUntrustedExpression(block.value), scopeStart: scope.start, scopeEnd: scope.end, scopeDepth: scope.depth });
         child = block.endIndex;
       }
     }
   }
 
-  return vars;
+  return bindings;
+};
+
+const extractUntrustedEnvVars = (workflow: string) =>
+  new Set(extractEnvBindings(workflow).filter(({ tainted }) => tainted).map(({ name }) => name));
+
+const effectiveUntrustedEnvVarsAt = (workflow: string, lineIndex: number) => {
+  const effective = new Map<string, boolean>();
+  const bindings = extractEnvBindings(workflow)
+    .filter(({ scopeStart, scopeEnd }) => lineIndex >= scopeStart && lineIndex <= scopeEnd)
+    .sort((left, right) => left.scopeDepth - right.scopeDepth);
+
+  for (const binding of bindings) effective.set(binding.name, binding.tainted);
+  return new Set([...effective].filter(([, tainted]) => tainted).map(([name]) => name));
 };
 
 const stepReturnsUntrustedValue = (step: string) =>
@@ -222,7 +307,7 @@ const extractUntrustedStepIds = (workflow: string) => {
     for (let child = index + 1; child < lines.length; child += 1) {
       const childLine = lines[child];
       const childTrimmed = childLine.trim();
-      const childIndent = childLine.match(/^\s*/)?.[0].length ?? 0;
+      const childIndent = indentation(childLine);
       if (childTrimmed && childIndent <= stepIndent && /^\s*-\s+/.test(childLine)) break;
       stepLines.push(childLine);
     }
@@ -249,13 +334,12 @@ const scriptReferencesStepOutput = (script: string, stepId: string) => {
 };
 
 const expectNoUntrustedTextInShell = (workflow: string, source: string) => {
-  const untrustedEnvVars = extractUntrustedEnvVars(workflow);
   const untrustedStepIds = extractUntrustedStepIds(workflow);
 
-  for (const script of extractRunScripts(workflow)) {
+  for (const { script, lineIndex } of extractRunEntries(workflow)) {
     expect(containsUntrustedExpression(script), `${source}: run step directly references untrusted event text`).toBe(false);
 
-    for (const envVar of untrustedEnvVars) {
+    for (const envVar of effectiveUntrustedEnvVarsAt(workflow, lineIndex)) {
       expect(
         scriptReferencesVariable(script, envVar),
         `${source}: run step executes untrusted event text through env ${envVar}`,
@@ -319,14 +403,58 @@ describe('GitHub workflow untrusted shell policy', () => {
   });
 
   it('rejects untrusted text routed through environment variables into shell commands', () => {
-    const unsafe = [
-      'env:',
-      '  CMD: ${{ github.event.comment.body }}',
-      'steps:',
-      '  - run: bash -c "$CMD"',
+    const unsafe = ['env:', '  CMD: ${{ github.event.comment.body }}', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'env-unsafe.yml')).toThrow();
+  });
+
+  it('scopes job environment taint and honors safe job overrides', () => {
+    const safe = [
+      'jobs:',
+      '  unsafe_source:',
+      '    env:',
+      '      CMD: ${{ github.event.comment.body }}',
+      '    steps:',
+      '      - run: echo source-without-exec',
+      '  safe_job:',
+      '    env:',
+      '      CMD: echo safe',
+      '    steps:',
+      '      - run: bash -c "$CMD"',
     ].join('\n');
 
-    expect(() => expectNoUntrustedTextInShell(unsafe, 'env-unsafe.yml')).toThrow();
+    expectNoUntrustedTextInShell(safe, 'job-env-override-safe.yml');
+  });
+
+  it('keeps job environment taint inside the defining job', () => {
+    const unsafe = [
+      'jobs:',
+      '  dangerous:',
+      '    env:',
+      '      CMD: ${{ github.event.comment.body }}',
+      '    steps:',
+      '      - run: bash -c "$CMD"',
+      '  unrelated:',
+      '    steps:',
+      '      - run: echo safe',
+    ].join('\n');
+
+    expect(() => expectNoUntrustedTextInShell(unsafe, 'job-env-unsafe.yml')).toThrow();
+  });
+
+  it('honors step environment overrides over tainted job values', () => {
+    const safe = [
+      'jobs:',
+      '  build:',
+      '    env:',
+      '      CMD: ${{ github.event.comment.body }}',
+      '    steps:',
+      '      - name: safe override',
+      '        env:',
+      '          CMD: echo safe',
+      '        run: bash -c "$CMD"',
+    ].join('\n');
+
+    expectNoUntrustedTextInShell(safe, 'step-env-override-safe.yml');
   });
 
   it('ignores untrusted values outside env mappings when collecting shell environment taint', () => {
@@ -343,65 +471,34 @@ describe('GitHub workflow untrusted shell policy', () => {
   });
 
   it('rejects GitHub env-context interpolation of tainted variables', () => {
-    const unsafe = [
-      'env:',
-      '  CMD: ${{ github.event.comment.body }}',
-      'steps:',
-      '  - run: bash -c "${{ env.CMD }}"',
-    ].join('\n');
-
+    const unsafe = ['env:', '  CMD: ${{ github.event.comment.body }}', 'steps:', '  - run: bash -c "${{ env.CMD }}"'].join('\n');
     expect(() => expectNoUntrustedTextInShell(unsafe, 'github-env-unsafe.yml')).toThrow();
   });
 
   it('rejects block-scalar environment values routed into shell commands', () => {
-    const unsafe = [
-      'env:',
-      '  CMD: >-',
-      '    ${{ github.event.comment.body }}',
-      'steps:',
-      '  - run: bash -c "$CMD"',
-    ].join('\n');
-
+    const unsafe = ['env:', '  CMD: >-', '    ${{ github.event.comment.body }}', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoUntrustedTextInShell(unsafe, 'block-env-unsafe.yml')).toThrow();
   });
 
   it('recognizes PowerShell environment-variable access', () => {
-    const unsafe = [
-      'env:',
-      '  CMD: ${{ github.event.issue.body }}',
-      'steps:',
-      '  - shell: pwsh',
-      '    run: Invoke-Expression $env:CMD',
-    ].join('\n');
-
+    const unsafe = ['env:', '  CMD: ${{ github.event.issue.body }}', 'steps:', '  - shell: pwsh', '    run: Invoke-Expression $env:CMD'].join('\n');
     expect(() => expectNoUntrustedTextInShell(unsafe, 'pwsh-env-unsafe.yml')).toThrow();
   });
 
   it('parses quoted and commented YAML run keys and block-scalar headers', () => {
-    const unsafe = [
-      'steps:',
-      '  - "run": | # execute validation',
-      '      printf "%s" "${{ github.event.issue.body }}"',
-    ].join('\n');
-
+    const unsafe = ['steps:', '  - "run": | # execute validation', '      printf "%s" "${{ github.event.issue.body }}"'].join('\n');
     expect(extractRunScripts(unsafe)).toEqual(['printf "%s" "${{ github.event.issue.body }}"']);
     expect(() => expectNoUntrustedTextInShell(unsafe, 'quoted-run.yml')).toThrow();
   });
 
   it('accepts chomping-only YAML block scalar headers', () => {
-    const unsafe = [
-      'steps:',
-      '  - run: >-',
-      '      printf "%s" "${{ github.event.issue.body }}"',
-    ].join('\n');
-
+    const unsafe = ['steps:', '  - run: >-', '      printf "%s" "${{ github.event.issue.body }}"'].join('\n');
     expect(extractRunScripts(unsafe)).toEqual(['printf "%s" "${{ github.event.issue.body }}"']);
     expect(() => expectNoUntrustedTextInShell(unsafe, 'chomping-run.yml')).toThrow();
   });
 
   it('preserves hashes inside quoted YAML run scalars', () => {
     const unsafe = 'steps:\n  - run: \'echo " # ${{ github.event.comment.body }}"\'';
-
     expect(extractRunScripts(unsafe)).toEqual(['\'echo " # ${{ github.event.comment.body }}"\'']);
     expect(() => expectNoUntrustedTextInShell(unsafe, 'quoted-hash-run.yml')).toThrow();
   });
@@ -416,7 +513,6 @@ describe('GitHub workflow untrusted shell policy', () => {
       '      script: return context.payload.comment.body;',
       '  - run: bash -c "${{ steps.capture.outputs.result }}"',
     ].join('\n');
-
     expect(() => expectNoUntrustedTextInShell(unsafe, 'step-output-unsafe.yml')).toThrow();
   });
 
@@ -438,12 +534,7 @@ describe('GitHub workflow untrusted shell policy', () => {
   });
 
   it('parses multiline plain run scalars', () => {
-    const unsafe = [
-      'steps:',
-      '  - run: echo safe',
-      '      ${{ github.event.comment.body }}',
-    ].join('\n');
-
+    const unsafe = ['steps:', '  - run: echo safe', '      ${{ github.event.comment.body }}'].join('\n');
     expect(extractRunScripts(unsafe)).toEqual(['echo safe\n${{ github.event.comment.body }}']);
     expect(() => expectNoUntrustedTextInShell(unsafe, 'multiline-plain-run.yml')).toThrow();
   });
