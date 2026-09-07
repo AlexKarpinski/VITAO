@@ -109,7 +109,10 @@ const unsafeGetExecOutput = (script: string) => {
   const tainted = collectTaintedIdentifiers(script);
   return extractGetExecOutputCalls(script).some((call) => {
     const args = splitTopLevelArgs(call);
-    const executable = args[0]?.trim().replace(/^['"]|['"]$/g, '') ?? '';
+    const commandLine = args[0] ?? '';
+    if (containsTaintedValue(commandLine, tainted)) return true;
+
+    const executable = commandLine.trim().replace(/^['"]|['"]$/g, '');
     if (!shellExecutable.test(executable)) return false;
     const shellArgs = args[1] ?? '';
     return /['"](?:-c|\/c|-Command)['"]/i.test(shellArgs) && containsTaintedValue(shellArgs, tainted);
@@ -188,6 +191,49 @@ describe('GitHub Script getExecOutput shell boundary', () => {
       "            await exec.getExecOutput('bash', ['-c', command]);",
     ].join('\n');
     expect(() => expectNoUnsafeGetExecOutput(unsafe, 'alias-unsafe.yml')).toThrow();
+  });
+
+  it('rejects an attacker-controlled getExecOutput command line', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const exec = require('@actions/exec');",
+      '            await exec.getExecOutput(context.payload.comment.body);',
+    ].join('\n');
+    expect(() => expectNoUnsafeGetExecOutput(unsafe, 'command-line-unsafe.yml')).toThrow();
+  });
+
+  it('rejects an attacker-controlled command line passed through an alias', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const exec = require('@actions/exec');",
+      '            const commandLine = context.payload.comment.body;',
+      '            await exec.getExecOutput(commandLine);',
+    ].join('\n');
+    expect(() => expectNoUnsafeGetExecOutput(unsafe, 'command-line-alias-unsafe.yml')).toThrow();
+  });
+
+  it('allows a repository-owned constant getExecOutput command line', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const exec = require('@actions/exec');",
+      "            await exec.getExecOutput('printf safe');",
+    ].join('\n');
+    expectNoUnsafeGetExecOutput(safe, 'command-line-safe.yml');
   });
 
   it('allows payload text passed as data to a non-shell executable', () => {
