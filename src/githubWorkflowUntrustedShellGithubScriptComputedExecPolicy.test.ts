@@ -7,9 +7,16 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
+const shellMethods = new Set(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync']);
+
 const normalizeComputedShellMethods = (value: string) => value.replace(
-  /\[\s*(['"])(exec|execSync|execFile|execFileSync|spawn|spawnSync)\1\s*\]/g,
-  '.$2',
+  /\[\s*((?:['"][A-Za-z]+['"]\s*)(?:\+\s*['"][A-Za-z]+['"]\s*)*)\]/g,
+  (original, expression: string) => {
+    const method = [...expression.matchAll(/['"]([A-Za-z]+)['"]/g)]
+      .map((match) => match[1])
+      .join('');
+    return shellMethods.has(method) ? `.${method}` : original;
+  },
 );
 
 const hasComputedUntrustedShellCall = (workflow: string) => {
@@ -47,6 +54,20 @@ describe('GitHub Script computed shell method trust boundary', () => {
     expect(() => expectNoComputedUntrustedShellCalls(unsafe, 'unsafe.yml')).toThrow();
   });
 
+  it('rejects statically concatenated execSync access with comment text', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const cp = require('node:child_process');",
+      "            cp['exec' + 'Sync'](context.payload.comment.body);",
+    ].join('\n');
+    expect(() => expectNoComputedUntrustedShellCalls(unsafe, 'unsafe-concat.yml')).toThrow();
+  });
+
   it('rejects bracket access to execFileSync launching Bash with comment text', () => {
     const unsafe = [
       'jobs:',
@@ -61,7 +82,7 @@ describe('GitHub Script computed shell method trust boundary', () => {
     expect(() => expectNoComputedUntrustedShellCalls(unsafe, 'unsafe-shell.yml')).toThrow();
   });
 
-  it('allows bracket access when payload is only data to a non-shell executable', () => {
+  it('allows static computed access when payload is only data to a non-shell executable', () => {
     const safe = [
       'jobs:',
       '  test:',
@@ -70,7 +91,7 @@ describe('GitHub Script computed shell method trust boundary', () => {
       '        with:',
       '          script: |',
       "            const cp = require('node:child_process');",
-      "            cp['execFileSync']('/usr/bin/printf', ['%s', context.payload.comment.body]);",
+      "            cp['exec' + 'FileSync']('/usr/bin/printf', ['%s', context.payload.comment.body]);",
     ].join('\n');
     expectNoComputedUntrustedShellCalls(safe, 'safe.yml');
   });
