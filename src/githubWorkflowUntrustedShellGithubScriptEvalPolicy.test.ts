@@ -66,8 +66,8 @@ const hasTaintedCodeExecution = (script: string) => {
     if (argumentIsTainted(match[1])) return true;
   }
 
-  for (const match of script.matchAll(/(?:^|[^\w$.])(Function|AsyncFunction)\s*\(([^)]*)\)/g)) {
-    const args = match[2]
+  for (const match of script.matchAll(/(?:^|[^\w$])(?:(?:globalThis|global|window|self)\s*(?:\.\s*(Function|AsyncFunction)|\[\s*['"](Function|AsyncFunction)['"]\s*\])|(Function|AsyncFunction))\s*\(([^)]*)\)/g)) {
+    const args = match[4]
       .split(',')
       .map((argument) => argument.trim())
       .filter(Boolean);
@@ -159,6 +159,16 @@ describe('GitHub Script executable-code policy', () => {
     expect(() => expectNoTaintedCodeExecution(unsafe, 'function.yml')).toThrow();
   });
 
+  it('rejects member-invoked Function constructors of attacker-controlled payload text', () => {
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            globalThis.Function(context.payload.comment.body)();'].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'member-function.yml')).toThrow();
+  });
+
+  it('rejects computed member Function constructors through a local tainted alias', () => {
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            const code = context.payload.issue.body;', "            globalThis['Function'](code)();"].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'computed-member-function.yml')).toThrow();
+  });
+
   it('rejects Function constructors through a local tainted alias', () => {
     const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            const code = context.payload.issue.body;', '            Function(code)();'].join('\n');
     expect(() => expectNoTaintedCodeExecution(unsafe, 'function-alias.yml')).toThrow();
@@ -185,7 +195,7 @@ describe('GitHub Script executable-code policy', () => {
   });
 
   it('allows code execution constructors with constant code', () => {
-    const safe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', "            const result = eval('1 + 1');", "            const memberResult = globalThis.eval('2 + 2');", "            const fn = Function('return 2');", "            const vmResult = require('node:vm').runInThisContext('1 + 2');", "            const module = await import('data:text/javascript,export default 4');", '            core.info(String(result + memberResult + fn() + vmResult + module.default));'].join('\n');
+    const safe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', "            const result = eval('1 + 1');", "            const memberResult = globalThis.eval('2 + 2');", "            const fn = Function('return 2');", "            const memberFn = globalThis.Function('return 3');", "            const vmResult = require('node:vm').runInThisContext('1 + 2');", "            const module = await import('data:text/javascript,export default 4');", '            core.info(String(result + memberResult + fn() + memberFn() + vmResult + module.default));'].join('\n');
     expectNoTaintedCodeExecution(safe, 'eval-safe.yml');
   });
 });
