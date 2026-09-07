@@ -50,7 +50,7 @@ const containsTaintedValue = (value: string, tainted: Set<string>) =>
 const collectExecutionAliases = (script: string) => {
   const aliases = new Map<string, string>();
 
-  for (const match of script.matchAll(/\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\(\s*['"](?:node:)?child_process['"]\s*\)/g)) {
+  for (const match of script.matchAll(/\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*(?:require\(\s*['"](?:node:)?child_process['"]\s*\)|(?:await\s+)?import\(\s*['"](?:node:)?child_process['"]\s*\))/g)) {
     for (const entry of match[1].split(',')) {
       const pair = entry.trim().match(/^([A-Za-z_$][\w$]*)(?:\s*:\s*([A-Za-z_$][\w$]*))?$/);
       if (!pair || !executionApis.has(pair[1])) continue;
@@ -253,6 +253,20 @@ describe('GitHub Script aliased shell API trust boundary', () => {
     expect(() => expectNoAliasedGithubScriptShellExecution(unsafe, 'destructured.yml')).toThrow();
   });
 
+  it('rejects a destructured dynamic-import execSync alias fed comment text', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const { execSync: run } = await import('node:child_process');",
+      '            run(context.payload.comment.body);',
+    ].join('\n');
+    expect(() => expectNoAliasedGithubScriptShellExecution(unsafe, 'dynamic-import.yml')).toThrow();
+  });
+
   it('rejects an assigned execSync alias fed a tainted local value', () => {
     const unsafe = [
       'jobs:',
@@ -267,6 +281,20 @@ describe('GitHub Script aliased shell API trust boundary', () => {
       '            run(command);',
     ].join('\n');
     expect(() => expectNoAliasedGithubScriptShellExecution(unsafe, 'assigned.yml')).toThrow();
+  });
+
+  it('allows a dynamic-import execSync alias with a constant command', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const { execSync: run } = await import('node:child_process');",
+      "            run('printf safe');",
+    ].join('\n');
+    expectNoAliasedGithubScriptShellExecution(safe, 'dynamic-import-safe.yml');
   });
 
   it('allows aliased execFileSync when payload is only data for a non-shell executable', () => {
