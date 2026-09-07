@@ -9,6 +9,7 @@ const workflowFiles = readdirSync(workflowsDir)
 
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const blockHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?\s*$/;
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const normalizePayloadAccess = (value: string) => value
   .replace(/\?\./g, '.')
@@ -57,35 +58,36 @@ const collectGithubScriptBodies = (workflow: string) => {
 
 type FunctionInfo = { name: string; params: string[]; body: string };
 
+const findBodyEnd = (script: string, bodyStart: number) => {
+  let depth = 1;
+  let quote: "'" | '"' | '`' | null = null;
+  for (let index = bodyStart; index < script.length; index += 1) {
+    const char = script[index];
+    if (quote) {
+      if (char === '\\') {
+        index += 1;
+        continue;
+      }
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '{') depth += 1;
+    else if (char === '}') depth -= 1;
+    if (depth === 0) return index;
+  }
+  return script.length;
+};
+
 const collectFunctions = (script: string): FunctionInfo[] => {
   const functions: FunctionInfo[] = [];
   const matcher = /\bfunction\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{/g;
   for (let match = matcher.exec(script); match; match = matcher.exec(script)) {
     const bodyStart = matcher.lastIndex;
-    let depth = 1;
-    let quote: "'" | '"' | '`' | null = null;
-    let bodyEnd = script.length;
-    for (let index = bodyStart; index < script.length; index += 1) {
-      const char = script[index];
-      if (quote) {
-        if (char === '\\') {
-          index += 1;
-          continue;
-        }
-        if (char === quote) quote = null;
-        continue;
-      }
-      if (char === "'" || char === '"' || char === '`') {
-        quote = char;
-        continue;
-      }
-      if (char === '{') depth += 1;
-      else if (char === '}') depth -= 1;
-      if (depth === 0) {
-        bodyEnd = index;
-        break;
-      }
-    }
+    const bodyEnd = findBodyEnd(script, bodyStart);
     functions.push({
       name: match[1],
       params: match[2].split(',').map((param) => param.trim()).filter(Boolean),
@@ -93,6 +95,26 @@ const collectFunctions = (script: string): FunctionInfo[] => {
     });
     matcher.lastIndex = bodyEnd + 1;
   }
+
+  const objectMatcher = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{/g;
+  for (let objectMatch = objectMatcher.exec(script); objectMatch; objectMatch = objectMatcher.exec(script)) {
+    const objectBodyStart = objectMatcher.lastIndex;
+    const objectBodyEnd = findBodyEnd(script, objectBodyStart);
+    const objectBody = script.slice(objectBodyStart, objectBodyEnd);
+    const methodMatcher = /(?:^|[,;]\s*|}\s*,?\s*)([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{/g;
+    for (let methodMatch = methodMatcher.exec(objectBody); methodMatch; methodMatch = methodMatcher.exec(objectBody)) {
+      const methodBodyStart = methodMatcher.lastIndex;
+      const methodBodyEnd = findBodyEnd(objectBody, methodBodyStart);
+      functions.push({
+        name: `${objectMatch[1]}.${methodMatch[1]}`,
+        params: methodMatch[2].split(',').map((param) => param.trim()).filter(Boolean),
+        body: objectBody.slice(methodBodyStart, methodBodyEnd),
+      });
+      methodMatcher.lastIndex = methodBodyEnd + 1;
+    }
+    objectMatcher.lastIndex = objectBodyEnd + 1;
+  }
+
   return functions;
 };
 
@@ -127,7 +149,7 @@ const splitArgs = (value: string) => {
 };
 
 const calledWithUntrustedParam = (script: string, fn: FunctionInfo) => {
-  const call = new RegExp(`\\b${fn.name}\\s*\\(([^;\\n]*)\\)`, 'g');
+  const call = new RegExp(`\\b${escapeRegex(fn.name)}\\s*\\(([^;\\n]*)\\)`, 'g');
   const tainted = new Set<string>();
   for (let match = call.exec(script); match; match = call.exec(script)) {
     const args = splitArgs(match[1]);
@@ -138,18 +160,35 @@ const calledWithUntrustedParam = (script: string, fn: FunctionInfo) => {
   return tainted;
 };
 
-const functionExecutesTaintedParam = (fn: FunctionInfo, tainted: Set<string>) => {
+const collectImplicitShellAliases = (script: string) => {
+  const aliases = new Set(['exec', 'execSync']);
+  const matcher = /\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*(?:require\(\s*['"](?:node:)?child_process['"]\s*\)|await\s+import\(\s*['"](?:node:)?child_process['"]\s*\))/g;
+  for (const match of script.matchAll(matcher)) {
+    for (const entry of match[1].split(',')) {
+      const alias = entry.trim().match(/^(exec|execSync)\s*:\s*([A-Za-z_$][\w$]*)$/);
+      if (alias) aliases.add(alias[2]);
+      else if (/^(exec|execSync)$/.test(entry.trim())) aliases.add(entry.trim());
+    }
+  }
+  return aliases;
+};
+
+const functionExecutesTaintedParam = (fn: FunctionInfo, tainted: Set<string>, implicitShellAliases: Set<string>) => {
+  const implicitNames = [...implicitShellAliases].map(escapeRegex).join('|');
   for (const param of tainted) {
-    const escaped = param.replace(/[$]/g, '\\$&');
-    const implicitShell = new RegExp(`(?:\\.|\\b)(?:exec|execSync)\\s*\\(\\s*${escaped}\\b`);
+    const escaped = escapeRegex(param);
+    const implicitShell = new RegExp(`(?:\\.|\\b)(?:${implicitNames})\\s*\\(\\s*${escaped}\\b`);
     const explicitShell = new RegExp(`(?:\\.|\\b)(?:execFile|execFileSync|spawn|spawnSync)\\s*\\(\\s*['\"](?:[^'\"]*\\/)?(?:bash|sh|dash|ksh|zsh|cmd(?:\\.exe)?|powershell(?:\\.exe)?|pwsh(?:\\.exe)?)['\"]\\s*,[\\s\\S]*?['\"](?:-c|\\/c|-Command)['\"][\\s\\S]*?\\b${escaped}\\b`, 'i');
     if (implicitShell.test(fn.body) || explicitShell.test(fn.body)) return true;
   }
   return false;
 };
 
-const hasUntrustedFunctionParameterExecution = (script: string) =>
-  collectFunctions(script).some((fn) => functionExecutesTaintedParam(fn, calledWithUntrustedParam(script, fn)));
+const hasUntrustedFunctionParameterExecution = (script: string) => {
+  const implicitShellAliases = collectImplicitShellAliases(script);
+  return collectFunctions(script).some((fn) =>
+    functionExecutesTaintedParam(fn, calledWithUntrustedParam(script, fn), implicitShellAliases));
+};
 
 const expectNoFunctionParameterShellExecution = (workflow: string, source: string) => {
   for (const script of collectGithubScriptBodies(workflow)) {
@@ -196,6 +235,36 @@ describe('GitHub Script local-function shell trust boundary', () => {
       '            run(context.payload.issue.body);',
     ].join('\n');
     expect(() => expectNoFunctionParameterShellExecution(unsafe, 'unsafe-shell.yml')).toThrow();
+  });
+
+  it('rejects payload text passed through an object-method parameter to an aliased execSync', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const { execSync: launch } = require('node:child_process');",
+      '            const runner = { run(command) { launch(command); } };',
+      '            runner.run(context.payload.comment.body);',
+    ].join('\n');
+    expect(() => expectNoFunctionParameterShellExecution(unsafe, 'unsafe-object-method.yml')).toThrow();
+  });
+
+  it('allows untrusted text passed to an object method that treats it only as data', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const { execFileSync: print } = require('node:child_process');",
+      "            const runner = { run(value) { print('/usr/bin/printf', ['%s', value]); } };",
+      '            runner.run(context.payload.comment.body);',
+    ].join('\n');
+    expectNoFunctionParameterShellExecution(safe, 'safe-object-method.yml');
   });
 
   it('allows untrusted text passed to a helper that treats it only as data', () => {
