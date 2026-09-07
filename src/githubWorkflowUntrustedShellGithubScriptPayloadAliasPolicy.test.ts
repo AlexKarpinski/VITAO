@@ -14,7 +14,7 @@ const normalizePayloadAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\]/g, '.$1');
 
-const isPayloadRoot = (value: string) => /^(?:context\.payload|github\.event)(?:\.[A-Za-z_$][\w$-]*)*$/.test(value);
+const isPayloadRoot = (value: string) => /^(?:context(?:\.payload)?|github\.event)(?:\.[A-Za-z_$][\w$-]*)*$/.test(value);
 const isUntrustedTextPath = (value: string) => /^(?:context\.payload|github\.event)\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body))$/.test(value);
 
 const collectAliasState = (script: string) => {
@@ -125,6 +125,20 @@ describe('GitHub Script payload object alias shell boundary', () => {
     }
   });
 
+  it('rejects a context alias passed through payload text to execSync', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const ctx = context;',
+      "            require('node:child_process').execSync(ctx.payload.comment.body);",
+    ].join('\n');
+    expect(() => expectNoAliasedPayloadShellExecution(unsafe, 'context-alias.yml')).toThrow();
+  });
+
   it('rejects a comment object alias passed to execSync', () => {
     const unsafe = [
       'jobs:',
@@ -155,7 +169,7 @@ describe('GitHub Script payload object alias shell boundary', () => {
     expect(() => expectNoAliasedPayloadShellExecution(unsafe, 'nested-payload-alias.yml')).toThrow();
   });
 
-  it('allows non-text metadata beside a constant shell command', () => {
+  it('allows non-text metadata through a context alias beside a constant shell command', () => {
     const safe = [
       'jobs:',
       '  test:',
@@ -163,10 +177,10 @@ describe('GitHub Script payload object alias shell boundary', () => {
       '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
       '        with:',
       '          script: |',
-      '            const comment = context.payload.comment;',
-      '            core.info(String(comment.id));',
+      '            const ctx = context;',
+      '            core.info(String(ctx.payload.comment.id));',
       "            require('node:child_process').execSync('printf safe');",
     ].join('\n');
-    expectNoAliasedPayloadShellExecution(safe, 'safe-payload-alias.yml');
+    expectNoAliasedPayloadShellExecution(safe, 'safe-context-alias.yml');
   });
 });
