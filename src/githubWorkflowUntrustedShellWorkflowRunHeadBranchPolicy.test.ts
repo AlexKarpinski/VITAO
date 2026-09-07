@@ -13,6 +13,11 @@ const envReference = (name: string) =>
 
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const scalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
+const hasWorkflowRunTrigger = (workflow: string) =>
+  /^\s*workflow_run\s*:/m.test(workflow) ||
+  /^\s*on\s*:\s*workflow_run\s*(?:#.*)?$/m.test(workflow) ||
+  /^\s*on\s*:\s*\[[^\]\n]*\bworkflow_run\b[^\]\n]*\]\s*(?:#.*)?$/m.test(workflow) ||
+  /^\s*on\s*:\s*\{[^}\n]*\bworkflow_run\s*:[^}\n]*\}\s*(?:#.*)?$/m.test(workflow);
 
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
@@ -49,7 +54,7 @@ const collectWorkflowRunTextEnvNames = (workflow: string) => {
 };
 
 const expectNoWorkflowRunTextShellExecution = (workflow: string, source: string) => {
-  if (!/workflow_run\s*:/.test(workflow)) return;
+  if (!hasWorkflowRunTrigger(workflow)) return;
   const taintedEnv = collectWorkflowRunTextEnvNames(workflow);
   for (const script of collectRunScripts(workflow)) {
     expect(workflowRunTextSource.test(script), `${source}: attacker-controlled workflow_run text reaches a shell run step`).toBe(false);
@@ -75,6 +80,11 @@ describe('GitHub workflow_run text shell policy', () => {
   it('rejects workflow_run head branch propagated through env', () => {
     const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github.event.workflow_run.head_branch }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
     expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-head-env.yml')).toThrow();
+  });
+
+  it('rejects workflow_run head branch propagated through env with a scalar trigger', () => {
+    const unsafe = ['on: workflow_run', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github.event.workflow_run.head_branch }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-scalar-head-env.yml')).toThrow();
   });
 
   it('rejects workflow_run pull-request head refs in shell execution', () => {
@@ -125,5 +135,10 @@ describe('GitHub workflow_run text shell policy', () => {
   it('allows workflow_run workflows that use only constant shell commands', () => {
     const safe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', '      - run: echo safe'].join('\n');
     expectNoWorkflowRunTextShellExecution(safe, 'safe.yml');
+  });
+
+  it('allows scalar workflow_run triggers with only constant shell commands', () => {
+    const safe = ['on: workflow_run', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', '      - run: echo safe'].join('\n');
+    expectNoWorkflowRunTextShellExecution(safe, 'scalar-safe.yml');
   });
 });
