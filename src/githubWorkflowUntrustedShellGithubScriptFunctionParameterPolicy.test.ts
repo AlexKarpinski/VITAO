@@ -101,7 +101,7 @@ const collectFunctions = (script: string): FunctionInfo[] => {
     const objectBodyStart = objectMatcher.lastIndex;
     const objectBodyEnd = findBodyEnd(script, objectBodyStart);
     const objectBody = script.slice(objectBodyStart, objectBodyEnd);
-    const methodMatcher = /(?:^|[,;]\s*|}\s*,?\s*)([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{/g;
+    const methodMatcher = /(?:^|[,;]\s*|}\s*,?\s*)\s*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*\{/g;
     for (let methodMatch = methodMatcher.exec(objectBody); methodMatch; methodMatch = methodMatcher.exec(objectBody)) {
       const methodBodyStart = methodMatcher.lastIndex;
       const methodBodyEnd = findBodyEnd(objectBody, methodBodyStart);
