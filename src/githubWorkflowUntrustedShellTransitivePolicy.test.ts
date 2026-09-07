@@ -170,15 +170,16 @@ const extractTaintedEnvVars = (workflow: string, taintedStepIds: Set<string>): E
     const name = decodeYamlScalar(match[2]);
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
     let value = normalizeAccess(stripYamlComment(match[3]));
+    const anchoredValue = value.match(/^&([A-Za-z0-9_-]+)\s+([\s\S]+)$/);
+    const anchorName = anchoredValue?.[1];
+    if (anchoredValue) value = anchoredValue[2].trim();
     if (isBlockScalarHeader(value)) {
       const block = collectIndentedValue(lines, index, indent);
       value = normalizeAccess(block.value);
       index = block.endIndex;
     }
-    const anchor = value.match(/^&([A-Za-z0-9_-]+)\s+([\s\S]+)$/);
-    if (anchor) {
-      value = stripYamlComment(anchor[2]).trim();
-      anchors.set(anchor[1], value);
+    if (anchorName) {
+      anchors.set(anchorName, value);
     } else {
       const alias = stripYamlComment(value).trim().match(/^\*([A-Za-z0-9_-]+)$/);
       if (alias && anchors.has(alias[1])) value = anchors.get(alias[1])!;
@@ -263,6 +264,14 @@ describe('GitHub workflow transitive untrusted shell policy', () => {
   it('propagates taint through YAML scalar aliases with trailing comments', () => {
     const unsafe = ['env:', '  RAW: &payload ${{ github.event.comment.body }}', '  CMD: *payload # downstream command', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
     expect(() => assertNoTransitiveUntrustedShell(unsafe, 'yaml-alias-comment.yml')).toThrow();
+  });
+  it('propagates taint through anchored block-scalar aliases', () => {
+    const unsafe = ['env:', '  PAYLOAD: &payload >-', '    ${{ github.event.comment.body }}', '  CMD: *payload', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(unsafe, 'yaml-anchor-block.yml')).toThrow();
+  });
+  it('allows anchored block-scalar aliases when the value is constant', () => {
+    const safe = ['env:', '  PAYLOAD: &payload >-', '    echo safe', '  CMD: *payload', 'steps:', '  - run: bash -c "$CMD"'].join('\n');
+    expect(() => assertNoTransitiveUntrustedShell(safe, 'yaml-anchor-block-safe.yml')).not.toThrow();
   });
   it('rejects Bash indirect expansion through a pointer variable', () => {
     const unsafe = ['env:', '  RAW: ${{ github.event.comment.body }}', '  NAME: RAW', 'steps:', '  - run: bash -c "${!NAME}"'].join('\n');
