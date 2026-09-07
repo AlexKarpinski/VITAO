@@ -51,13 +51,13 @@ const unwrapYamlQuotes = (value: string) => {
 };
 
 const scriptKey = String.raw`(?:script|"script"|'script')`;
-const untrustedGithubEventPath = /\bgithub\.event\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body))\b/;
+const untrustedGithubSourcePath = /\b(?:github\.head_ref|github\.event\.(?:issue\.(?:title|body)|comment\.(?:body|diff_hunk|path)|pull_request\.(?:title|body|head\.(?:ref|label))|review(?:_comment)?\.body|discussion\.(?:title|body)))\b/;
 
 const isUntrustedGithubScriptSource = (value: string) => {
   const source = normalizeGithubAccess(unwrapYamlQuotes(value));
   const expressions = source.matchAll(/\$\{\{([\s\S]*?)\}\}/g);
   for (const expression of expressions) {
-    if (untrustedGithubEventPath.test(normalizeGithubAccess(expression[1]))) return true;
+    if (untrustedGithubSourcePath.test(normalizeGithubAccess(expression[1]))) return true;
   }
   return false;
 };
@@ -77,7 +77,7 @@ const blockScalarHeader = (value: string) => /^[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*
 
 const hasDirectUntrustedScriptExpression = (workflow: string) => workflow.split('\n').some((line) => {
   const normalized = normalizeGithubAccess(stripYamlComment(line));
-  if (!normalized.includes('${{') || !untrustedGithubEventPath.test(normalized)) return false;
+  if (!normalized.includes('${{') || !untrustedGithubSourcePath.test(normalized)) return false;
   const directScript = new RegExp(`^\\s*${scriptKey}\\s*:`).test(normalized);
   const blockFlowWith = new RegExp(`^\\s*with\\s*:\\s*\\{.*(?:^|[,\\s])${scriptKey}\\s*:`).test(normalized);
   const flowGithubScriptStep = /^\s*-\s*\{/.test(normalized)
@@ -147,6 +147,32 @@ describe('GitHub Script source trust policy', () => {
     expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'direct-source.yml')).toThrow();
   });
 
+  it('rejects pull-request head refs used directly as GitHub Script source', () => {
+    const unsafe = [
+      'on: pull_request_target',
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: ${{ github.head_ref }}',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'head-ref-source.yml')).toThrow();
+  });
+
+  it('rejects bracket-form pull-request head refs used as GitHub Script source', () => {
+    const unsafe = [
+      'on: pull_request_target',
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      "          script: ${{ github['head_ref'] }}",
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'head-ref-bracket-source.yml')).toThrow();
+  });
+
   it('rejects quoted YAML script keys', () => {
     const unsafe = [
       'jobs:',
@@ -192,6 +218,19 @@ describe('GitHub Script source trust policy', () => {
       '            core.info(body);',
     ].join('\n');
     expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'embedded-source.yml')).toThrow();
+  });
+
+  it('allows a repository-owned constant script source', () => {
+    const safe = [
+      'on: pull_request_target',
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      "          script: core.info('safe')",
+    ].join('\n');
+    expectNoUntrustedGithubScriptSource(safe, 'constant-source.yml');
   });
 
   it('allows payload text read as data inside a fixed script body', () => {
