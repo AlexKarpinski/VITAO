@@ -7,7 +7,9 @@ const workflowFiles = readdirSync(workflowsDir)
   .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
   .sort();
 
-const apiTextEndpoint = String.raw`github\.rest\.(?:issues\.(?:get|getComment)|pulls\.(?:get|getReview|getReviewComment))\s*\(`;
+const githubRestTextEndpoint = String.raw`github\.rest\.(?:issues\.(?:get|getComment)|pulls\.(?:get|getReview|getReviewComment))\s*\(`;
+const githubRequestTextEndpoint = String.raw`github\.request\s*\(\s*['\"](?:GET\s+)?\/repos\/\{owner\}\/\{repo\}\/(?:issues\/comments\/\{comment_id\}|issues\/\{issue_number\}|pulls\/\{pull_number\}(?:\/reviews\/\{review_id\}|\/comments\/\{comment_id\})?)['\"]`;
+const apiTextEndpoint = String.raw`(?:${githubRestTextEndpoint}|${githubRequestTextEndpoint})`;
 const apiTextEndpointPattern = new RegExp(apiTextEndpoint);
 
 const collectStepBlocks = (workflow: string) => {
@@ -122,6 +124,47 @@ describe('GitHub API text output shell policy', () => {
       '      - run: bash -c "${{ steps.capture.outputs.result }}"',
     ].join('\n');
     expect(() => assertNoGithubApiTextOutputShell(unsafe, 'api-comment-body.yml')).toThrow();
+  });
+
+  it('rejects an issue-comment body fetched through github.request and returned to a shell sink', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'jobs:',
+      '  test:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - id: capture',
+      '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const response = await github.request('GET /repos/{owner}/{repo}/issues/comments/{comment_id}', {",
+      '              owner: context.repo.owner, repo: context.repo.repo, comment_id: context.payload.comment.id,',
+      '            });',
+      '            return response.data.body;',
+      '      - run: bash -c "${{ steps.capture.outputs.result }}"',
+    ].join('\n');
+    expect(() => assertNoGithubApiTextOutputShell(unsafe, 'api-generic-comment-body.yml')).toThrow();
+  });
+
+  it('allows a generic GitHub API call when the step returns a constant value', () => {
+    const safe = [
+      'on: issue_comment',
+      'jobs:',
+      '  test:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - id: capture',
+      '        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const response = await github.request('GET /repos/{owner}/{repo}/issues/comments/{comment_id}', {",
+      '              owner: context.repo.owner, repo: context.repo.repo, comment_id: context.payload.comment.id,',
+      '            });',
+      '            core.info(response.data.body);',
+      "            return 'echo safe';",
+      '      - run: bash -c "${{ steps.capture.outputs.result }}"',
+    ].join('\n');
+    expect(() => assertNoGithubApiTextOutputShell(safe, 'api-generic-comment-constant.yml')).not.toThrow();
   });
 
   it('allows a GitHub API call when the step returns a constant value', () => {
