@@ -63,16 +63,28 @@ const collectTaintedIdentifiers = (script: string) => {
   return tainted;
 };
 
+const referencesTaintedText = (value: string, tainted: Set<string>) =>
+  containsUntrustedPayloadText(value)
+  || [...tainted].some((identifier) => new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(value));
+
 const hasUntrustedShellExecution = (script: string) => {
   const tainted = collectTaintedIdentifiers(script);
   const calls = script.matchAll(/(?:\b[A-Za-z_$][\w$]*\s*\.\s*)?\b(?:exec|execSync)\s*(?:\?\.\s*)?\(([^)]*)\)/g);
   for (const call of calls) {
     const argument = call[1] ?? '';
-    if (containsUntrustedPayloadText(argument)) return true;
-    if ([...tainted].some((identifier) => new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(argument))) {
-      return true;
-    }
+    if (referencesTaintedText(argument, tainted)) return true;
   }
+
+  const spawnCalls = script.matchAll(/(?:\b[A-Za-z_$][\w$]*\s*\.\s*)?\b(?:spawn|spawnSync)\s*(?:\?\.\s*)?\(([^)]*)\)/g);
+  for (const call of spawnCalls) {
+    const argumentsText = call[1] ?? '';
+    const invokesShellCommand = /^\s*['"](?:ba|z|da|k)?sh['"]\s*,/i.test(argumentsText)
+      ? /['"]-c['"]/.test(argumentsText)
+      : /^\s*['"](?:pwsh|powershell(?:\.exe)?|cmd(?:\.exe)?)['"]\s*,/i.test(argumentsText)
+        && /['"](?:-c|\/c)['"]/i.test(argumentsText);
+    if (invokesShellCommand && referencesTaintedText(argumentsText, tainted)) return true;
+  }
+
   return false;
 };
 
@@ -95,6 +107,28 @@ describe('flow-style GitHub Script input trust boundary', () => {
     ].join('\n');
 
     expect(() => expectFlowGithubScriptInputsSafe(unsafe, 'flow-unsafe.yml')).toThrow();
+  });
+
+  it('rejects a flow-style script that passes comment text to a shell through spawnSync', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      `      - { uses: actions/github-script@0123456789abcdef0123456789abcdef01234567, with: { script: "const command = context.payload.comment.body; require('node:child_process').spawnSync('bash', ['-c', command])" } }`,
+    ].join('\n');
+
+    expect(() => expectFlowGithubScriptInputsSafe(unsafe, 'flow-spawn-unsafe.yml')).toThrow();
+  });
+
+  it('allows spawnSync to pass comment text as data without a shell command boundary', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      `      - { uses: actions/github-script@0123456789abcdef0123456789abcdef01234567, with: { script: "const text = context.payload.comment.body; require('node:child_process').spawnSync('printf', ['%s', text])" } }`,
+    ].join('\n');
+
+    expectFlowGithubScriptInputsSafe(safe, 'flow-spawn-safe.yml');
   });
 
   it('allows flow-style GitHub Script to consume comment text only as data', () => {
