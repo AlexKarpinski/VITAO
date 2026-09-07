@@ -13,11 +13,12 @@ const envReference = (name: string) =>
 
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const scalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
+const onKey = String.raw`(?:on|"on"|'on')`;
 const hasWorkflowRunTrigger = (workflow: string) =>
   /^\s*workflow_run\s*:/m.test(workflow) ||
-  /^\s*on\s*:\s*workflow_run\s*(?:#.*)?$/m.test(workflow) ||
-  /^\s*on\s*:\s*\[[^\]\n]*\bworkflow_run\b[^\]\n]*\]\s*(?:#.*)?$/m.test(workflow) ||
-  /^\s*on\s*:\s*\{[^}\n]*\bworkflow_run\s*:[^}\n]*\}\s*(?:#.*)?$/m.test(workflow);
+  new RegExp(`^\\s*${onKey}\\s*:\\s*workflow_run\\s*(?:#.*)?$`, 'm').test(workflow) ||
+  new RegExp(`^\\s*${onKey}\\s*:\\s*\\[[^\\]\\n]*\\bworkflow_run\\b[^\\]\\n]*\\]\\s*(?:#.*)?$`, 'm').test(workflow) ||
+  new RegExp(`^\\s*${onKey}\\s*:\\s*\\{[^}\\n]*\\bworkflow_run\\s*:[^}\\n]*\\}\\s*(?:#.*)?$`, 'm').test(workflow);
 
 const collectRunScripts = (workflow: string) => {
   const scripts: string[] = [];
@@ -87,6 +88,11 @@ describe('GitHub workflow_run text shell policy', () => {
     expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-scalar-head-env.yml')).toThrow();
   });
 
+  it('rejects workflow_run display-title propagated through env with a quoted scalar trigger', () => {
+    const unsafe = ['"on": workflow_run', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    env:', `      CMD: ${'${{ github.event.workflow_run.display_title }}'}`, '    steps:', '      - run: bash -c "$CMD"'].join('\n');
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-quoted-scalar-display-title-env.yml')).toThrow();
+  });
+
   it('rejects workflow_run pull-request head refs in shell execution', () => {
     const unsafe = ['on:', '  workflow_run:', '    workflows: [CI]', '    types: [completed]', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', `      - run: "bash -c '${'${{ github.event.workflow_run.pull_requests[0].head.ref }}'}'"`].join('\n');
     expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-pr-head-ref.yml')).toThrow();
@@ -150,5 +156,10 @@ describe('GitHub workflow_run text shell policy', () => {
   it('allows scalar workflow_run triggers with only constant shell commands', () => {
     const safe = ['on: workflow_run', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', '      - run: echo safe'].join('\n');
     expectNoWorkflowRunTextShellExecution(safe, 'scalar-safe.yml');
+  });
+
+  it('allows quoted scalar workflow_run triggers with only constant shell commands', () => {
+    const safe = ["'on': workflow_run", 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', '      - run: echo safe'].join('\n');
+    expectNoWorkflowRunTextShellExecution(safe, 'quoted-scalar-safe.yml');
   });
 });
