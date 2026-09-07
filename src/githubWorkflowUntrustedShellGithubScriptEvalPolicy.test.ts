@@ -62,6 +62,10 @@ const hasTaintedCodeExecution = (script: string) => {
   const argumentIsTainted = (argument: string) => containsUntrustedPayloadText(argument)
     || [...tainted].some((identifier) => new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(argument));
 
+  for (const match of script.matchAll(/\(\s*0\s*,\s*eval\s*\)\s*(?:\?\.\s*)?\(([^)]+)\)/g)) {
+    if (argumentIsTainted(match[1])) return true;
+  }
+
   for (const match of script.matchAll(/(?:^|[^\w$])(?:(?:globalThis|global|window|self)\s*(?:\.\s*eval|\[\s*['"]eval['"]\s*\])|eval)\s*(?:\?\.\s*)?\(([^)]+)\)/g)) {
     if (argumentIsTainted(match[1])) return true;
   }
@@ -139,6 +143,11 @@ describe('GitHub Script executable-code policy', () => {
     expect(() => expectNoTaintedCodeExecution(unsafe, 'eval.yml')).toThrow();
   });
 
+  it('rejects indirect eval of attacker-controlled payload text', () => {
+    const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            (0, eval)(context.payload.comment.body);'].join('\n');
+    expect(() => expectNoTaintedCodeExecution(unsafe, 'indirect-eval.yml')).toThrow();
+  });
+
   it('rejects optional eval calls of attacker-controlled payload text', () => {
     const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            eval?.(context.payload.comment.body);'].join('\n');
     expect(() => expectNoTaintedCodeExecution(unsafe, 'optional-eval.yml')).toThrow();
@@ -202,6 +211,11 @@ describe('GitHub Script executable-code policy', () => {
   it('rejects tainted JavaScript data URL imports through local aliases', () => {
     const unsafe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', '            const code = context.payload.issue.body;', '            await import(`data:text/javascript,${encodeURIComponent(code)}`);'].join('\n');
     expect(() => expectNoTaintedCodeExecution(unsafe, 'data-import-alias.yml')).toThrow();
+  });
+
+  it('allows indirect eval with constant code', () => {
+    const safe = ['jobs:', '  test:', '    steps:', '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567', '        with:', '          script: |', "            const result = (0, eval)('4 + 4');", '            core.info(String(result));'].join('\n');
+    expectNoTaintedCodeExecution(safe, 'indirect-eval-safe.yml');
   });
 
   it('allows code execution constructors with constant code', () => {
