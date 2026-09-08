@@ -56,6 +56,11 @@ const hasIndirectChildProcessExecution = (script: string) => {
     if (containsTaintedValue(match[1], tainted)) return true;
   }
 
+  const reflectApplyPattern = /Reflect\s*\.\s*apply\s*\(\s*(?:\b[A-Za-z_$][\w$]*\s*\.\s*)?(?:exec|execSync)\s*,\s*[^,]+\s*,\s*\[([\s\S]*?)\]\s*\)/g;
+  for (const match of script.matchAll(reflectApplyPattern)) {
+    if (containsTaintedValue(match[1], tainted)) return true;
+  }
+
   return false;
 };
 
@@ -133,6 +138,21 @@ describe('GitHub Script indirect child-process invocation policy', () => {
     expect(() => assertNoIndirectChildProcessExecution(unsafe, 'apply.yml')).toThrow();
   });
 
+  it('rejects Reflect.apply with attacker-controlled text', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const cp = require('node:child_process');",
+      '            const command = context.payload.pull_request.title;',
+      '            Reflect.apply(cp.execSync, null, [command]);',
+    ].join('\n');
+    expect(() => assertNoIndirectChildProcessExecution(unsafe, 'reflect-apply.yml')).toThrow();
+  });
+
   it('allows indirect invocation with repository-owned constant text', () => {
     const safe = [
       'jobs:',
@@ -145,6 +165,20 @@ describe('GitHub Script indirect child-process invocation policy', () => {
       "            cp.execSync.call(null, 'printf safe');",
     ].join('\n');
     assertNoIndirectChildProcessExecution(safe, 'safe.yml');
+  });
+
+  it('allows Reflect.apply with repository-owned constant text', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const cp = require('node:child_process');",
+      "            Reflect.apply(cp.execSync, null, ['printf safe']);",
+    ].join('\n');
+    assertNoIndirectChildProcessExecution(safe, 'reflect-apply-safe.yml');
   });
 
   it('enforces the policy across checked-in workflows', () => {
