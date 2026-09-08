@@ -108,9 +108,9 @@ const splitTopLevelArgs = (value: string) => {
   return args;
 };
 
-const collectSpawnArgs = (script: string) => {
+const collectStringShellCalls = (script: string) => {
   const calls: string[] = [];
-  const matcher = /\bspawn(?:Sync)?\s*\(/g;
+  const matcher = /\b(?:spawn|execFile)(?:Sync)?\s*\(/g;
   for (let match = matcher.exec(script); match; match = matcher.exec(script)) {
     const open = matcher.lastIndex - 1;
     let depth = 1;
@@ -146,11 +146,11 @@ const hasNonEmptyStringShell = (options: string) =>
 
 const hasUntrustedStringShellExecution = (script: string) => {
   const tainted = collectTaintedIdentifiers(script);
-  return collectSpawnArgs(script).some((callArgs) => {
+  return collectStringShellCalls(script).some((callArgs) => {
     const args = splitTopLevelArgs(callArgs);
     const command = args[0] ?? '';
-    const options = args.at(-1) ?? '';
-    return hasNonEmptyStringShell(options) && containsTaintedValue(command, tainted);
+    const hasStringShell = args.slice(1).some(hasNonEmptyStringShell);
+    return hasStringShell && containsTaintedValue(command, tainted);
   });
 };
 
@@ -233,6 +233,33 @@ describe('GitHub Script string-valued shell option policy', () => {
     expect(() => expectNoUntrustedStringShellExecution(unsafe, 'string-shell-alias.yml')).toThrow();
   });
 
+  it('rejects execFile commands with a string-valued shell option', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            require('node:child_process').execFile(context.payload.comment.body, [], { shell: '/bin/bash' }, () => {});",
+    ].join('\n');
+    expect(() => expectNoUntrustedStringShellExecution(unsafe, 'exec-file-string-shell.yml')).toThrow();
+  });
+
+  it('rejects execFileSync aliases with a string-valued shell option', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const command = context.payload.pull_request.title;',
+      "            require('node:child_process').execFileSync(command, [], { shell: 'bash' });",
+    ].join('\n');
+    expect(() => expectNoUntrustedStringShellExecution(unsafe, 'exec-file-sync-string-shell.yml')).toThrow();
+  });
+
   it('allows payload text passed as data when no shell option is enabled', () => {
     const safe = [
       'jobs:',
@@ -244,5 +271,18 @@ describe('GitHub Script string-valued shell option policy', () => {
       "            require('node:child_process').spawnSync('/usr/bin/printf', ['%s', context.payload.comment.body]);",
     ].join('\n');
     expectNoUntrustedStringShellExecution(safe, 'string-shell-safe.yml');
+  });
+
+  it('allows execFile payload arguments when no shell option is enabled', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            require('node:child_process').execFile('/usr/bin/printf', ['%s', context.payload.comment.body], () => {});",
+    ].join('\n');
+    expectNoUntrustedStringShellExecution(safe, 'exec-file-data-safe.yml');
   });
 });
