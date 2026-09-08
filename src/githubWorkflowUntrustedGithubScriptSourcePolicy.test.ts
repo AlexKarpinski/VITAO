@@ -73,6 +73,18 @@ const scriptSourceFromLine = (line: string) => {
   return script?.[1] ?? null;
 };
 
+const explicitScriptKey = (line: string) => {
+  const structural = stripYamlComment(line);
+  const match = structural.match(new RegExp(`^(\\s*)\\?\\s*${scriptKey}\\s*$`));
+  return match ? match[1].length : null;
+};
+
+const explicitScriptValue = (line: string, keyIndent: number) => {
+  const structural = stripYamlComment(line);
+  if (indentOf(structural) !== keyIndent) return null;
+  return structural.match(/^\s*:\s*(.+?)\s*$/)?.[1] ?? null;
+};
+
 const blockScalarHeader = (value: string) => /^[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*$/;
 
 const hasDirectUntrustedScriptExpression = (workflow: string) => workflow.split('\n').some((line) => {
@@ -100,13 +112,22 @@ const collectGithubScriptSources = (workflow: string) => {
       const trimmed = raw.trim();
       const indent = indentOf(raw);
       if (trimmed && indent <= stepIndent && /^-\s+/.test(trimmed)) break;
-      const source = scriptSourceFromLine(raw);
+      let source = scriptSourceFromLine(raw);
+      let sourceLineIndex = child;
+
+      if (source === null) {
+        const keyIndent = explicitScriptKey(raw);
+        if (keyIndent !== null && child + 1 < lines.length) {
+          source = explicitScriptValue(lines[child + 1], keyIndent);
+          if (source !== null) sourceLineIndex = child + 1;
+        }
+      }
       if (source === null) continue;
 
       if (blockScalarHeader(stripYamlComment(source).trim())) {
-        const scriptIndent = indent;
+        const scriptIndent = indentOf(lines[sourceLineIndex]);
         const body: string[] = [];
-        for (let bodyIndex = child + 1; bodyIndex < lines.length; bodyIndex += 1) {
+        for (let bodyIndex = sourceLineIndex + 1; bodyIndex < lines.length; bodyIndex += 1) {
           const bodyLine = lines[bodyIndex];
           if (bodyLine.trim() && indentOf(bodyLine) <= scriptIndent) break;
           body.push(bodyLine);
@@ -185,6 +206,19 @@ describe('GitHub Script source trust policy', () => {
     expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'quoted-script-key.yml')).toThrow();
   });
 
+  it('rejects explicit YAML script keys', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          ? script',
+      '          : ${{ github.event.comment.body }}',
+    ].join('\n');
+    expect(() => expectNoUntrustedGithubScriptSource(unsafe, 'explicit-script-key.yml')).toThrow();
+  });
+
   it('rejects the same sink in a flow-style with mapping', () => {
     const unsafe = [
       'jobs:',
@@ -231,6 +265,19 @@ describe('GitHub Script source trust policy', () => {
       "          script: core.info('safe')",
     ].join('\n');
     expectNoUntrustedGithubScriptSource(safe, 'constant-source.yml');
+  });
+
+  it('allows a repository-owned constant through an explicit YAML script key', () => {
+    const safe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          ? script',
+      "          : core.info('safe')",
+    ].join('\n');
+    expectNoUntrustedGithubScriptSource(safe, 'explicit-constant-source.yml');
   });
 
   it('allows payload text read as data inside a fixed script body', () => {
