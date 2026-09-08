@@ -8,6 +8,7 @@ const workflowFiles = readdirSync(workflowsDir)
   .sort();
 
 const pushRefSource = /(?:github\.ref_name|github\.ref|github\.event\.ref|github\[['"]ref_name['"]\]|github\[['"]ref['"]\]|github\[['"]event['"]\]\[['"]ref['"]\])/;
+const defaultPushRefEnvNames = ['GITHUB_REF_NAME', 'GITHUB_REF'] as const;
 const scalarHeader = /^[|>](?:(?:[+-][1-9]?)|(?:[1-9][+-]?))?$/;
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
 const envReference = (name: string) =>
@@ -45,7 +46,7 @@ const collectRunScripts = (workflow: string) => {
 };
 
 const collectPushRefEnvNames = (workflow: string) => {
-  const names = new Set<string>();
+  const names = new Set<string>(defaultPushRefEnvNames);
   const lines = workflow.split('\n');
   let envIndent: number | null = null;
   for (const raw of lines) {
@@ -111,6 +112,21 @@ describe('GitHub push ref shell policy', () => {
   it('rejects github.event.ref propagated through step env', () => {
     const unsafe = ['on:', '  push:', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', '      - env:', `          CMD: ${'${{ github.event.ref }}'}`, '        run: sh -c "$CMD"'].join('\n');
     expect(() => expectNoPushRefShellExecution(unsafe, 'push-event-ref-env.yml')).toThrow();
+  });
+
+  it('rejects default GITHUB_REF_NAME shell execution on push', () => {
+    const unsafe = ['on:', '  push:', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', '      - run: bash -c "$GITHUB_REF_NAME"'].join('\n');
+    expect(() => expectNoPushRefShellExecution(unsafe, 'default-ref-name.yml')).toThrow();
+  });
+
+  it('rejects default GITHUB_REF shell execution on push', () => {
+    const unsafe = ['on: push', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', '      - run: sh -c "${GITHUB_REF}"'].join('\n');
+    expect(() => expectNoPushRefShellExecution(unsafe, 'default-ref.yml')).toThrow();
+  });
+
+  it('allows default ref variables outside push-triggered workflows', () => {
+    const safe = ['on: workflow_dispatch', 'jobs:', '  demo:', '    runs-on: ubuntu-latest', '    steps:', '      - run: echo "$GITHUB_REF_NAME"'].join('\n');
+    expectNoPushRefShellExecution(safe, 'manual-ref.yml');
   });
 
   it('allows trusted push metadata in constant shell commands', () => {
