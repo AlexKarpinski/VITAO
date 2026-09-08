@@ -22,7 +22,11 @@ const stripYamlComment = (value: string) => {
 };
 
 const indentOf = (line: string) => line.match(/^\s*/)?.[0].length ?? 0;
-const wholeEventExpression = /\$\{\{\s*tojson\s*\(\s*github\s*\.\s*event\s*\)\s*\}\}/i;
+const eventPath = String.raw`github\s*\.\s*event`;
+const wholeEventExpression = new RegExp(
+  String.raw`\$\{\{\s*(?:tojson\s*\(\s*${eventPath}\s*\)|fromjson\s*\(\s*tojson\s*\(\s*${eventPath}\s*\)\s*\)(?:\s*(?:\.\s*[A-Za-z_][A-Za-z0-9_]*|\[\s*['\"][^'\"]+['\"]\s*\]))*)\s*\}\}`,
+  'i',
+);
 
 const collectWholeEventEnvNames = (workflow: string) => {
   const names = new Set<string>();
@@ -110,6 +114,29 @@ describe('GitHub workflow whole-event environment taint policy', () => {
     expect(() => expectNoWholeEventEnvExecution(unsafe, 'whole-event.yml')).toThrow();
   });
 
+  it('rejects fields recovered from a whole-event JSON round trip', () => {
+    const unsafe = [
+      'on: issue_comment',
+      'jobs:',
+      '  test:',
+      '    env:',
+      '      CMD: ${{ fromJSON(toJSON(github.event)).comment.body }}',
+      '    steps:',
+      '      - run: bash -c "$CMD"',
+    ].join('\n');
+    expect(() => expectNoWholeEventEnvExecution(unsafe, 'whole-event-round-trip.yml')).toThrow();
+  });
+
+  it('recognizes bracket access after a whole-event JSON round trip', () => {
+    const unsafe = [
+      'env:',
+      '  CMD: ${{ fromJson(toJson(github.event))["comment"]["body"] }}',
+      'steps:',
+      '  - run: eval "$CMD"',
+    ].join('\n');
+    expect(() => expectNoWholeEventEnvExecution(unsafe, 'whole-event-round-trip-brackets.yml')).toThrow();
+  });
+
   it('recognizes case variants of toJson', () => {
     const unsafe = [
       'env:',
@@ -128,5 +155,15 @@ describe('GitHub workflow whole-event environment taint policy', () => {
       '  - run: printf "%s\\n" "$EVENT_JSON"',
     ].join('\n');
     expectNoWholeEventEnvExecution(safe, 'data-only.yml');
+  });
+
+  it('allows JSON round trips that do not originate from the event object', () => {
+    const safe = [
+      'env:',
+      '  CMD: ${{ fromJSON(toJSON(vars.SAFE_COMMAND)) }}',
+      'steps:',
+      '  - run: printf "%s\\n" "$CMD"',
+    ].join('\n');
+    expectNoWholeEventEnvExecution(safe, 'non-event-round-trip.yml');
   });
 });
