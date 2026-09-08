@@ -55,8 +55,7 @@ const untrustedGithubSourcePath = /\b(?:github\.head_ref|github\.event\.(?:issue
 
 const isUntrustedGithubScriptSource = (value: string) => {
   const source = normalizeGithubAccess(unwrapYamlQuotes(value));
-  const expressions = source.matchAll(/\$\{\{([\s\S]*?)\}\}/g);
-  for (const expression of expressions) {
+  for (const expression of source.matchAll(/\$\{\{([\s\S]*?)\}\}/g)) {
     if (untrustedGithubSourcePath.test(normalizeGithubAccess(expression[1]))) return true;
   }
   return false;
@@ -69,13 +68,14 @@ const scriptSourceFromLine = (line: string) => {
 
   const flowWith = structural.match(/^\s*with\s*:\s*\{([\s\S]*)\}\s*$/);
   if (!flowWith) return null;
-  const script = flowWith[1].match(new RegExp(`(?:^|,)\\s*${scriptKey}\\s*:\\s*((?:"[^"\\n]*"|'[^'\\n]*'|\\$\\{\\{[\\s\\S]*?\\}\\}))(?=\\s*,|\\s*$)`));
+  const script = flowWith[1].match(
+    new RegExp(`(?:^|,)\\s*${scriptKey}\\s*:\\s*((?:"[^"\\n]*"|'[^'\\n]*'|\\$\\{\\{[\\s\\S]*?\\}\\}))(?=\\s*,|\\s*$)`),
+  );
   return script?.[1] ?? null;
 };
 
 const explicitScriptKey = (line: string) => {
-  const structural = stripYamlComment(line);
-  const match = structural.match(new RegExp(`^(\\s*)\\?\\s*${scriptKey}\\s*$`));
+  const match = stripYamlComment(line).match(new RegExp(`^(\\s*)\\?\\s*${scriptKey}\\s*$`));
   return match ? match[1].length : null;
 };
 
@@ -85,25 +85,33 @@ const explicitScriptValue = (line: string, keyIndent: number) => {
   return structural.match(/^\s*:\s*(.+?)\s*$/)?.[1] ?? null;
 };
 
-const blockScalarHeader = (value: string) => /^[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*$/;
+const blockScalarHeader = (value: string) => /^[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*$/.test(value);
 
-const hasDirectUntrustedScriptExpression = (workflow: string) => workflow.split('\n').some((line) => {
-  const normalized = normalizeGithubAccess(stripYamlComment(line));
-  if (!normalized.includes('${{') || !untrustedGithubSourcePath.test(normalized)) return false;
-  const directScript = new RegExp(`^\\s*${scriptKey}\\s*:`).test(normalized);
-  const blockFlowWith = new RegExp(`^\\s*with\\s*:\\s*\\{.*(?:^|[,\\s])${scriptKey}\\s*:`).test(normalized);
-  const flowGithubScriptStep = /^\s*-\s*\{/.test(normalized)
-    && /(?:^|[,\s{])(?:uses|"uses"|'uses')\s*:\s*['"]?actions\/github-script@[^\s,'"}]+/.test(normalized)
-    && new RegExp(`(?:^|[,\\s{])${scriptKey}\\s*:`).test(normalized);
-  return directScript || blockFlowWith || flowGithubScriptStep;
-});
+const flowStepScriptSource = (line: string) => {
+  const structural = stripYamlComment(line);
+  if (!/^\s*-\s*\{/.test(structural)) return null;
+  if (!/(?:^|[,\s{])(?:uses|"uses"|'uses')\s*:\s*['"]?actions\/github-script@[^\s,'"}]+/i.test(structural)) return null;
+  const withMapping = structural.match(/(?:^|[,\s{])with\s*:\s*\{([\s\S]*?)\}\s*\}\s*$/);
+  if (!withMapping) return null;
+  const script = withMapping[1].match(
+    new RegExp(`(?:^|,)\\s*${scriptKey}\\s*:\\s*((?:"[^"\\n]*"|'[^'\\n]*'|\\$\\{\\{[\\s\\S]*?\\}\\}))(?=\\s*,|\\s*$)`),
+  );
+  return script?.[1] ?? null;
+};
 
 const collectGithubScriptSources = (workflow: string) => {
   const sources: string[] = [];
   const lines = workflow.split('\n');
 
+  for (const line of lines) {
+    const flowSource = flowStepScriptSource(line);
+    if (flowSource !== null) sources.push(flowSource);
+  }
+
   for (let index = 0; index < lines.length; index += 1) {
-    const uses = stripYamlComment(lines[index]).match(/^(\s*)-?\s*uses\s*:\s*['"]?actions\/github-script@[^\s'"]+['"]?\s*$/);
+    const uses = stripYamlComment(lines[index]).match(
+      /^(\s*)-?\s*uses\s*:\s*['"]?actions\/github-script@[^\s'"]+['"]?\s*$/i,
+    );
     if (!uses) continue;
     const stepIndent = uses[1].length;
 
@@ -112,9 +120,9 @@ const collectGithubScriptSources = (workflow: string) => {
       const trimmed = raw.trim();
       const indent = indentOf(raw);
       if (trimmed && indent <= stepIndent && /^-\s+/.test(trimmed)) break;
+
       let source = scriptSourceFromLine(raw);
       let sourceLineIndex = child;
-
       if (source === null) {
         const keyIndent = explicitScriptKey(raw);
         if (keyIndent !== null && child + 1 < lines.length) {
@@ -144,16 +152,20 @@ const collectGithubScriptSources = (workflow: string) => {
 };
 
 const expectNoUntrustedGithubScriptSource = (workflow: string, source: string) => {
-  expect(hasDirectUntrustedScriptExpression(workflow), `${source}: attacker-controlled GitHub text is used directly as GitHub Script source`).toBe(false);
   for (const scriptSource of collectGithubScriptSources(workflow)) {
-    expect(isUntrustedGithubScriptSource(scriptSource), `${source}: attacker-controlled GitHub text becomes the GitHub Script source`).toBe(false);
+    expect(
+      isUntrustedGithubScriptSource(scriptSource),
+      `${source}: attacker-controlled GitHub text becomes the GitHub Script source`,
+    ).toBe(false);
   }
 };
 
 describe('GitHub Script source trust policy', () => {
   it('scans every checked-in workflow', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
-    for (const file of workflowFiles) expectNoUntrustedGithubScriptSource(readFileSync(join(workflowsDir, file), 'utf8'), file);
+    for (const file of workflowFiles) {
+      expectNoUntrustedGithubScriptSource(readFileSync(join(workflowsDir, file), 'utf8'), file);
+    }
   });
 
   it('rejects attacker-controlled text used directly as the script source', () => {
