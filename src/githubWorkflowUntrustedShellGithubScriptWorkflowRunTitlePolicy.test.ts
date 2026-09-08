@@ -14,9 +14,12 @@ const normalizePayloadAccess = (value: string) => value
   .replace(/\?\./g, '.')
   .replace(/\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\]/g, '.$1');
 
-const containsWorkflowRunTitle = (value: string) => {
+const containsWorkflowRunText = (value: string) => {
   const normalized = normalizePayloadAccess(value);
-  return /(?:context\.payload|github\.event)\.workflow_run\.display_title\b/.test(normalized);
+  const root = '(?:context\\.payload|github\\.event)\\.workflow_run';
+  return new RegExp(
+    `${root}(?:\\.display_title\\b|\\.head_branch\\b|\\.pull_requests\\s*\\[\\s*\\d+\\s*\\]\\.head\\.(?:ref|label)\\b)`,
+  ).test(normalized);
 };
 
 const collectTaintedIdentifiers = (script: string) => {
@@ -32,7 +35,7 @@ const collectTaintedIdentifiers = (script: string) => {
       const referencesTainted = [...tainted].some((identifier) =>
         new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(expression),
       );
-      if (!containsWorkflowRunTitle(expression) && !referencesTainted) continue;
+      if (!containsWorkflowRunText(expression) && !referencesTainted) continue;
       tainted.add(name);
       changed = true;
     }
@@ -42,7 +45,7 @@ const collectTaintedIdentifiers = (script: string) => {
 };
 
 const containsTaintedValue = (value: string, tainted: Set<string>) =>
-  containsWorkflowRunTitle(value)
+  containsWorkflowRunText(value)
   || [...tainted].some((identifier) => new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(value));
 
 type Call = { name: string; args: string };
@@ -135,7 +138,7 @@ const unquoteLiteral = (value: string) => {
   return null;
 };
 
-const hasWorkflowRunTitleShellExecution = (script: string) => {
+const hasWorkflowRunTextShellExecution = (script: string) => {
   const tainted = collectTaintedIdentifiers(script);
   const calls = extractCalls(script, ['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync']);
 
@@ -197,20 +200,20 @@ const collectGithubScriptBodies = (workflow: string) => {
   return bodies;
 };
 
-const expectNoWorkflowRunTitleShellExecution = (workflow: string, source: string) => {
+const expectNoWorkflowRunTextShellExecution = (workflow: string, source: string) => {
   for (const script of collectGithubScriptBodies(workflow)) {
     expect(
-      hasWorkflowRunTitleShellExecution(script),
-      `${source}: GitHub Script executes a workflow_run display title through a shell API`,
+      hasWorkflowRunTextShellExecution(script),
+      `${source}: GitHub Script executes attacker-controlled workflow_run text through a shell API`,
     ).toBe(false);
   }
 };
 
-describe('GitHub Script workflow_run title trust boundary', () => {
+describe('GitHub Script workflow_run text trust boundary', () => {
   it('scans every checked-in workflow', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
     for (const file of workflowFiles) {
-      expectNoWorkflowRunTitleShellExecution(readFileSync(join(workflowsDir, file), 'utf8'), file);
+      expectNoWorkflowRunTextShellExecution(readFileSync(join(workflowsDir, file), 'utf8'), file);
     }
   });
 
@@ -225,7 +228,7 @@ describe('GitHub Script workflow_run title trust boundary', () => {
       "            require('node:child_process').execSync(context.payload.workflow_run.display_title);",
     ].join('\n');
 
-    expect(() => expectNoWorkflowRunTitleShellExecution(unsafe, 'workflow-run-title.yml')).toThrow();
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-title.yml')).toThrow();
   });
 
   it('rejects an aliased workflow-run display title passed to an explicit shell', () => {
@@ -240,10 +243,50 @@ describe('GitHub Script workflow_run title trust boundary', () => {
       "            require('node:child_process').spawnSync('bash', ['-c', title]);",
     ].join('\n');
 
-    expect(() => expectNoWorkflowRunTitleShellExecution(unsafe, 'workflow-run-title-alias.yml')).toThrow();
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-title-alias.yml')).toThrow();
   });
 
-  it('allows a workflow-run display title when it is used only as data', () => {
+  it('rejects a workflow-run pull-request head ref passed to a shell sink', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            require('node:child_process').execSync(context.payload.workflow_run.pull_requests[0].head.ref);",
+    ].join('\n');
+
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafe, 'workflow-run-pr-ref.yml')).toThrow();
+  });
+
+  it('rejects aliased workflow-run head branch and pull-request labels passed to shell sinks', () => {
+    const unsafeBranch = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const branch = github.event.workflow_run.head_branch;',
+      "            require('node:child_process').execSync(branch);",
+    ].join('\n');
+    const unsafeLabel = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const label = github.event.workflow_run.pull_requests[1].head.label;',
+      "            require('node:child_process').spawnSync('bash', ['-c', label]);",
+    ].join('\n');
+
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafeBranch, 'workflow-run-head-branch.yml')).toThrow();
+    expect(() => expectNoWorkflowRunTextShellExecution(unsafeLabel, 'workflow-run-pr-label.yml')).toThrow();
+  });
+
+  it('allows workflow-run text when it is used only as data', () => {
     const safe = [
       'jobs:',
       '  test:',
@@ -252,9 +295,10 @@ describe('GitHub Script workflow_run title trust boundary', () => {
       '        with:',
       '          script: |',
       '            core.info(context.payload.workflow_run.display_title);',
+      '            core.info(context.payload.workflow_run.pull_requests[0].head.ref);',
       "            require('node:child_process').execSync('printf safe');",
     ].join('\n');
 
-    expectNoWorkflowRunTitleShellExecution(safe, 'workflow-run-title-data.yml');
+    expectNoWorkflowRunTextShellExecution(safe, 'workflow-run-text-data.yml');
   });
 });
