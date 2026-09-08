@@ -10,10 +10,10 @@ const workflowFiles = readdirSync(workflowsDir)
 const shellMethods = new Set(['exec', 'execSync', 'execFile', 'execFileSync', 'spawn', 'spawnSync']);
 
 const normalizeComputedShellMethods = (value: string) => value.replace(
-  /\[\s*((?:['"][A-Za-z]+['"]\s*)(?:\+\s*['"][A-Za-z]+['"]\s*)*)\]/g,
+  /\[\s*((?:['"`][A-Za-z]+['"`]\s*)(?:\+\s*['"`][A-Za-z]+['"`]\s*)*)\]/g,
   (original, expression: string) => {
-    const method = [...expression.matchAll(/['"]([A-Za-z]+)['"]/g)]
-      .map((match) => match[1])
+    const method = [...expression.matchAll(/(['"`])([A-Za-z]+)\1/g)]
+      .map((match) => match[2])
       .join('');
     return shellMethods.has(method) ? `.${method}` : original;
   },
@@ -66,6 +66,34 @@ describe('GitHub Script computed shell method trust boundary', () => {
       "            cp['exec' + 'Sync'](context.payload.comment.body);",
     ].join('\n');
     expect(() => expectNoComputedUntrustedShellCalls(unsafe, 'unsafe-concat.yml')).toThrow();
+  });
+
+  it('rejects static template-literal execSync access with comment text', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const cp = require('node:child_process');",
+      '            cp[`execSync`](context.payload.comment.body);',
+    ].join('\n');
+    expect(() => expectNoComputedUntrustedShellCalls(unsafe, 'unsafe-template-literal.yml')).toThrow();
+  });
+
+  it('rejects mixed static template/string concatenation for execSync', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const cp = require('node:child_process');",
+      "            cp[`exec` + 'Sync'](context.payload.comment.body);",
+    ].join('\n');
+    expect(() => expectNoComputedUntrustedShellCalls(unsafe, 'unsafe-template-concat.yml')).toThrow();
   });
 
   it('rejects bracket access to execFileSync launching Bash with comment text', () => {
