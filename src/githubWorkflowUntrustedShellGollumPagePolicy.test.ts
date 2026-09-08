@@ -37,9 +37,32 @@ const runValues = (workflow: string) => {
   return values;
 };
 
+const taintedGollumEnvNames = (workflow: string) => {
+  const names = new Set<string>();
+
+  for (const line of workflow.split('\n')) {
+    const binding = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/);
+    if (binding && gollumPageName.test(binding[2])) {
+      names.add(binding[1]);
+    }
+  }
+
+  return names;
+};
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const runReadsEnvName = (run: string, name: string) => {
+  const escaped = escapeRegExp(name);
+  return new RegExp(`(?:\\$\\{?${escaped}\\}?|\\$env:${escaped}\\b|%${escaped}%)`, 'i').test(run);
+};
+
 const assertNoGollumPageShellExecution = (workflow: string) => {
+  const taintedEnvNames = taintedGollumEnvNames(workflow);
+
   for (const run of runValues(workflow)) {
-    if (gollumPageName.test(run) && shellSink.test(run)) {
+    const readsTaintedEnv = [...taintedEnvNames].some((name) => runReadsEnvName(run, name));
+    if ((gollumPageName.test(run) || readsTaintedEnv) && shellSink.test(run)) {
       throw new Error('Untrusted gollum page_name reaches a shell execution sink');
     }
   }
@@ -75,6 +98,22 @@ jobs:
     ).toThrow(/gollum page_name/);
   });
 
+  it('rejects wiki page names routed through a step environment binding', () => {
+    expect(() =>
+      assertNoGollumPageShellExecution(`
+name: unsafe-wiki-env-command
+on: gollum
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          PAGE_NAME: ${'${{ github.event.pages[0].page_name }}'}
+        run: bash -c "$PAGE_NAME"
+`),
+    ).toThrow(/gollum page_name/);
+  });
+
   it('allows page names consumed as data outside a shell execution sink', () => {
     expect(() =>
       assertNoGollumPageShellExecution(`
@@ -85,6 +124,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: printf '%s\\n' "${'${{ github.event.pages[0].page_name }}'}"
+`),
+    ).not.toThrow();
+  });
+
+  it('allows environment-bound page names consumed as data', () => {
+    expect(() =>
+      assertNoGollumPageShellExecution(`
+name: safe-wiki-env-data
+on: gollum
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          PAGE_NAME: ${'${{ github.event.pages[0].page_name }}'}
+        run: printf '%s\\n' "$PAGE_NAME"
 `),
     ).not.toThrow();
   });
