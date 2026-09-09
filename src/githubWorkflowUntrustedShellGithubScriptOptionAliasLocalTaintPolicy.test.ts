@@ -65,9 +65,25 @@ const hasAliasedShellExecutionThroughLocal = (script: string) => {
     if (/\bshell\s*:\s*(?:true|(['"`])[^'"`]+\1)/.test(match[2])) shellAliases.add(match[1]);
   }
 
-  const tainted = new Set<string>();
+  const taintAssignments: Array<[string, string]> = [];
   for (const match of script.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g)) {
-    if (containsUntrustedPayloadText(match[2]) || tainted.has(match[2].trim())) tainted.add(match[1]);
+    taintAssignments.push([match[1], match[2].trim()]);
+  }
+  for (const match of script.matchAll(/(?:^|[;\n])\s*([A-Za-z_$][\w$]*)\s*=\s*([^;\n]+)/g)) {
+    taintAssignments.push([match[1], match[2].trim()]);
+  }
+
+  const tainted = new Set<string>();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [target, value] of taintAssignments) {
+      if (tainted.has(target)) continue;
+      if (containsUntrustedPayloadText(value) || tainted.has(value)) {
+        tainted.add(target);
+        changed = true;
+      }
+    }
   }
 
   for (const match of script.matchAll(/\b(?:spawn|spawnSync|execFile|execFileSync)\s*\(\s*([^,]+),\s*[^,]+,\s*([A-Za-z_$][\w$]*)\s*\)/g)) {
@@ -113,6 +129,22 @@ describe('GitHub Script aliased shell option local-taint trust boundary', () => 
     expect(() => expectNoAliasedShellLocalTaint(unsafe, 'unsafe.yml')).toThrow();
   });
 
+  it('rejects attacker-controlled commands assigned after declaration', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const options = { shell: true };',
+      "            let command = 'echo safe';",
+      '            command = context.payload.pull_request.title;',
+      "            require('node:child_process').spawnSync(command, [], options);",
+    ].join('\n');
+    expect(() => expectNoAliasedShellLocalTaint(unsafe, 'unsafe-reassignment.yml')).toThrow();
+  });
+
   it('allows repository-owned commands propagated through a local', () => {
     const safe = [
       'jobs:',
@@ -122,7 +154,8 @@ describe('GitHub Script aliased shell option local-taint trust boundary', () => 
       '        with:',
       '          script: |',
       '            const options = { shell: true };',
-      "            const command = 'echo safe';",
+      "            let command = 'echo safe';",
+      "            command = 'printf safe';",
       "            require('node:child_process').spawnSync(command, [], options);",
     ].join('\n');
     expectNoAliasedShellLocalTaint(safe, 'safe.yml');
