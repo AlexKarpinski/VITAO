@@ -46,9 +46,9 @@ const containsTaintedValue = (value: string, tainted: Set<string>) =>
   containsUntrustedPayloadText(value)
   || [...tainted].some((identifier) => new RegExp(`\\b${identifier.replace(/[$]/g, '\\$&')}\\b`).test(value));
 
-const extractSpawnCalls = (script: string) => {
+const extractShellOptionCalls = (script: string) => {
   const calls: string[] = [];
-  const matcher = /\b(?:spawn|spawnSync)\s*(?:\?\.\s*)?\(/g;
+  const matcher = /\b(?:spawn|spawnSync|execFile|execFileSync)\s*(?:\?\.\s*)?\(/g;
   for (let match = matcher.exec(script); match; match = matcher.exec(script)) {
     const open = matcher.lastIndex - 1;
     let depth = 1;
@@ -118,15 +118,15 @@ const splitTopLevelArgs = (value: string) => {
 const collectShellOptionAliases = (script: string) => {
   const aliases = new Set<string>();
   for (const declaration of script.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(\{[^;\n]*\})/g)) {
-    if (/\bshell\s*:\s*true\b/.test(declaration[2])) aliases.add(declaration[1]);
+    if (/\bshell\s*:\s*(?:true|(['"`])[^'"`]+\1)/.test(declaration[2])) aliases.add(declaration[1]);
   }
   return aliases;
 };
 
-const hasAliasedShellSpawn = (script: string) => {
+const hasAliasedShellExecution = (script: string) => {
   const tainted = collectTaintedIdentifiers(script);
   const shellOptions = collectShellOptionAliases(script);
-  for (const call of extractSpawnCalls(script)) {
+  for (const call of extractShellOptionCalls(script)) {
     const args = splitTopLevelArgs(call);
     if (args.length < 3) continue;
     const optionAlias = args[2].trim();
@@ -171,20 +171,20 @@ const collectGithubScriptBodies = (workflow: string) => {
   return bodies;
 };
 
-const expectNoAliasedShellSpawn = (workflow: string, source: string) => {
+const expectNoAliasedShellExecution = (workflow: string, source: string) => {
   for (const script of collectGithubScriptBodies(workflow)) {
     expect(
-      hasAliasedShellSpawn(script),
+      hasAliasedShellExecution(script),
       `${source}: GitHub Script executes attacker-controlled event text through aliased shell options`,
     ).toBe(false);
   }
 };
 
-describe('GitHub Script aliased spawn option trust boundary', () => {
+describe('GitHub Script aliased shell option trust boundary', () => {
   it('scans every checked-in workflow', () => {
     expect(workflowFiles.length).toBeGreaterThan(0);
     for (const file of workflowFiles) {
-      expectNoAliasedShellSpawn(readFileSync(join(workflowsDir, file), 'utf8'), file);
+      expectNoAliasedShellExecution(readFileSync(join(workflowsDir, file), 'utf8'), file);
     }
   });
 
@@ -200,7 +200,37 @@ describe('GitHub Script aliased spawn option trust boundary', () => {
       '            const options = { shell: true };',
       '            cp.spawnSync(context.payload.comment.body, [], options);',
     ].join('\n');
-    expect(() => expectNoAliasedShellSpawn(unsafe, 'unsafe.yml')).toThrow();
+    expect(() => expectNoAliasedShellExecution(unsafe, 'unsafe.yml')).toThrow();
+  });
+
+  it('rejects execFile commands when shell options are aliased', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const cp = require('node:child_process');",
+      '            const options = { shell: true };',
+      '            cp.execFileSync(context.payload.comment.body, [], options);',
+    ].join('\n');
+    expect(() => expectNoAliasedShellExecution(unsafe, 'exec-file.yml')).toThrow();
+  });
+
+  it('rejects string-valued aliased shell options', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      "            const cp = require('node:child_process');",
+      "            const options = { shell: '/bin/bash' };",
+      '            cp.spawnSync(context.payload.comment.body, [], options);',
+    ].join('\n');
+    expect(() => expectNoAliasedShellExecution(unsafe, 'string-shell.yml')).toThrow();
   });
 
   it('rejects tainted local commands with aliased shell options', () => {
@@ -215,7 +245,7 @@ describe('GitHub Script aliased spawn option trust boundary', () => {
       '            const options = { shell: true };',
       "            require('node:child_process').spawn(command, [], options);",
     ].join('\n');
-    expect(() => expectNoAliasedShellSpawn(unsafe, 'tainted-local.yml')).toThrow();
+    expect(() => expectNoAliasedShellExecution(unsafe, 'tainted-local.yml')).toThrow();
   });
 
   it('allows repository-owned commands with aliased shell options', () => {
@@ -229,6 +259,6 @@ describe('GitHub Script aliased spawn option trust boundary', () => {
       '            const options = { shell: true };',
       "            require('node:child_process').spawnSync('echo safe', [], options);",
     ].join('\n');
-    expectNoAliasedShellSpawn(safe, 'safe.yml');
+    expectNoAliasedShellExecution(safe, 'safe.yml');
   });
 });
