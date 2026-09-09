@@ -62,7 +62,7 @@ const extractScript = (step: string[]) => {
 const hasAliasedShellExecution = (script: string) => {
   const shellAliases = new Set<string>();
   for (const match of script.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(\{[^;\n]*\})/g)) {
-    if (/\bshell\s*:\s*(?:true|(['"`])[^'"`]+\2)/.test(match[2])) shellAliases.add(match[1]);
+    if (/\bshell\s*:\s*(?:true|(['"`])[^'"`]+\1)/.test(match[2])) shellAliases.add(match[1]);
   }
   for (const match of script.matchAll(/\b(?:spawn|spawnSync|execFile|execFileSync)\s*\(\s*([^,]+),\s*[^,]+,\s*([A-Za-z_$][\w$]*)\s*\)/g)) {
     if (!shellAliases.has(match[2])) continue;
