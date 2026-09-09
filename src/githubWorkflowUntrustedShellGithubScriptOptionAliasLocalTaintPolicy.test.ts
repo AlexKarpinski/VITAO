@@ -59,6 +59,17 @@ const extractScript = (step: string[]) => {
   return '';
 };
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const referencesTaintedLocal = (value: string, tainted: Set<string>) => {
+  for (const name of tainted) {
+    const escaped = escapeRegExp(name);
+    const reference = new RegExp(`(^|[^A-Za-z0-9_$])${escaped}($|[^A-Za-z0-9_$])`);
+    if (reference.test(value)) return true;
+  }
+  return false;
+};
+
 const hasAliasedShellExecutionThroughLocal = (script: string) => {
   const shellAliases = new Set<string>();
   for (const match of script.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(\{[^;\n]*\})/g)) {
@@ -79,7 +90,7 @@ const hasAliasedShellExecutionThroughLocal = (script: string) => {
     changed = false;
     for (const [target, value] of taintAssignments) {
       if (tainted.has(target)) continue;
-      if (containsUntrustedPayloadText(value) || tainted.has(value)) {
+      if (containsUntrustedPayloadText(value) || referencesTaintedLocal(value, tainted)) {
         tainted.add(target);
         changed = true;
       }
@@ -89,7 +100,7 @@ const hasAliasedShellExecutionThroughLocal = (script: string) => {
   for (const match of script.matchAll(/\b(?:spawn|spawnSync|execFile|execFileSync)\s*\(\s*([^,]+),\s*[^,]+,\s*([A-Za-z_$][\w$]*)\s*\)/g)) {
     if (!shellAliases.has(match[2])) continue;
     const command = match[1].trim();
-    if (containsUntrustedPayloadText(command) || tainted.has(command)) return true;
+    if (containsUntrustedPayloadText(command) || referencesTaintedLocal(command, tainted)) return true;
   }
   return false;
 };
@@ -143,6 +154,22 @@ describe('GitHub Script aliased shell option local-taint trust boundary', () => 
       "            require('node:child_process').spawnSync(command, [], options);",
     ].join('\n');
     expect(() => expectNoAliasedShellLocalTaint(unsafe, 'unsafe-reassignment.yml')).toThrow();
+  });
+
+  it('rejects attacker-controlled commands propagated through expressions', () => {
+    const unsafe = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/github-script@0123456789abcdef0123456789abcdef01234567',
+      '        with:',
+      '          script: |',
+      '            const options = { shell: true };',
+      '            const command = context.payload.issue.title;',
+      '            const wrapped = `prefix ${command}`;',
+      "            require('node:child_process').execFileSync(wrapped, [], options);",
+    ].join('\n');
+    expect(() => expectNoAliasedShellLocalTaint(unsafe, 'unsafe-expression.yml')).toThrow();
   });
 
   it('allows repository-owned commands propagated through a local', () => {
